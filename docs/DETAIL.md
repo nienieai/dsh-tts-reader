@@ -14,10 +14,15 @@
 浏览器 ──POST /api/dsh-tts/read {sessionId, messageId}──▶ Host
                                                         │ 1. sessionQuery 读会话日志取正文
                                                         │ 2. sha256(voice+text) 查磁盘缓存
-                                                        │ 3. 未命中 → POST api.deepseek.com/v1/tools/tts
-                                                        │ 4. 写缓存，回 WAV（x-tts-cache: hit|miss）
-浏览器 ◀────────────── audio/wav ──────────────────────┘
+                                                        │ 3. 命中 → 跳过 WAV 头，流式回 PCM
+                                                        │ 4. 未命中 → POST api.deepseek.com/v1/tools/tts
+                                                        │    边收边转给页面，同时 tee 进 WAV 缓存
+浏览器 ◀──── 裸 PCM 块（x-tts-cache / x-tts-sample-rate）──┘
+        │
+        └─ Web Audio：Int16→Float32 → AudioBuffer 排程播放
 ```
+
+页面按块排程（首块留 0.1 秒缓冲），网络落后于播放时从“现在”续上，不补播过去的时间。
 
 Key 只在 Host 进程里，从 DSH 凭据 `DEEPSEEK_API_KEY` 解析；接口基址固定，路由不接受改地址的请求。
 

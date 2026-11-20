@@ -3,11 +3,15 @@
 // Adds a "read aloud" action to every finalized assistant message. The page
 // never talks to api.deepseek.com and never sees the API key: it posts the
 // session/message identity to this plugin's own Host route, which resolves the
-// text, synthesizes it through the official TTS API, and returns WAV bytes.
+// text, synthesizes it through the official TTS API, and streams raw PCM back.
 //
-// Playback cache: the first click downloads and keeps a blob URL per message;
-// clicking the same button again replays that local blob. On the Host side the
-// audio itself is cached on disk, so a reload still answers without the API.
+// Playback follows the official web client's approach: the response stream is
+// converted Int16 → Float32 and scheduled chunk by chunk on one AudioContext,
+// so the first sentence starts long before the whole reply is synthesized.
+//
+// Cache: the finished PCM chunks stay in memory per message (bounded), so the
+// second click replays instantly; the Host also caches the WAV on disk, so a
+// page reload still answers without a second API call.
 
 window.__ModuleLoader__.load({
   id: 'dsh-tts-reader',
@@ -19,6 +23,10 @@ window.__ModuleLoader__.load({
     const READ_PATH = '/api/dsh-tts/read'
     const CLEAR_PATH = '/api/dsh-tts/cache/clear'
 
+    const SAMPLE_RATE = 24000
+    const START_DELAY = 0.1
+    const MAX_CACHED_MESSAGES = 8
+
     const LANG = (() => {
       try {
         return String(navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'
@@ -28,186 +36,198 @@ window.__ModuleLoader__.load({
     })()
     const t = (zh, en) => (LANG === 'zh' ? zh : en)
 
-    // messageKey -> object URL. Kept across clicks (and across remounts) so the
-    // second click is a pure cache play.
-    const urlCache = new Map()
-    let currentAudio = null
-    let currentKey = null
+    // messageKey -> Float32Array[] (decoded PCM). LRU-ish by insertion order.
+    const audioCache = new Map()
+    let current = null // { key, controller, context }
+    let playback = { key: null, phase: 'idle', error: '' }
+    const listeners = new Set()
 
-    const styles = {
-      button: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '4px',
-        height: '24px',
-        minWidth: '24px',
-        padding: '0 6px',
-        border: '1px solid transparent',
-        borderRadius: '6px',
-        background: 'transparent',
-        color: 'var(--dsw-alias-label-secondary)',
-        fontSize: '12px',
-        lineHeight: '1',
-        cursor: 'pointer',
-      },
-      active: {
-        color: 'var(--dsw-alias-state-business-primary)',
-        borderColor: 'var(--dsw-alias-state-business-primary)',
-      },
-      error: { color: '#e5484d' },
-      wrap: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', padding: '4px 0' },
-      card: {
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: '8px',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        padding: '10px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-      },
-      row: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
-      title: { fontSize: '13px', fontWeight: 600 },
-      sub: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
-      input: {
-        padding: '5px 8px',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: '6px',
-        background: 'var(--dsw-alias-bg-layer-3)',
-        color: 'var(--dsw-alias-label-primary)',
-        fontSize: '12px',
-        fontFamily: 'inherit',
-      },
-      primary: {
-        border: '1px solid var(--dsw-alias-state-business-primary)',
-        borderRadius: '6px',
-        background: 'var(--dsw-alias-state-business-primary)',
-        color: '#fff',
-        fontSize: '12px',
-        padding: '3px 10px',
-        cursor: 'pointer',
-      },
-      plain: {
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: '6px',
-        background: 'transparent',
-        color: 'var(--dsw-alias-label-primary)',
-        fontSize: '12px',
-        padding: '3px 10px',
-        cursor: 'pointer',
-      },
-      ok: { fontSize: '12px', color: '#30a46c' },
+    function setPlayback(patch) {
+      playback = { ...playback, ...patch }
+      for (const listener of listeners) {
+        try { listener(playback) } catch {}
+      }
     }
 
-    function SpeakerIcon(props) {
+    function usePlayback() {
+      const [value, setValue] = React.useState(playback)
+      React.useEffect(() => {
+        listeners.add(setValue)
+        setValue(playback)
+        return () => { listeners.delete(setValue) }
+      }, [])
+      return value
+    }
+
+    function rememberAudio(key, chunks) {
+      audioCache.set(key, chunks)
+      while (audioCache.size > MAX_CACHED_MESSAGES) {
+        const oldest = audioCache.keys().next().value
+        audioCache.delete(oldest)
+      }
+    }
+
+    function stopPlayback() {
+      if (!current) {
+        setPlayback({ key: null, phase: 'idle', error: '' })
+        return
+      }
+      const { controller, context } = current
+      current = null
+      try { controller.abort() } catch {}
+      try { context.close() } catch {}
+      setPlayback({ key: null, phase: 'idle', error: '' })
+    }
+
+    function finish(key) {
+      if (!current || current.key !== key) return
+      const context = current.context
+      current = null
+      try { context.close() } catch {}
+      setPlayback({ key: null, phase: 'idle', error: '' })
+    }
+
+    function toFloat32(bytes) {
+      const samples = new Float32Array(bytes.length >> 1)
+      const view = new DataView(bytes.buffer, bytes.byteOffset, samples.length * 2)
+      for (let i = 0; i < samples.length; i += 1) {
+        samples[i] = view.getInt16(i * 2, true) / 0x8000
+      }
+      return samples
+    }
+
+    function concatBytes(left, right) {
+      if (left.length === 0) return new Uint8Array(right)
+      const merged = new Uint8Array(left.length + right.length)
+      merged.set(left)
+      merged.set(right, left.length)
+      return merged
+    }
+
+    function schedule(context, samples, startAt) {
+      const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE)
+      buffer.copyToChannel(samples, 0)
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.connect(context.destination)
+      source.start(startAt)
+      return { source, end: startAt + buffer.duration }
+    }
+
+    function playFromMemory(context, key, chunks) {
+      let nextTime = context.currentTime + START_DELAY
+      let last = null
+      for (const chunk of chunks) {
+        const scheduled = schedule(context, chunk, nextTime)
+        nextTime = scheduled.end
+        last = scheduled.source
+      }
+      setPlayback({ key, phase: 'playing', error: '' })
+      if (!last) { finish(key); return }
+      last.onended = () => finish(key)
+    }
+
+    async function startReadAloud(sessionId, messageId, key) {
+      stopPlayback()
+      // Must be created synchronously inside the click: the browser only lets a
+      // gesture-created AudioContext produce sound.
+      const context = new AudioContext({ sampleRate: SAMPLE_RATE })
+      const controller = new AbortController()
+      current = { key, controller, context }
+      setPlayback({ key, phase: 'loading', error: '' })
+
+      const cached = audioCache.get(key)
+      if (cached && cached.length) {
+        try { playFromMemory(context, key, cached) } catch (error) { fail(key, error) }
+        return
+      }
+
+      try {
+        const response = await fetch(READ_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, messageId }),
+          signal: controller.signal,
+        })
+        const type = String(response.headers.get('content-type') || '')
+        if (type.indexOf('application/json') !== -1) {
+          let payload = null
+          try { payload = await response.json() } catch {}
+          const failure = new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
+          failure.code = payload && payload.code
+          throw failure
+        }
+        if (!response.ok || !response.body) throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
+
+        const reader = response.body.getReader()
+        controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
+
+        let rest = new Uint8Array(0)
+        let nextTime = 0
+        let last = null
+        const collected = []
+
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (controller.signal.aborted) return
+          const merged = concatBytes(rest, value)
+          const samples = toFloat32(merged)
+          rest = merged.slice(samples.length * 2)
+          if (samples.length === 0) continue
+          collected.push(samples)
+          const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
+          const scheduled = schedule(context, samples, startAt)
+          nextTime = scheduled.end
+          last = scheduled.source
+          if (playback.phase === 'loading') setPlayback({ phase: 'playing' })
+        }
+
+        if (controller.signal.aborted) return
+        rememberAudio(key, collected)
+        if (!last) { finish(key); return }
+        last.onended = () => finish(key)
+      } catch (error) {
+        if (controller.signal.aborted) return
+        fail(key, error)
+      }
+    }
+
+    function fail(key, error) {
+      if (!current || current.key !== key) return
+      const context = current.context
+      current = null
+      try { context.close() } catch {}
+      setPlayback({ key, phase: 'idle', error: (error && error.message) || String(error) })
+    }
+
+    function SpeakerIcon() {
       return h('svg', {
-        width: 15,
-        height: 15,
-        viewBox: '0 0 24 24',
-        fill: 'none',
-        stroke: 'currentColor',
-        strokeWidth: 2,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
-        'aria-hidden': true,
-        style: props.style,
+        width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
       },
         h('path', { d: 'M11 5 6 9H3v6h3l5 4V5z', key: 'body' }),
-        props.playing
-          ? h('path', { d: 'M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12', key: 'waves' })
-          : h('path', { d: 'M15.5 8.5a5 5 0 0 1 0 7', key: 'wave' }),
+        h('path', { d: 'M15.5 8.5a5 5 0 0 1 0 7', key: 'wave' }),
       )
     }
 
-    function stopCurrent() {
-      if (currentAudio) {
-        try { currentAudio.pause() } catch {}
-        try { currentAudio.currentTime = 0 } catch {}
-        currentAudio = null
-        currentKey = null
-      }
-    }
-
-    function playUrl(key, url, onEnd) {
-      stopCurrent()
-      const audio = new Audio(url)
-      currentAudio = audio
-      currentKey = key
-      audio.onended = () => {
-        if (currentAudio === audio) { currentAudio = null; currentKey = null }
-        onEnd()
-      }
-      audio.onerror = () => {
-        if (currentAudio === audio) { currentAudio = null; currentKey = null }
-        onEnd(new Error(t('播放失败', 'Playback failed')))
-      }
-      audio.play().catch((error) => {
-        if (currentAudio === audio) { currentAudio = null; currentKey = null }
-        onEnd(error)
+    function ReadingBars({ mode }) {
+      return h('span', {
+        className: 'dsh-tts-bars' + (mode === 'loading' ? ' is-loading' : ''),
+        'aria-hidden': true,
+        children: [0, 1, 2, 3].map((index) => h('i', { key: index, style: { animationDelay: (index * 0.12) + 's' } })),
       })
-    }
-
-    async function fetchAudio(sessionId, messageId) {
-      const response = await fetch(READ_PATH, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, messageId }),
-      })
-      const type = String(response.headers.get('content-type') || '')
-      if (type.indexOf('application/json') !== -1) {
-        let payload = null
-        try { payload = await response.json() } catch {}
-        const message = (payload && payload.error) || t('语音合成失败', 'Speech synthesis failed')
-        const error = new Error(message)
-        error.code = payload && payload.code
-        throw error
-      }
-      if (!response.ok) throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
-      return response.blob()
     }
 
     function ReadAloudAction(props) {
       const messageId = props && props.messageId
       const sessionId = props && props.sessionId
       const key = String(sessionId) + ':' + String(messageId)
-      const [phase, setPhase] = React.useState('idle') // idle | loading | playing
-      const [error, setError] = React.useState('')
-      const disposed = React.useRef(false)
-
-      React.useEffect(() => () => { disposed.current = true }, [])
-
-      const finishing = (failure) => {
-        if (disposed.current) return
-        setPhase('idle')
-        if (failure) setError(failure.message || String(failure))
-      }
-
-      const onClick = async () => {
-        setError('')
-        if (phase === 'playing') {
-          stopCurrent()
-          setPhase('idle')
-          return
-        }
-        if (phase === 'loading') return
-        const cached = urlCache.get(key)
-        if (cached) {
-          setPhase('playing')
-          playUrl(key, cached, finishing)
-          return
-        }
-        setPhase('loading')
-        try {
-          const blob = await fetchAudio(sessionId, messageId)
-          if (disposed.current) return
-          const url = URL.createObjectURL(blob)
-          urlCache.set(key, url)
-          setPhase('playing')
-          playUrl(key, url, finishing)
-        } catch (failure) {
-          finishing(failure)
-        }
-      }
+      const state = usePlayback()
+      const mine = state.key === key
+      const phase = mine ? state.phase : 'idle'
+      const error = mine ? state.error : ''
+      const cached = audioCache.has(key)
 
       const title = error
         ? error
@@ -215,7 +235,7 @@ window.__ModuleLoader__.load({
           ? t('正在合成…', 'Synthesizing…')
           : phase === 'playing'
             ? t('点击停止', 'Click to stop')
-            : urlCache.has(key)
+            : cached
               ? t('再次播放（本地缓存）', 'Play again (cached)')
               : t('朗读这条回复', 'Read this reply aloud')
 
@@ -223,15 +243,20 @@ window.__ModuleLoader__.load({
         type: 'button',
         title,
         'aria-label': title,
-        onClick,
-        disabled: phase === 'loading',
+        onClick: () => {
+          if (phase === 'loading' || phase === 'playing') { stopPlayback(); return }
+          void startReadAloud(sessionId, messageId, key)
+        },
         style: {
-          ...styles.button,
-          ...(phase === 'playing' ? styles.active : {}),
-          ...(error ? styles.error : {}),
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+          height: '24px', minWidth: '24px', padding: '0 6px', border: '1px solid transparent',
+          borderRadius: '6px', background: 'transparent', cursor: 'pointer', fontSize: '12px',
+          lineHeight: '1',
+          color: error ? '#e5484d' : (phase === 'idle' ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-state-business-primary)'),
+          borderColor: phase === 'idle' ? 'transparent' : 'var(--dsw-alias-state-business-primary)',
         },
         children: [
-          h(SpeakerIcon, { playing: phase === 'playing', key: 'icon' }),
+          phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingBars, { mode: phase, key: 'bars' }),
           error ? h('span', { key: 'mark' }, '!') : null,
         ],
       })
@@ -263,7 +288,7 @@ window.__ModuleLoader__.load({
           const body = await response.json()
           if (!body || body.ok !== true) throw new Error((body && body.error) || t('保存失败', 'Save failed'))
           setConfig(body.value)
-          urlCache.clear()
+          audioCache.clear()
           setNotice(t('已保存', 'Saved'))
         } catch (error) {
           setFailure(error && error.message ? error.message : String(error))
@@ -272,80 +297,102 @@ window.__ModuleLoader__.load({
         }
       }
 
-      if (!config) return h('div', { style: styles.wrap }, h('span', { style: styles.sub }, t('加载中…', 'Loading…')))
+      if (!config) return h('div', { style: { padding: '4px 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, t('加载中…', 'Loading…'))
 
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
-      return h('div', { style: styles.wrap },
-        h('div', { style: styles.card },
-          h('div', { style: styles.row },
-            h('span', { style: styles.title, key: 't' }, t('语音朗读', 'Read aloud')),
-            h('span', { style: styles.sub, key: 's' }, t('用 DeepSeek 官方 TTS 朗读助手回复；音频缓存在本机', 'Speaks replies with the DeepSeek TTS API; audio cached on this machine')),
+      const card = {
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px',
+        background: 'var(--dsw-alias-bg-layer-2)', padding: '10px',
+        display: 'flex', flexDirection: 'column', gap: '8px',
+      }
+      const row = { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }
+      const sub = { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }
+      const input = {
+        padding: '5px 8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '6px',
+        background: 'var(--dsw-alias-bg-layer-3)', color: 'var(--dsw-alias-label-primary)',
+        fontSize: '12px', fontFamily: 'inherit',
+      }
+      const plain = {
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '6px', background: 'transparent',
+        color: 'var(--dsw-alias-label-primary)', fontSize: '12px', padding: '3px 10px', cursor: 'pointer',
+      }
+
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', padding: '4px 0' } },
+        h('div', { style: card },
+          h('div', { style: row },
+            h('span', { style: { fontSize: '13px', fontWeight: 600 }, key: 't' }, t('语音朗读', 'Read aloud')),
+            h('span', { style: sub, key: 's' }, t('用 DeepSeek 官方 TTS 流式朗读助手回复；音频缓存在本机', 'Streams replies with the DeepSeek TTS API; audio cached on this machine')),
           ),
-          h('div', { style: styles.row },
-            h('span', { style: styles.sub, key: 'k' }, 'API Key'),
+          h('div', { style: row },
+            h('span', { style: sub, key: 'k' }, 'API Key'),
             config.keyConfigured
-              ? h('span', { style: styles.ok, key: 'v' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured (DEEPSEEK_API_KEY)'))
-              : h('span', { style: styles.error, key: 'v' }, t('未配置，请先在 设置 → 模型 里填 DeepSeek Key', 'Not configured — set a DeepSeek key in Settings → Models')),
+              ? h('span', { style: { fontSize: '12px', color: '#30a46c' }, key: 'v' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured (DEEPSEEK_API_KEY)'))
+              : h('span', { style: { fontSize: '12px', color: '#e5484d' }, key: 'v' }, t('未配置，请先在 设置 → 模型 里填 DeepSeek Key', 'Not configured — set a DeepSeek key in Settings → Models')),
           ),
-          h('div', { style: styles.row },
-            h('span', { style: styles.sub, key: 'voice' }, t('音色', 'Voice')),
+          h('div', { style: row },
+            h('span', { style: sub, key: 'voice' }, t('音色', 'Voice')),
             h('select', {
-              key: 'voice-select',
-              style: styles.input,
-              value: config.voice,
+              key: 'voice-select', style: input, value: config.voice, disabled: busy,
               onChange: (event) => save({ voice: event.target.value }),
-              disabled: busy,
               children: [
                 h('option', { value: 'stella', key: 'stella' }, 'stella（女声）'),
                 h('option', { value: 'tide', key: 'tide' }, 'tide（男声）'),
               ],
             }),
-            h('span', { style: styles.sub, key: 'chars-label' }, t('单次上限', 'Max chars')),
+            h('span', { style: sub, key: 'chars-label' }, t('单次上限', 'Max chars')),
             h('input', {
-              key: 'chars',
-              type: 'number',
-              min: 100,
-              max: 4000,
-              step: 100,
-              style: { ...styles.input, width: '90px' },
-              value: config.maxChars,
-              disabled: busy,
+              key: 'chars', type: 'number', min: 100, max: 4000, step: 100,
+              style: { ...input, width: '90px' }, value: config.maxChars, disabled: busy,
               onChange: (event) => {
                 const value = Number(event.target.value)
                 if (Number.isFinite(value) && value >= 100) save({ maxChars: Math.min(4000, Math.floor(value)) })
               },
             }),
           ),
-          h('div', { style: styles.row },
-            h('span', { style: styles.sub, key: 'cache' },
-              t('缓存：', 'Cache: ') + (config.cache ? config.cache.files : 0) + t(' 个文件 / ', ' files / ') + cacheMb + ' MB'),
+          h('div', { style: row },
+            h('span', { style: sub, key: 'cache' }, t('缓存：', 'Cache: ') + (config.cache ? config.cache.files : 0) + t(' 个文件 / ', ' files / ') + cacheMb + ' MB'),
             h('button', {
-              key: 'clear',
-              type: 'button',
-              style: styles.plain,
-              disabled: busy,
+              key: 'clear', type: 'button', style: plain, disabled: busy,
               onClick: async () => {
                 try {
                   const response = await fetch(CLEAR_PATH, { method: 'POST' })
                   const body = await response.json()
-                  if (body && body.ok) { urlCache.clear(); load(); setNotice(t('缓存已清空', 'Cache cleared')) }
+                  if (body && body.ok) { audioCache.clear(); load(); setNotice(t('缓存已清空', 'Cache cleared')) }
                 } catch (error) {
                   setFailure(error && error.message ? error.message : String(error))
                 }
               },
               children: t('清空缓存', 'Clear cache'),
             }),
-            h('span', { style: styles.sub, key: 'cap' }, t('上限 ', 'limit ') + config.cacheMaxMb + ' MB'),
+            h('span', { style: sub, key: 'cap' }, t('上限 ', 'limit ') + config.cacheMaxMb + ' MB'),
           ),
-          notice ? h('span', { style: styles.ok }, notice) : null,
-          failure ? h('span', { style: styles.error }, failure) : null,
+          notice ? h('span', { style: { fontSize: '12px', color: '#30a46c' } }, notice) : null,
+          failure ? h('span', { style: { fontSize: '12px', color: '#e5484d' } }, failure) : null,
         ),
       )
+    }
+
+    const CSS = [
+      '.dsh-tts-bars{display:inline-flex;align-items:flex-end;gap:2px;height:13px;width:15px;justify-content:center}',
+      '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:35%;animation:dsh-tts-bar .9s ease-in-out infinite}',
+      '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
+      '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
+    ].join('\n')
+
+    function injectStyles() {
+      if (typeof document === 'undefined') return () => {}
+      const style = document.createElement('style')
+      style.dataset.plugin = 'dsh-tts-reader'
+      style.textContent = CSS
+      document.head.appendChild(style)
+      return () => { try { style.remove() } catch {} }
     }
 
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
+
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',
           id: 'tts-reader',

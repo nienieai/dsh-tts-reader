@@ -13,9 +13,11 @@
 // Every route is loopback-only and rejects cross-site browser requests.
 
 import crypto from 'node:crypto'
+import { once } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 
 export const name = 'dsh-tts-reader'
 export const inject = []
@@ -30,7 +32,6 @@ const KEY_REF = 'DEEPSEEK_API_KEY'
 const VOICES = new Set(['stella', 'tide'])
 const HARD_MAX_CHARS = 4000
 const SAMPLE_RATE = 24000
-const AUDIO_HEADERS = { 'cache-control': 'no-store' }
 
 const DEFAULTS = { voice: 'stella', maxChars: 4000, cacheMaxMb: 200 }
 
@@ -261,7 +262,7 @@ async function resolveApiKey(ctx) {
   }
 }
 
-async function synthesize(ctx, text, voice) {
+async function openTtsStream(ctx, text, voice, signal) {
   const key = await resolveApiKey(ctx)
   if (!key) {
     const error = new Error('没有在 DSH 凭据里找到 ' + KEY_REF + '，请先在 设置 → 模型 里配置 DeepSeek API Key')
@@ -273,7 +274,7 @@ async function synthesize(ctx, text, voice) {
     method: 'POST',
     headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
     body: JSON.stringify({ text, voice_id: voice, format: 'pcm', filter_markdown: true }),
-    signal: AbortSignal.timeout(90000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000),
   })
   if (!response.ok) {
     let detail = ''
@@ -288,14 +289,43 @@ async function synthesize(ctx, text, voice) {
     error.code = 'TTS_FAILED'
     throw error
   }
-  const bytes = Buffer.from(await response.arrayBuffer())
-  if (bytes.length === 0) {
-    const error = new Error('TTS 上游返回了空音频')
+  if (!response.body) {
+    const error = new Error('TTS 上游没有返回音频流')
     error.status = 502
     error.code = 'EMPTY_AUDIO'
     throw error
   }
-  return pcmToWav(bytes)
+  return response
+}
+
+/** Raw PCM response headers; the browser converts Int16 → Float32 itself. */
+function pcmHeaders(extra) {
+  return {
+    'content-type': 'application/octet-stream',
+    'cache-control': 'no-store',
+    'x-tts-sample-rate': String(SAMPLE_RATE),
+    'x-tts-channels': '1',
+    'x-tts-bits': '16',
+    ...extra,
+  }
+}
+
+const WAV_HEADER_BYTES = 44
+
+function writeWavHeader(fd) {
+  // No explicit position: the sequential writes below must continue after it.
+  fs.writeSync(fd, pcmToWav(Buffer.alloc(0)))
+}
+
+function patchWavSizes(fd, dataBytes) {
+  // RIFF chunk size lives at 4; the data chunk size lives at 40. Two separate
+  // writes: they are not adjacent, and byte 8 starts "WAVE".
+  const riff = Buffer.alloc(4)
+  riff.writeUInt32LE(36 + dataBytes, 0)
+  fs.writeSync(fd, riff, 0, 4, 4)
+  const data = Buffer.alloc(4)
+  data.writeUInt32LE(dataBytes, 0)
+  fs.writeSync(fd, data, 0, 4, 40)
 }
 
 // ---------------------------------------------------------------- plugin entry
@@ -385,47 +415,98 @@ export function apply(ctx, config) {
 
         const hash = cacheKey(current.voice, text)
         const file = cacheFile(hash)
+        const meta = { 'x-tts-voice': current.voice, 'x-tts-truncated': truncated ? '1' : '0' }
+
+        // 1) Cache hit: stream the PCM body after the WAV header.
         try {
-          const cached = fs.readFileSync(file)
-          response.writeHead(200, {
-            ...AUDIO_HEADERS,
-            'content-type': 'audio/wav',
-            'content-length': String(cached.length),
-            'x-tts-cache': 'hit',
-            'x-tts-voice': current.voice,
-            'x-tts-truncated': truncated ? '1' : '0',
-          })
-          response.end(cached)
-          return
+          const stat = fs.statSync(file)
+          if (stat.size > WAV_HEADER_BYTES) {
+            const magic = Buffer.alloc(4)
+            const head = fs.openSync(file, 'r')
+            try { fs.readSync(head, magic, 0, 4, 0) } finally { fs.closeSync(head) }
+            if (magic.toString('ascii') === 'RIFF') {
+              response.writeHead(200, pcmHeaders({ ...meta, 'x-tts-cache': 'hit', 'content-length': String(stat.size - WAV_HEADER_BYTES) }))
+              const stream = fs.createReadStream(file, { start: WAV_HEADER_BYTES })
+              stream.on('error', () => { try { response.destroy() } catch {} })
+              stream.pipe(response)
+              return
+            }
+            // A damaged entry must not be served: drop it and synthesize again.
+            try { fs.unlinkSync(file) } catch {}
+          }
         } catch {}
 
+        // 2) Miss: stream upstream PCM to the page while teeing it into the cache.
+        const controller = new AbortController()
+        const abort = () => { try { controller.abort() } catch {} }
+        request.on('aborted', abort)
+        response.on('close', () => { if (!response.writableEnded) abort() })
+
+        let upstream
         try {
-          const audio = await synthesize(scope, text, current.voice)
-          try {
-            fs.mkdirSync(cacheDir(), { recursive: true })
-            const tmp = file + '.' + process.pid + '.tmp'
-            fs.writeFileSync(tmp, audio)
-            fs.renameSync(tmp, file)
-            pruneCache(current.cacheMaxMb * 1024 * 1024)
-          } catch (error) {
-            log?.warn?.('cache write failed: ' + String(error?.message ?? error))
-          }
-          response.writeHead(200, {
-            ...AUDIO_HEADERS,
-            'content-type': 'audio/wav',
-            'content-length': String(audio.length),
-            'x-tts-cache': 'miss',
-            'x-tts-voice': current.voice,
-            'x-tts-truncated': truncated ? '1' : '0',
-          })
-          response.end(audio)
+          upstream = await openTtsStream(scope, text, current.voice, controller.signal)
         } catch (error) {
-          const code = error?.code === 'NO_KEY' ? 400 : (error?.status === 401 || error?.status === 403 ? 502 : 502)
-          return writeJson(response, code, {
+          return writeJson(response, 502, {
             ok: false,
             code: error?.code || 'TTS_FAILED',
             error: error?.message ?? String(error),
           })
+        }
+
+        response.writeHead(200, pcmHeaders({ ...meta, 'x-tts-cache': 'miss' }))
+
+        let tmp = null
+        let fd = -1
+        let written = 0
+        let aborted = false
+        try {
+          fs.mkdirSync(cacheDir(), { recursive: true })
+          tmp = file + '.' + process.pid + '.' + Date.now() + '.tmp'
+          fd = fs.openSync(tmp, 'w')
+          writeWavHeader(fd)
+        } catch {
+          if (fd >= 0) { try { fs.closeSync(fd) } catch {} }
+          fd = -1
+          tmp = null
+        }
+
+        try {
+          for await (const chunk of Readable.fromWeb(upstream.body)) {
+            if (controller.signal.aborted) { aborted = true; break }
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+            written += buffer.length
+            if (fd >= 0) {
+              try { fs.writeSync(fd, buffer) } catch {
+                try { fs.closeSync(fd) } catch {}
+                fd = -1
+              }
+            }
+            if (!response.write(buffer)) await once(response, 'drain')
+          }
+          if (!aborted) response.end()
+        } catch {
+          aborted = true
+          try { response.destroy() } catch {}
+        } finally {
+          if (fd >= 0) {
+            if (!aborted && written > 0) {
+              try {
+                patchWavSizes(fd, written)
+                fs.closeSync(fd)
+                fs.renameSync(tmp, file)
+                pruneCache(current.cacheMaxMb * 1024 * 1024)
+              } catch {
+                try { fs.closeSync(fd) } catch {}
+                try { fs.unlinkSync(tmp) } catch {}
+              }
+            } else {
+              try { fs.closeSync(fd) } catch {}
+              try { if (tmp) fs.unlinkSync(tmp) } catch {}
+            }
+            fd = -1
+          } else if (tmp) {
+            try { fs.unlinkSync(tmp) } catch {}
+          }
         }
       },
     }), 'dsh-tts-reader: read')
