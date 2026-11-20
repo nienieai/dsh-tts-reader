@@ -1,0 +1,7 @@
+- insert:
+    - id: tts-reader
+      name: dsh-tts-reader
+      config:
+        voice: stella
+        maxChars: 4000
+        cacheMaxMb: 200
