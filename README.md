@@ -53,6 +53,40 @@ dsh plugin --profile desktop add link:C:/Embedded/dsh-tts-reader
 
 （或通过 Plugin Manager 的安装入口；安装后需刷新页面让 Client 半加载。）
 
+## 发版流程
+
+仓库只有两条长期分支，历史不再是一条直线：
+
+| 分支 | 用途 |
+|---|---|
+| `main` | **只放已发布版本**。每个提交对应一个 tag，可随时检出使用 |
+| `dev` | 日常开发。版本号、CHANGELOG 都先在这里改 |
+
+发布一个版本：
+
+```bash
+# 1. 在 dev 上改 version / CHANGELOG，并确认能加载
+git checkout dev
+#    编辑 package.json 的 version 与 CHANGELOG.md
+
+# 2. 合并到 main（保留合并点，便于看出一版包含哪些提交）
+git checkout main
+git merge --no-ff dev -m "release: v0.2.23"
+
+# 3. 在合并提交上打 annotated tag
+git tag -a v0.2.23 -m "dsh-tts-reader 0.2.23"
+
+# 4. 回到开发线
+git checkout dev
+```
+
+约定：
+
+- 版本号用语义化版本：新增能力升次版本号（`0.2.x` → `0.3.0`），修复只升修订号；
+- tag 一律 **annotated**（`git tag -a`），轻量 tag 不带发布信息；
+- 提交信息前缀里带版本号（如 `fix(0.2.22): ...`），便于事后按版本检索；
+- 历史版本已全部补 tag：`v0.1.0`、`v0.2.0` ~ `v0.2.22`。
+
 ## License
 
 MIT
