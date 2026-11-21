@@ -51,22 +51,22 @@ window.__ModuleLoader__.load({
     const autoPlayed = new Set()
     let eventSource = null
 
-    // The pending agent question, shown as a speaker chip above the composer.
-    let pendingQuestion = null
+    // The pending question or approval request, re-readable from the composer.
+    let pendingPrompt = null
     const promptListeners = new Set()
 
-    function setPendingQuestion(next) {
-      pendingQuestion = next
+    function setPendingPrompt(next) {
+      pendingPrompt = next
       for (const listener of promptListeners) {
-        try { listener(pendingQuestion) } catch {}
+        try { listener(pendingPrompt) } catch {}
       }
     }
 
-    function usePendingQuestion() {
-      const [value, setValue] = React.useState(pendingQuestion)
+    function usePendingPrompt() {
+      const [value, setValue] = React.useState(pendingPrompt)
       React.useEffect(() => {
         promptListeners.add(setValue)
-        setValue(pendingQuestion)
+        setValue(pendingPrompt)
         return () => { promptListeners.delete(setValue) }
       }, [])
       return value
@@ -105,24 +105,25 @@ window.__ModuleLoader__.load({
           const id = String(payload.id || '')
           const text = String(payload.text || '').trim()
           if (!id || !text) return
-          setPendingQuestion({ id, text })
+          setPendingPrompt({ kind: 'question', id, text })
           if (speakQuestions && !autoPlayed.has('q:' + id)) {
             autoPlayed.add('q:' + id)
             void startReadAloud(null, null, 'prompt:' + id, { text })
           }
           return
         }
-        if (payload.type === 'question-closed') {
-          if (pendingQuestion && pendingQuestion.id === String(payload.id || '')) setPendingQuestion(null)
+        if (payload.type === 'question-closed' || payload.type === 'approval-closed') {
+          if (pendingPrompt && pendingPrompt.id === String(payload.id || '')) setPendingPrompt(null)
           return
         }
         if (payload.type === 'approval') {
           const id = String(payload.id || '')
           const text = String(payload.text || '').trim()
-          if (!text || !speakApprovals) return
-          if (id && autoPlayed.has('a:' + id)) return
-          if (id) autoPlayed.add('a:' + id)
-          void startReadAloud(null, null, 'prompt:approval:' + (id || Date.now()), { text })
+          if (!id || !text) return
+          setPendingPrompt({ kind: 'approval', id, text })
+          if (!speakApprovals || autoPlayed.has('a:' + id)) return
+          autoPlayed.add('a:' + id)
+          void startReadAloud(null, null, 'prompt:approval:' + id, { text })
           return
         }
         if (payload.type !== 'assistant') return
@@ -354,7 +355,7 @@ window.__ModuleLoader__.load({
         // Leaving the session must not keep speaking into the new one.
         if (previous.current !== null && previous.current !== next) {
           stopPlayback()
-          setPendingQuestion(null)
+          setPendingPrompt(null)
         }
         previous.current = next
         activeSessionId = next
@@ -362,33 +363,32 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    // Speaker chip above the composer while a question is waiting for an answer.
-    function QuestionChip() {
-      const pending = usePendingQuestion()
+    // Composer-row button for the pending question or approval request.
+    function PromptButton() {
+      const pending = usePendingPrompt()
       const state = usePlayback()
       if (!pending || !pending.text) return null
-      const key = 'prompt:' + pending.id
+      const key = 'prompt:' + (pending.kind === 'approval' ? 'approval:' : '') + pending.id
       const playing = state.key === key && state.phase !== 'idle'
-      return h('div', { style: { display: 'flex', justifyContent: 'flex-end', padding: '0 2px' } },
-        h('button', {
-          type: 'button',
-          title: playing ? t('点击停止', 'Click to stop') : t('朗读这个问题', 'Read this question aloud'),
-          onClick: () => {
-            if (playing) { stopPlayback(); return }
-            void startReadAloud(null, null, key, { text: pending.text })
-          },
-          style: {
-            display: 'inline-flex', alignItems: 'center', gap: '4px',
-            height: '24px', padding: '0 8px', borderRadius: '12px',
-            border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent',
-            color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', cursor: 'pointer',
-          },
-          children: [
-            playing ? h(ReadingBars, { mode: 'playing', key: 'bars' }) : h(SpeakerIcon, { key: 'icon' }),
-            h('span', { key: 'label' }, t('朗读问题', 'Read question')),
-          ],
-        }),
-      )
+      const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
+      return h('button', {
+        type: 'button',
+        title: playing ? t('点击停止', 'Click to stop') : label,
+        onClick: () => {
+          if (playing) { stopPlayback(); return }
+          void startReadAloud(null, null, key, { text: pending.text })
+        },
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          height: '24px', padding: '0 8px', borderRadius: '12px',
+          border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent',
+          color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', cursor: 'pointer',
+        },
+        children: [
+          playing ? h(ReadingBars, { mode: 'playing', key: 'bars' }) : h(SpeakerIcon, { key: 'icon' }),
+          h('span', { key: 'label' }, label),
+        ],
+      })
     }
 
     function ReadAloudAction(props) {
@@ -649,11 +649,13 @@ window.__ModuleLoader__.load({
           order: 900,
         }, SessionTracker))
 
-        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
-          name: 'conversation.composer.dock',
-          id: 'tts-reader-question',
-          order: 901,
-        }, QuestionChip))
+        // Replay button for the pending question / approval, in the composer
+        // tool row where it is visible next to the input.
+        ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+          name: 'conversation.input.left',
+          id: 'tts-reader-prompt',
+          order: 60,
+        }, PromptButton))
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',

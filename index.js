@@ -370,6 +370,11 @@ export function apply(ctx, config) {
         broadcast({ type: 'approval', id: String(data.id || ''), toolName: tool, text: '需要授权：' + tool + reason })
         return
       }
+      if (event.type === 'approval/decided') {
+        const data = event.data || {}
+        broadcast({ type: 'approval-closed', id: String(data.id || '') })
+        return
+      }
       if (event.type !== 'assistant/message') return
       const message = event.data && event.data.message
       if (!message || !message.id) return
