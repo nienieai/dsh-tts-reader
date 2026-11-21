@@ -17,6 +17,8 @@ window.__ModuleLoader__.load({
   id: 'dsh-tts-reader',
   factory(require) {
     const React = require('react')
+    let ReactDOM = null
+    try { ReactDOM = require('react-dom') } catch { ReactDOM = null }
     const h = React.createElement
 
     const CONFIG_PATH = '/api/dsh-tts/config'
@@ -361,7 +363,7 @@ window.__ModuleLoader__.load({
       const key = 'prompt:' + (pending.kind === 'approval' ? 'approval:' : '') + pending.id
       const playing = state.key === key && state.phase !== 'idle'
       const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
-      return h('div', {
+      const node = h('div', {
         style: {
           position: 'fixed', top: '10px', right: '14px', zIndex: 2147483000,
           display: 'flex',
@@ -390,6 +392,15 @@ window.__ModuleLoader__.load({
           ],
         }),
       )
+      // Request dialogs render in their own layer above the frame overlay, so
+      // mount at document.body instead of inside the slot container.
+      try {
+        if (ReactDOM && typeof ReactDOM.createPortal === 'function'
+          && typeof document !== 'undefined' && document.body) {
+          return ReactDOM.createPortal(node, document.body)
+        }
+      } catch {}
+      return node
     }
 
     function ReadAloudAction(props) {
