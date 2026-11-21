@@ -1207,7 +1207,8 @@ window.__ModuleLoader__.load({
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
       const cacheLimit = config.cacheMaxMb || 200
       const cachePct = Math.min(100, Math.round(((config.cache && config.cache.bytes ? config.cache.bytes : 0) / (cacheLimit * 1048576)) * 100))
-      const piper = config.piper || { exe: false, model: false, sampleRate: 0 }
+      const piper = config.piper || { exe: false, model: false, sampleRate: 0, voices: [] }
+      const localVoices = Array.isArray(piper.voices) ? piper.voices : []
       const localEngine = config.engine === 'piper'
       const piperReady = localEngine && piper.exe === true && piper.model === true
 
@@ -1259,13 +1260,25 @@ window.__ModuleLoader__.load({
             ),
             piper.exe ? t('已找到', 'found') : t('未找到', 'missing'),
           ) : null,
-          localEngine ? row('piper-model', t('模型', 'Model'),
+          localEngine ? row('piper-model', t('音色模型', 'Voice model'),
             h('span', { className: 'dsh-tts-grow' },
-              h(TextInput, {
-                className: 'dsh-tts-input wide', value: config.piperModel, disabled: busy,
-                placeholder: 'C:\\voices\\zh_CN-huayan-medium.onnx',
-                onCommit: (value) => void save({ piperModel: value }),
-              }),
+              localVoices.length > 0
+                ? h('select', {
+                    className: 'dsh-tts-select', value: config.piperModel, disabled: busy,
+                    onChange: (event) => save({ piperModel: event.target.value }),
+                    children: [
+                      ...(localVoices.some((voice) => voice.path === config.piperModel)
+                        ? []
+                        : [h('option', { value: config.piperModel || '', key: 'current' }, t('当前（自定义路径）', 'current (custom path)'))]),
+                      ...localVoices.map((voice) => h('option', { value: voice.path, key: voice.path },
+                        voice.name + ' · ' + (voice.sampleRate / 1000).toFixed(2) + ' kHz')),
+                    ],
+                  })
+                : h(TextInput, {
+                    className: 'dsh-tts-input wide', value: config.piperModel, disabled: busy,
+                    placeholder: 'C:\\voices\\zh_CN-huayan-medium.onnx',
+                    onCommit: (value) => void save({ piperModel: value }),
+                  }),
             ),
             piper.model ? t('已找到', 'found') : t('未找到', 'missing'),
           ) : null,

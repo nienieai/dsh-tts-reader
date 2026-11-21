@@ -587,6 +587,23 @@ export function createResampler(from, to) {
   }
 }
 
+/** Every voice next to the configured one, so the settings page can offer a list. */
+export function scanVoices(modelPath) {
+  try {
+    const dir = path.dirname(String(modelPath))
+    return fs.readdirSync(dir)
+      .filter((name) => name.endsWith('.onnx'))
+      .map((name) => {
+        const file = path.join(dir, name)
+        return { name: name.slice(0, -5), path: file, sampleRate: piperSampleRate(file) }
+      })
+      .filter((voice) => fs.existsSync(voice.path + '.json'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    return []
+  }
+}
+
 /** What the settings page needs to know about the local engine. */
 export function engineInfo(settings) {
   const exe = settings && typeof settings.piperPath === 'string' ? settings.piperPath : ''
@@ -596,6 +613,7 @@ export function engineInfo(settings) {
       exe: exe ? fs.existsSync(exe) : false,
       model: model ? fs.existsSync(model) : false,
       sampleRate: model && fs.existsSync(model) ? piperSampleRate(model) : 0,
+      voices: model ? scanVoices(model) : [],
     },
   }
 }
@@ -663,7 +681,18 @@ const PIPER_FLAGS = ['--output-raw', '--output_raw']
 let piperFlagUsed = ''
 
 async function* startPiper(settings, flag, text, signal) {
-  const child = spawn(settings.piperPath, ['--model', settings.piperModel, flag], { windowsHide: true })
+  // The Python CLI decodes stdin with the locale codec; force UTF-8 so Chinese
+  // text does not arrive as lone surrogates. It also looks for its g2pW resources
+  // in `cwd/g2pW`, so the model folder is the working directory. HF_ENDPOINT is
+  // only filled in when the user has none, so a mirror can serve the tokenizer.
+  const env = { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
+  if (!env.HF_ENDPOINT) env.HF_ENDPOINT = 'https://hf-mirror.com'
+  // Models are local files, so the hub is only consulted for the Chinese
+  // tokenizer; staying offline avoids a 40 s retry storm when that is missing.
+  if (!env.HF_HUB_OFFLINE) env.HF_HUB_OFFLINE = '1'
+  if (!env.TRANSFORMERS_OFFLINE) env.TRANSFORMERS_OFFLINE = '1'
+  const cwd = settings.piperModel ? path.dirname(settings.piperModel) : undefined
+  const child = spawn(settings.piperPath, ['--model', settings.piperModel, flag], { windowsHide: true, env, cwd })
   let stderr = ''
   let spawnError = null
   const exited = new Promise((resolve) => {
