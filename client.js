@@ -1476,7 +1476,11 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dsh-tts-h1', key: 'h' }, t('音频缓存', 'Audio cache')),
             ),
             h('div', { className: 'dsh-tts-hint', key: 'hint' },
-              (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'),
+              (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'
+              + (config.cache && config.cache.pinned && config.cache.pinned.files > 0
+                ? t('（固定提示语 ' + config.cache.pinned.files + ' 个，不参与淘汰）',
+                  ' (' + config.cache.pinned.files + ' pinned, never evicted)')
+                : '')),
             h('div', { className: 'dsh-tts-meter', key: 'meter' }, h('i', { style: { width: cachePct + '%' } })),
           ),
           row('limit', t('上限', 'Limit'), [

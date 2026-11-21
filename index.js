@@ -73,6 +73,15 @@ function cacheDir() {
   return path.join(dshHome(), 'cache', 'dsh-tts')
 }
 
+/**
+ * Pinned audio for the fixed spoken markers ("here is a code block" and so on).
+ * They live in their own folder so the size-based eviction never touches them:
+ * a marker is synthesized once per engine/voice and reused from then on.
+ */
+function fixedCacheDir() {
+  return path.join(cacheDir(), 'fixed')
+}
+
 /** Only what the user actually saved; defaults and seeds are applied later. */
 function readStoredSettings() {
   try {
@@ -237,8 +246,8 @@ function cacheKey(settings, text) {
   return hash.update(voice).update('\u0000').update(text, 'utf8').digest('hex')
 }
 
-function cacheFile(hash) {
-  return path.join(cacheDir(), hash + '.wav')
+function cacheFile(hash, pinned = false) {
+  return path.join(pinned ? fixedCacheDir() : cacheDir(), hash + '.wav')
 }
 
 /** True when the file is a WAV body we can stream; a damaged entry is dropped. */
@@ -258,23 +267,36 @@ function hasCachedWav(file) {
   return false
 }
 
-function cacheStats() {
+function countCache(dir) {
   let files = 0
   let bytes = 0
   try {
-    for (const entry of fs.readdirSync(cacheDir())) {
+    for (const entry of fs.readdirSync(dir)) {
       if (!entry.endsWith('.wav')) continue
-      try { bytes += fs.statSync(path.join(cacheDir(), entry)).size } catch {}
+      try { bytes += fs.statSync(path.join(dir, entry)).size } catch {}
       files += 1
     }
   } catch {}
-  return { files, bytes, dir: cacheDir() }
+  return { files, bytes }
+}
+
+function cacheStats() {
+  const pinned = countCache(fixedCacheDir())
+  const loose = countCache(cacheDir())
+  return {
+    files: loose.files + pinned.files,
+    bytes: loose.bytes + pinned.bytes,
+    dir: cacheDir(),
+    pinned,
+  }
 }
 
 function pruneCache(maxBytes) {
   try {
     const rows = []
     let total = 0
+    // Only the loose folder is subject to eviction: `fixed/` holds the spoken
+    // markers, which are tiny and must stay available for every read.
     for (const entry of fs.readdirSync(cacheDir())) {
       if (!entry.endsWith('.wav')) continue
       const file = path.join(cacheDir(), entry)
@@ -295,12 +317,14 @@ function pruneCache(maxBytes) {
 
 function clearCache() {
   let removed = 0
-  try {
-    for (const entry of fs.readdirSync(cacheDir())) {
-      if (!entry.endsWith('.wav')) continue
-      try { fs.unlinkSync(path.join(cacheDir(), entry)); removed += 1 } catch {}
-    }
-  } catch {}
+  for (const dir of [cacheDir(), fixedCacheDir()]) {
+    try {
+      for (const entry of fs.readdirSync(dir)) {
+        if (!entry.endsWith('.wav')) continue
+        try { fs.unlinkSync(path.join(dir, entry)); removed += 1 } catch {}
+      }
+    } catch {}
+  }
   return removed
 }
 
@@ -341,8 +365,72 @@ function isTableSeparator(line) {
   return (line.match(/-/g) || []).length >= 3
 }
 
-/** Drop every row of a table: a spoken table is noise, not speech. */
-function dropTables(text) {
+/**
+ * Blocks that are not read aloud are still announced. Dropping them silently
+ * makes the reader skip from one sentence into the next, which sounds like a
+ * lost line; one short marker per block fixes that. Every marker is a fixed
+ * string on its own paragraph, so it is synthesized once per voice and then
+ * served from the pinned cache folder (`BLOCK_MARKER_TEXTS` keys that lookup).
+ */
+export const BLOCK_MARKERS = {
+  code: '这里是代码块',
+  mermaid: '这里是 Mermaid 图表',
+  sequence: '这里是时序图',
+  flowchart: '这里是流程图',
+  classDiagram: '这里是类图',
+  stateDiagram: '这里是状态图',
+  erDiagram: '这里是 ER 图',
+  requirementDiagram: '这里是需求图',
+  gantt: '这里是甘特图',
+  pie: '这里是饼图',
+  mindmap: '这里是思维导图',
+  timeline: '这里是时间线',
+  gitGraph: '这里是 Git 分支图',
+  journey: '这里是用户旅程图',
+  quadrantChart: '这里是象限图',
+  xychart: '这里是坐标图',
+  sankey: '这里是桑基图',
+  table: '这里是表格',
+  math: '这里是公式',
+  image: '这里是图片',
+}
+
+/** Every spoken stand-in, so their audio can be pinned instead of evicted. */
+export const BLOCK_MARKER_TEXTS = new Set(Object.values(BLOCK_MARKERS))
+
+/** Which marker a Mermaid diagram earns, judging by its first meaningful line. */
+export function mermaidMarker(body) {
+  const first = String(body || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith('%%')) || ''
+  const head = first.toLowerCase()
+  const rules = [
+    ['sequencediagram', BLOCK_MARKERS.sequence],
+    ['flowchart', BLOCK_MARKERS.flowchart],
+    ['graph', BLOCK_MARKERS.flowchart],
+    ['classdiagram', BLOCK_MARKERS.classDiagram],
+    ['statediagram', BLOCK_MARKERS.stateDiagram],
+    ['erdiagram', BLOCK_MARKERS.erDiagram],
+    ['requirementdiagram', BLOCK_MARKERS.requirementDiagram],
+    ['gantt', BLOCK_MARKERS.gantt],
+    ['pie', BLOCK_MARKERS.pie],
+    ['mindmap', BLOCK_MARKERS.mindmap],
+    ['timeline', BLOCK_MARKERS.timeline],
+    ['gitgraph', BLOCK_MARKERS.gitGraph],
+    ['journey', BLOCK_MARKERS.journey],
+    ['quadrantchart', BLOCK_MARKERS.quadrantChart],
+    ['xychart', BLOCK_MARKERS.xychart],
+    ['sankey', BLOCK_MARKERS.sankey],
+  ]
+  for (const [prefix, marker] of rules) {
+    if (head.startsWith(prefix)) return marker
+  }
+  return BLOCK_MARKERS.mermaid
+}
+
+/** Swap every table for one marker line: a spoken table is noise, not speech. */
+function replaceTables(text, blockKeep) {
   const lines = text.split('\n')
   const drop = new Array(lines.length).fill(false)
   for (let i = 0; i < lines.length; i += 1) {
@@ -354,27 +442,48 @@ function dropTables(text) {
     while (end < lines.length && lines[end].trim() !== '' && lines[end].includes('|')) end += 1
     for (let k = start + 1; k < end; k += 1) drop[k] = true
   }
-  return lines.filter((line, index) => !drop[index]).join('\n')
+  const out = []
+  let index = 0
+  while (index < lines.length) {
+    if (!drop[index]) {
+      out.push(lines[index])
+      index += 1
+      continue
+    }
+    // One marker for the whole table, no matter how many rows it had.
+    while (index < lines.length && drop[index]) index += 1
+    out.push('', blockKeep(BLOCK_MARKERS.table), '')
+  }
+  return out.join('\n')
 }
 
 export function stripMarkdown(markdown) {
   let text = String(markdown || '').replace(/\r\n?/g, '\n')
-  // Fenced code is skipped: reading code aloud is noise, and this also covers
-  // ```mermaid diagrams.
-  text = text.replace(/^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
+  // Block stand-ins are stashed with their own token: they must survive the
+  // inline cleanup below and come back as standalone paragraphs.
+  const blocks = []
+  const blockKeep = (marker) => '\u0001' + (blocks.push(marker) - 1) + '\u0001'
+  // Fenced code (including ```mermaid diagrams) is not read aloud; it is
+  // announced with the matching marker instead.
+  text = text.replace(/^[ \t]*(```|~~~)([^\n]*)\n([\s\S]*?)^[ \t]*\1[ \t]*$/gm, (_full, _fence, info, body) => {
+    const language = String(info || '').trim().split(/\s+/)[0].toLowerCase()
+    return blockKeep(language === 'mermaid' ? mermaidMarker(body) : BLOCK_MARKERS.code)
+  })
   // Inline code is short and often a word of the sentence, so it stays verbatim.
   const stash = []
   const keep = (value) => '\u0000' + (stash.push(value) - 1) + '\u0000'
   text = text.replace(/`([^`\n]+)`/g, (_, body) => keep(body))
   // Display math is not speech; inline $...$ stays, it may just be a price.
-  text = text.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/\\\[[\s\S]*?\\\]/g, '')
+  text = text.replace(/\$\$[\s\S]*?\$\$/g, () => blockKeep(BLOCK_MARKERS.math))
+  text = text.replace(/\\\[[\s\S]*?\\\]/g, () => blockKeep(BLOCK_MARKERS.math))
   // Footnote definitions disappear; the markers left in the prose go too.
   text = text.replace(/^[ \t]*\[\^[^\]]+\]:[^\n]*$/gm, '')
   text = text.replace(/\[\^[^\]]+\]/g, '')
   // Unescape markdown escapes before the markers themselves are stripped.
   text = text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1')
-  // Images render as pictures, so the alt text is not spoken.
-  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+  // Images render as pictures, so the alt text is not spoken; say a picture is
+  // there and move on.
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, () => blockKeep(BLOCK_MARKERS.image))
   // Links speak their label only.
   text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
   // HTML: keep the words, drop the tags.
@@ -386,7 +495,7 @@ export function stripMarkdown(markdown) {
   text = text.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, '')
   text = text.replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, '')
   // Tables go before the pipe cleanup, or their cells become words.
-  text = dropTables(text)
+  text = replaceTables(text, blockKeep)
   // Any remaining mid-line pipes become spaces.
   text = text.replace(/^[ \t]*\|/gm, ' ').replace(/\|[ \t]*$/gm, ' ').replace(/\|/g, ' ')
   // Emphasis: only paired markers that do not sit inside a word, so snake_case
@@ -397,6 +506,8 @@ export function stripMarkdown(markdown) {
   text = text.replace(/(?<![\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, '$1')
   text = text.replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
   text = text.replace(/\u0000(\d+)\u0000/g, (_, index) => stash[index])
+  // Give every marker its own paragraph, so it becomes its own speech unit.
+  text = text.replace(/\u0001(\d+)\u0001/g, (_, index) => '\n\n' + blocks[Number(index)] + '\n\n')
   return text
 }
 
@@ -1110,7 +1221,9 @@ export function apply(ctx, config) {
           }
         }
         const units = unitTexts.map((unit) => {
-          const file = cacheFile(cacheKey(current, unit))
+          // Markers are fixed strings: pin their audio so eviction never costs
+          // the user a re-synthesis of "here is a table".
+          const file = cacheFile(cacheKey(current, unit), BLOCK_MARKER_TEXTS.has(unit))
           return { unit, file, cached: hasCachedWav(file) }
         })
         if (units.length === 0) {
@@ -1128,7 +1241,10 @@ export function apply(ctx, config) {
 
         /** PCM for one unit: the cached WAV body, or upstream bytes teed to disk. */
         async function* unitChunks(item) {
-          if (item.cached) {
+          // Hit testing here, not only when the plan was built: a message with
+          // several tables repeats the same marker text, and the first occurrence
+          // writes the file this one must stream instead of synthesizing again.
+          if (item.cached || hasCachedWav(item.file)) {
             const stream = fs.createReadStream(item.file, { start: WAV_HEADER_BYTES })
             try {
               for await (const chunk of stream) yield chunk
@@ -1144,7 +1260,7 @@ export function apply(ctx, config) {
           let completed = false
           try {
             try {
-              fs.mkdirSync(cacheDir(), { recursive: true })
+              fs.mkdirSync(path.dirname(item.file), { recursive: true })
               tmp = item.file + '.' + process.pid + '.' + upstreams + '.' + Date.now() + '.tmp'
               fd = fs.openSync(tmp, 'w')
               writeWavHeader(fd)
@@ -1172,7 +1288,13 @@ export function apply(ctx, config) {
                 try {
                   patchWavSizes(fd, written)
                   fs.closeSync(fd)
-                  fs.renameSync(tmp, item.file)
+                  // Never overwrite an existing entry: the same text and voice is
+                  // the same audio, so a concurrent writer already stored it.
+                  if (fs.existsSync(item.file)) {
+                    try { fs.unlinkSync(tmp) } catch {}
+                  } else {
+                    fs.renameSync(tmp, item.file)
+                  }
                   pruneCache(current.cacheMaxMb * 1024 * 1024)
                 } catch {
                   try { fs.closeSync(fd) } catch {}
