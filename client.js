@@ -1240,7 +1240,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-tts-h1' }, t('自动朗读', 'Auto-read')),
           ),
           // Every switch here is auto-reading; the label only names the source,
-          // so the old "朗读时机 / when to speak" framing is gone.
+          // so the old "when to speak" framing is gone.
           check('auto', 'autoRead', t('读回复', 'Read replies'), t('回合结束的整条回复', "the turn's final reply"), config.autoRead === true),
           check('interim', 'autoReadInterim', t('读中途输出', 'Read mid-turn output'), t('需先开启「读回复」', 'needs "Read replies"'), config.autoReadInterim === true),
           check('q', 'speakQuestions', t('读提问', 'Read questions'), t('需要你作答的问题', 'prompts that need your answer'), config.speakQuestions !== false),
