@@ -246,6 +246,9 @@ window.__ModuleLoader__.load({
       // Must be created synchronously inside the click: the browser only lets a
       // gesture-created AudioContext produce sound.
       const context = new AudioContext({ sampleRate: SAMPLE_RATE })
+      // Created on a path that may not follow a gesture (SSE-driven auto-read);
+      // resume is a no-op once the page is allowed to play.
+      void context.resume().catch(() => {})
       const controller = new AbortController()
       current = { key: stateKey, cacheKey, controller, context }
       setPlayback({ key: stateKey, phase: 'loading', error: '' })
@@ -619,6 +622,24 @@ window.__ModuleLoader__.load({
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
         loadConfigOnce()
         ensureEvents(ctx)
+
+        // Keep the feed alive: reconnect if it dropped, and re-check on focus.
+        ctx.effect(() => {
+          const timer = setInterval(() => {
+            if (!eventSource) ensureEvents(ctx)
+            else if (typeof EventSource !== 'undefined' && eventSource.readyState === EventSource.CLOSED) {
+              try { eventSource.close() } catch {}
+              eventSource = null
+              ensureEvents(ctx)
+            }
+          }, 30000)
+          const onFocus = () => { if (!eventSource) ensureEvents(ctx) }
+          try { window.addEventListener('focus', onFocus) } catch {}
+          return () => {
+            clearInterval(timer)
+            try { window.removeEventListener('focus', onFocus) } catch {}
+          }
+        }, 'dsh-tts-reader: watchdog')
 
         // Follows the visible session even before it has any assistant message,
         // so auto-read always compares against the right session id.

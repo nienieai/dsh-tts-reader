@@ -390,7 +390,10 @@ export function apply(ctx, config) {
         const options = Array.isArray(item.options)
           ? item.options.map((option) => (option && typeof option.label === 'string' ? option.label.trim() : '')).filter(Boolean)
           : []
-        const optionsText = options.length ? '。选项：' + options.join('、') : ''
+        const endsWithPunctuation = /[。！？!?.,，；;:：]$/.test(body)
+        const optionsText = options.length
+          ? (endsWithPunctuation ? '选项：' : '。选项：') + options.join('、')
+          : ''
         if (head || body) parts.push(head + body + optionsText)
       }
       return parts.join('\n').slice(0, 2000)
@@ -439,7 +442,7 @@ export function apply(ctx, config) {
             const info = await scope.credentials.describe(KEY_REF)
             keyConfigured = !!(info && info.configured)
           } catch {}
-          return writeJson(response, 200, { ok: true, value: { ...current, voices: [...VOICES], cache: cacheStats(), keyConfigured } })
+          return writeJson(response, 200, { ok: true, value: { ...current, voices: [...VOICES], cache: cacheStats(), keyConfigured, sseClients: listeners.size } })
         }
         if (method !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
         const body = await readJsonBody(request)
