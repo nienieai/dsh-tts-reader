@@ -6,12 +6,13 @@
 
 - 助手消息操作行出现 🔊 按钮：第一次点击合成并播放，同时把 WAV 写入缓存。
 - 同一个按钮再点一次：直接播放缓存（客户端内存 / Host 磁盘缓存），不请求接口。
-- 设置 → 语音朗读：音色、单次字数上限、自动朗读开关、磁盘缓存上限（50–4096 MB）、缓存占用与清空、Key 是否已配置。
-- 打开自动朗读后，Host 监听 `session/event` 里的 `assistant/message`，通过 SSE 告诉页面“这条消息好了”，页面按当前会话过滤后自动开播；切换会话立刻停播。
+- 设置 → 语音朗读：音色、单次字数上限、自动朗读开关、中途输出也朗读、磁盘缓存上限（50–4096 MB）、缓存占用与清空、Key 是否已配置。
+- 打开自动朗读后，Host 监听 `session/event` 里的 `assistant/message`：每条都带 `final:false` 推送（中途输出），并在 `agent/status` 转 `idle` 时用 `final:true` 推送该回合最后一条。页面默认只播 `final:true`，因为只有最后一条会渲染官方操作行（`conversation.chat.assistant-actions` 只存在于 turn-tail），按钮一定在。
+- 打开「中途输出也朗读」后，`final:false` 的消息依次播放；若此时来了提问/审批，请求语音**排队**在它后面，卡片按钮显示「等待上条朗读完成」，点击即切断当前音频并立刻朗读请求。
 - 先选中文字再点喇叭：页面把选中的片段作为 `text` 发给 Host，只合成这一段（缓存按 消息 + 片段哈希 分键）。
 - Agent 提问（`ask_user_question`）走 `tools/execute` 旁听：Host 抽出问题与选项，经 SSE 推给页面；开启时自动念。
 - 审批请求（`approval/asked`）同样旁听：念「需要授权：<工具>，原因…」。
-- 请求等待期间，`shell.overlay` 顶层出现「朗读问题 / 朗读授权」浮动按钮（请求弹窗会覆盖输入框，所以不能放在编辑器里）；`approval/decided` 或 `tools/result` 回来后按钮消失。
+- 请求等待期间，按钮挂在请求卡片自己的头部行里（审批卡的状态行右端、提问卡的最小化/关闭左侧），用 `[data-approval-key]` / `[data-question-key]` 定位；`approval/decided` 或 `tools/result` 回来后按钮消失。
 
 ## 怎么工作
 

@@ -40,6 +40,7 @@ const DEFAULTS = {
   maxChars: 4000,
   cacheMaxMb: 200,
   autoRead: false,
+  autoReadInterim: false,
   speakQuestions: true,
   speakApprovals: true,
 }
@@ -87,9 +88,10 @@ function normalizeSettings(raw, seed) {
     ? Math.min(4096, Math.floor(merged.cacheMaxMb))
     : DEFAULTS.cacheMaxMb
   const autoRead = merged.autoRead === true
+  const autoReadInterim = merged.autoReadInterim === true
   const speakQuestions = merged.speakQuestions !== false
   const speakApprovals = merged.speakApprovals !== false
-  return { voice, maxChars, cacheMaxMb, autoRead, speakQuestions, speakApprovals }
+  return { voice, maxChars, cacheMaxMb, autoRead, autoReadInterim, speakQuestions, speakApprovals }
 }
 
 // ---------------------------------------------------------------- HTTP helpers
@@ -357,6 +359,8 @@ export function apply(ctx, config) {
   // The request the page may replay: a pending question or approval. Exposed by
   // GET /pending so the replay button does not depend on the event stream.
   let pendingPrompt = null
+  // sessionId -> the turn's latest assistant message id, published on turn close.
+  const lastAssistant = new Map()
   const broadcast = (payload) => {
     const line = 'data: ' + JSON.stringify(payload) + '\n\n'
     for (const response of listeners) {
@@ -386,9 +390,37 @@ export function apply(ctx, config) {
       if (event.type !== 'assistant/message') return
       const message = event.data && event.data.message
       if (!message || !message.id) return
-      broadcast({ type: 'assistant', sessionId: String(session.id), messageId: String(message.id) })
+      // The page reads mid-turn output only when the user opted in, so every
+      // message goes out tagged as interim...
+      const sessionId = String(session.id)
+      const messageId = String(message.id)
+      // ...and the turn's last output is remembered for the closing broadcast:
+      // that is the one the official action row (and the replay button) hosts.
+      lastAssistant.set(sessionId, messageId)
+      broadcast({ type: 'assistant', sessionId, messageId, final: false })
     } catch {}
   }), 'dsh-tts-reader: session feed')
+
+  // One turn closed: publish its last output as the final read. `agent/status`
+  // idle is the moment no driver remains, so the tail message is durable.
+  ctx.effect(() => ctx.on('agent/status', (payload) => {
+    try {
+      if (!payload || payload.status !== 'idle') return
+      const sessionId = payload.agent && payload.agent.id ? String(payload.agent.id) : ''
+      if (!sessionId) return
+      const messageId = lastAssistant.get(sessionId)
+      if (!messageId) return
+      lastAssistant.delete(sessionId)
+      broadcast({ type: 'assistant', sessionId, messageId, final: true })
+    } catch {}
+  }), 'dsh-tts-reader: turn close')
+
+  // A disposed session leaves no tail to publish.
+  ctx.effect(() => ctx.on('session/disposed', (session) => {
+    try {
+      if (session && session.id) lastAssistant.delete(String(session.id))
+    } catch {}
+  }), 'dsh-tts-reader: session cleanup')
 
   // Questions and plan review: the tool call carries the text the user must
   // answer, so snoop the waterfall and hand it to the page.

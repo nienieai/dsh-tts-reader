@@ -40,11 +40,19 @@ window.__ModuleLoader__.load({
     // messageKey -> Float32Array[] (decoded PCM). LRU-ish by insertion order.
     const audioCache = new Map()
     let current = null // { key, controller, context }
-    let playback = { key: null, phase: 'idle', error: '' }
+    let playback = { key: null, phase: 'idle', error: '', queued: null }
     const listeners = new Set()
+
+    // Speech waiting for the current audio to end: { key, priority, speak }.
+    // Requests outrank mid-turn output, so a queued question is never dropped by
+    // an interim message arriving behind it.
+    const QUEUE_INTERIM = 1
+    const QUEUE_REQUEST = 2
+    let queuedSpeech = null
 
     // Auto-read state, kept in sync with the Host settings.
     let autoRead = false
+    let autoReadInterim = false
     let speakQuestions = true
     let speakApprovals = true
     let activeSessionId = null
@@ -58,6 +66,7 @@ window.__ModuleLoader__.load({
     function applyRemoteConfig(value) {
       if (!value || typeof value !== 'object') return
       autoRead = value.autoRead === true
+      autoReadInterim = value.autoReadInterim === true
       speakQuestions = value.speakQuestions !== false
       speakApprovals = value.speakApprovals !== false
     }
@@ -94,14 +103,14 @@ window.__ModuleLoader__.load({
         }
         if (payload.type !== 'assistant') return
         if (!autoRead) return
+        // The Host tags each message: interim output is opt-in, the turn's last
+        // output (the one with the official action row) always plays.
+        if (payload.final !== true && !autoReadInterim) return
         const sessionId = String(payload.sessionId || '')
         const messageId = String(payload.messageId || '')
         if (!sessionId || !messageId) return
         if (!activeSessionId || sessionId !== activeSessionId) return
-        const key = sessionId + ':' + messageId
-        if (autoPlayed.has(key)) return
-        autoPlayed.add(key)
-        void startReadAloud(sessionId, messageId, key)
+        autoReadMessage(sessionId, messageId)
       }
       eventSource.onerror = () => {
         // Reconnect later instead of a tight retry loop.
@@ -141,6 +150,7 @@ window.__ModuleLoader__.load({
     }
 
     function stopPlayback() {
+      clearQueue()
       if (!current) {
         setPlayback({ key: null, phase: 'idle', error: '' })
         return
@@ -152,12 +162,67 @@ window.__ModuleLoader__.load({
       setPlayback({ key: null, phase: 'idle', error: '' })
     }
 
+    function clearQueue() {
+      if (!queuedSpeech && playback.queued === null) return
+      queuedSpeech = null
+      setPlayback({ queued: null })
+    }
+
+    // Park a speech behind whatever is playing. A queued request keeps its slot
+    // over a newer interim read; an interim read never displaces a request.
+    function enqueueSpeech(key, priority, speak) {
+      if (queuedSpeech && queuedSpeech.priority > priority) return
+      queuedSpeech = { key, priority, speak }
+      setPlayback({ queued: key })
+    }
+
+    function drainQueue() {
+      const next = queuedSpeech
+      queuedSpeech = null
+      setPlayback({ queued: null })
+      if (next) {
+        try { next.speak() } catch {}
+      }
+    }
+
+    // Auto-read of one assistant message. Queues instead of cutting in, so a
+    // mid-turn read never truncates the question the user is hearing.
+    function autoReadMessage(sessionId, messageId) {
+      const key = sessionId + ':' + messageId
+      if (autoPlayed.has(key)) return
+      autoPlayed.add(key)
+      if (current) {
+        enqueueSpeech(key, QUEUE_INTERIM, () => { void startReadAloud(sessionId, messageId, key) })
+        return
+      }
+      void startReadAloud(sessionId, messageId, key)
+    }
+
+    // Speech for the pending question or approval. It waits for the current
+    // audio; the card button can cut in on demand.
+    function autoReadPrompt(key, text) {
+      if (!text) return
+      if (current && current.key !== key) {
+        enqueueSpeech(key, QUEUE_REQUEST, () => { void startReadAloud(null, null, key, { text }) })
+        return
+      }
+      void startReadAloud(null, null, key, { text })
+    }
+
+    // A user gesture: cut whatever plays and speak this now.
+    function speakNow(key, speak) {
+      clearQueue()
+      stopPlayback()
+      speak()
+    }
+
     function finish(key) {
       if (!current || current.key !== key) return
       const context = current.context
       current = null
       try { context.close() } catch {}
       setPlayback({ key: null, phase: 'idle', error: '' })
+      drainQueue()
     }
 
     function toFloat32(bytes) {
@@ -286,6 +351,7 @@ window.__ModuleLoader__.load({
       current = null
       try { context.close() } catch {}
       setPlayback({ key, phase: 'idle', error: (error && error.message) || String(error) })
+      drainQueue()
     }
 
     function SpeakerIcon() {
@@ -626,10 +692,20 @@ window.__ModuleLoader__.load({
         if (!pending || !pending.text) { wrap.style.display = 'none'; dropPopover(); return }
         wrap.style.display = 'flex'
         const playing = isPlaying()
+        // A queued request has been decided but waits behind the audio that is
+        // already playing; clicking cuts in and starts it immediately.
+        const waiting = !!pending && playback.queued === keyOf(pending)
         const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
-        iconEl.textContent = playing ? '⏹' : '🔊'
-        labelEl.textContent = playing ? t('停止', 'Stop') : label
-        button.title = playing ? t('点击停止', 'Click to stop') : label
+        const waitingLabel = t('等待上条朗读完成', 'Waiting for the current read')
+        if (waiting && !playing) {
+          iconEl.textContent = '⏳'
+          labelEl.textContent = waitingLabel
+          button.title = t('正在朗读上一条，点击可切断并立即朗读这一条', 'Reading the previous item — click to cut in and read this now')
+        } else {
+          iconEl.textContent = playing ? '⏹' : '🔊'
+          labelEl.textContent = playing ? t('停止', 'Stop') : label
+          button.title = playing ? t('点击停止', 'Click to stop') : label
+        }
         schedulePlace()
       }
 
@@ -650,7 +726,8 @@ window.__ModuleLoader__.load({
                 const enabled = pending.kind === 'approval' ? speakApprovals : speakQuestions
                 if (enabled) {
                   lastSpoken = pending.id
-                  void startReadAloud(null, null, keyOf(pending), { text: pending.text })
+                  // Queues behind the audio already playing; the button cuts in.
+                  autoReadPrompt(keyOf(pending), pending.text)
                 }
               }
             } else {
@@ -663,8 +740,14 @@ window.__ModuleLoader__.load({
 
       button.addEventListener('click', () => {
         if (!pending) return
+        const key = keyOf(pending)
+        // Waiting state: cut the current audio and speak this request now.
+        if (playback.queued === key) {
+          speakNow(key, () => { void startReadAloud(null, null, key, { text: pending.text }) })
+          return
+        }
         if (isPlaying()) { stopPlayback(); render(); return }
-        void startReadAloud(null, null, keyOf(pending), { text: pending.text })
+        speakNow(key, () => { void startReadAloud(null, null, key, { text: pending.text }) })
         setTimeout(render, 60)
       })
 
@@ -869,7 +952,15 @@ window.__ModuleLoader__.load({
               onChange: (event) => save({ autoRead: event.target.checked }),
             }),
             t('新回复自动朗读', 'Read new replies automatically'),
-            h('span', { className: 'dsh-tts-hint' }, t('回复结束后整条朗读', 'Speak each finished reply')),
+            h('span', { className: 'dsh-tts-hint' }, t('关闭时只读回合结束的最后一条', 'Off: only the turn\'s final message is spoken')),
+          ),
+          h('label', { className: 'dsh-tts-check', key: 'interim' },
+            h('input', {
+              type: 'checkbox', checked: config.autoReadInterim === true, disabled: busy,
+              onChange: (event) => save({ autoReadInterim: event.target.checked }),
+            }),
+            t('中途输出也朗读', 'Read intermediate output too'),
+            h('span', { className: 'dsh-tts-hint' }, t('回合中间的每段输出依次朗读；提问/授权排在它后面', 'Speaks each mid-turn message in order; requests queue behind it')),
           ),
           h('label', { className: 'dsh-tts-check', key: 'q' },
             h('input', {
