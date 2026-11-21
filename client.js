@@ -584,8 +584,62 @@ window.__ModuleLoader__.load({
       const context = current.context
       current = null
       try { context.close() } catch {}
-      setPlayback({ key, phase: 'idle', error: (error && error.message) || String(error) })
+      const message = (error && error.message) || String(error)
+      setPlayback({ key, phase: 'idle', error: message })
+      // The button only keeps the text in a tooltip, which is gone as soon as
+      // the pointer moves; put the failure where it can be read and copied.
+      console.warn('[dsh-tts-reader] playback failed:', message)
+      showFailureToast(message)
       drainQueue()
+    }
+
+    // A dismissible top-layer card for playback failures. Popover keeps it above
+    // modals and transforms, the same trick the request-card button uses.
+    let toastEl = null
+    let toastTimer = 0
+
+    function hideFailureToast() {
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0 }
+      const node = toastEl
+      toastEl = null
+      if (!node) return
+      try { if (node.matches && node.matches(':popover-open')) node.hidePopover() } catch {}
+      try { node.remove() } catch {}
+    }
+
+    function showFailureToast(message) {
+      if (typeof document === 'undefined' || !document.body) return
+      hideFailureToast()
+      const node = document.createElement('div')
+      try { node.setAttribute('popover', 'manual') } catch {}
+      node.setAttribute('role', 'alert')
+      node.style.cssText = 'position:fixed;inset:auto 16px 16px auto;margin:0;z-index:2147483646;'
+        + 'max-width:min(420px,calc(100vw - 32px));padding:11px 34px 12px 13px;border-radius:10px;'
+        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);background:var(--dsw-alias-bg-layer-2,#1c1c1c);'
+        + 'color:var(--dsw-alias-label-primary,#eee);font-size:12px;line-height:1.5;'
+        + 'box-shadow:0 8px 28px rgba(0,0,0,.38);font-family:inherit'
+      const title = document.createElement('div')
+      title.textContent = t('朗读失败', 'Playback failed')
+      title.style.cssText = 'font-weight:600;margin-bottom:4px;color:#e5484d'
+      const body = document.createElement('div')
+      body.textContent = String(message || '')
+      body.style.cssText = 'white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text'
+      const close = document.createElement('button')
+      close.type = 'button'
+      close.textContent = '×'
+      close.setAttribute('aria-label', t('关闭', 'Dismiss'))
+      close.style.cssText = 'position:absolute;top:3px;right:4px;padding:2px 6px;border:0;background:transparent;'
+        + 'color:inherit;font-size:16px;line-height:1;cursor:pointer;opacity:.7'
+      close.onclick = hideFailureToast
+      node.append(title, body, close)
+      document.body.appendChild(node)
+      try { if (typeof node.showPopover === 'function') node.showPopover() } catch {
+        // Without the top layer the fixed position still works, but a popover
+        // left unshown would stay display:none.
+        try { node.removeAttribute('popover') } catch {}
+      }
+      toastEl = node
+      toastTimer = setTimeout(hideFailureToast, 30000)
     }
 
     function SpeakerIcon() {
@@ -1148,6 +1202,71 @@ window.__ModuleLoader__.load({
       })
     }
 
+    // Offline installation guide. A native <dialog> keeps it in the browser top
+    // layer, so the settings pane's own scroll box cannot clip it, and Escape or
+    // a backdrop click close it without extra listeners.
+    function InstallGuide(props) {
+      const open = props && props.open === true
+      const onClose = props && typeof props.onClose === 'function' ? props.onClose : () => {}
+      const ref = React.useRef(null)
+
+      React.useEffect(() => {
+        const node = ref.current
+        if (!node) return
+        if (open) {
+          try { if (!node.open && typeof node.showModal === 'function') node.showModal() } catch {}
+        } else {
+          try { if (node.open) node.close() } catch {}
+        }
+      }, [open])
+
+      if (!open) return null
+
+      const link = (key, href, text) => h('a', { key, href, target: '_blank', rel: 'noreferrer noopener' }, text)
+
+      return h('dialog', {
+        ref,
+        className: 'dsh-tts-dialog',
+        onClose,
+        // A backdrop click lands on the <dialog> element itself.
+        onClick: (event) => { if (event.target === event.currentTarget) onClose() },
+      },
+        h('div', { className: 'dsh-tts-dialog-head', key: 'head' },
+          h('span', { className: 'dsh-tts-dialog-title', key: 'title' }, t('离线安装 Piper', 'Install Piper offline')),
+          h('button', { key: 'close', className: 'dsh-tts-close', type: 'button', 'aria-label': t('关闭', 'Close'), onClick: onClose }, '×'),
+        ),
+        h('div', { className: 'dsh-tts-dialog-body', key: 'body' },
+          h('div', { key: 'intro' }, t(
+            '插件只负责朗读，不含 Piper 程序和语音模型。装好一次之后，合成完全离线、不花钱。',
+            'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.')),
+          h('ol', { key: 'steps' },
+            h('li', { key: 's1' }, t(
+              '准备程序：取一个 piper 可执行文件。只用「花颜」的话，2023 版自包含包即可（约 37 MB，解压即用）；要用「超文 / 小雅」得装 Python 3.9–3.12 的 pip 版：pip install "piper-tts[zh]"。',
+              'Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install "piper-tts[zh]".')),
+            h('li', { key: 's2' }, t(
+              '准备音色：一个音色是「.onnx + 同名 .json」两个文件，放进同一个目录（各约 60 MB）。超文 / 小雅 还要求该目录下有 g2pW/（约 260 MB）和 BERT 分词器（约 0.1 MB）。',
+              'Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.')),
+            h('li', { key: 's3' }, t(
+              '填路径：回到上方，引擎选「本地 Piper」，填好「程序」与「音色模型」，状态变成「已就绪」就能离线朗读。',
+              'Fill it in: pick "Local Piper" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.')),
+          ),
+          h('div', { className: 'dsh-tts-kv', key: 'size' }, t(
+            '占用参考：花颜 ≈ 97 MB（程序 37 + 模型 60）；超文 / 小雅 ≈ 660 MB（再加 g2pW 与分词器）。',
+            'Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.')),
+          h('div', { className: 'dsh-tts-dialog-foot', key: 'links' },
+            t('程序：', 'Program: '), link('piper', 'https://github.com/OHF-Voice/piper1-gpl', 'piper1-gpl'),
+            t('，旧版也能用：', '; the older build works too: '), link('rhasspy', 'https://github.com/rhasspy/piper', 'rhasspy/piper'),
+            h('br', { key: 'br' }),
+            t('模型：', 'Voices: '), link('voices', 'https://huggingface.co/rhasspy/piper-voices', 'rhasspy/piper-voices'),
+            t('，国内可用镜像 HF_ENDPOINT=https://hf-mirror.com。', '; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.'),
+          ),
+          h('div', { className: 'dsh-tts-dialog-foot', key: 'legal' }, t(
+            'Piper 与 espeak-ng 是 GPL-3.0，语音模型各自另有限制条款；本插件不分发这些文件。',
+            'Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.')),
+        ),
+      )
+    }
+
     function TtsSettings() {
       const [config, setConfig] = React.useState(null)
       const [notice, setNotice] = React.useState('')
@@ -1156,6 +1275,7 @@ window.__ModuleLoader__.load({
       // The speed slider previews while dragging and only saves on release, so
       // one drag is one write instead of dozens.
       const [speedDraft, setSpeedDraft] = React.useState(null)
+      const [guideOpen, setGuideOpen] = React.useState(false)
       useLocaleTick()
 
       const load = React.useCallback(() => {
@@ -1212,11 +1332,22 @@ window.__ModuleLoader__.load({
       const localEngine = config.engine === 'piper'
       const piperReady = localEngine && piper.exe === true && piper.model === true
 
-      const row = (key, label, control, meta) => h('div', { className: 'dsh-tts-row', key },
-        h('span', { className: 'dsh-tts-label' }, label),
-        control,
-        meta ? (typeof meta === 'string' ? h('span', { className: 'dsh-tts-meta' }, meta) : meta) : null,
+      // One card head: title, optional right-hand status, one explanatory line.
+      const head = (key, title, hint, extra) => h('div', { className: 'dsh-tts-head', key },
+        h('div', { className: 'dsh-tts-headrow', key: 'title' },
+          h('span', { className: 'dsh-tts-h1', key: 'h' }, title),
+          extra || null),
+        hint ? h('div', { className: 'dsh-tts-hint', key: 'hint' }, hint) : null,
       )
+
+      // Two columns only: a fixed label gutter and one control column that every
+      // control fills, so selects, inputs and buttons share the same edges.
+      const row = (key, label, control) => h('div', { className: 'dsh-tts-row', key },
+        h('span', { className: 'dsh-tts-label', key: 'label' }, label),
+        h('span', { className: 'dsh-tts-grow', key: 'control' }, control),
+      )
+
+      const badge = (key, ok, text) => h('span', { className: 'dsh-tts-badge ' + (ok ? 'ok' : 'warn'), key }, text)
 
       const check = (key, field, text, hint, checked) => h('label', { className: 'dsh-tts-check', key },
         h('input', {
@@ -1229,117 +1360,109 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-tts-settings' },
         h('div', { className: 'dsh-tts-card', key: 'engine' },
-          h('div', { className: 'dsh-tts-head', key: 'head' },
-            h('div', { className: 'dsh-tts-h1', key: 'h' }, t('合成引擎', 'Engine')),
-            h('div', { className: 'dsh-tts-hint', key: 'd' },
-              t('云端走 DeepSeek 的 TTS 接口，需要 Key 和网络；本地走你自己装的 Piper，离线、不花钱。',
-                'Cloud uses the DeepSeek TTS API (key and network required); local uses your own Piper install (offline, no cost).')),
-          ),
+          head('head', t('合成引擎', 'Engine'),
+            t('云端走 DeepSeek 的 TTS 接口，需要 Key 和网络；本地走你自己装的 Piper，离线、不花钱。',
+              'Cloud uses the DeepSeek TTS API (key and network required); local uses your own Piper install (offline, no cost).'),
+            badge('status', localEngine ? piperReady : true,
+              localEngine
+                ? (piperReady ? t('已就绪', 'ready') : t('需要配置', 'needs setup'))
+                : t('需联网', 'needs network'))),
           row('engine', t('引擎', 'Engine'),
-            h('span', { className: 'dsh-tts-grow' },
-              h('select', {
-                className: 'dsh-tts-select', value: config.engine || 'deepseek', disabled: busy,
-                onChange: (event) => save({ engine: event.target.value }),
-                children: [
-                  h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
-                  h('option', { value: 'piper', key: 'piper' }, t('本地 Piper（离线）', 'Local Piper (offline)')),
-                ],
-              }),
-            ),
-            localEngine
-              ? (piperReady ? t('已就绪', 'ready') : t('需要配置', 'needs setup'))
-              : t('需联网', 'needs network'),
+            h('select', {
+              className: 'dsh-tts-select', value: config.engine || 'deepseek', disabled: busy,
+              onChange: (event) => save({ engine: event.target.value }),
+              children: [
+                h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
+                h('option', { value: 'piper', key: 'piper' }, t('本地 Piper（离线）', 'Local Piper (offline)')),
+              ],
+            }),
           ),
-          localEngine ? row('piper-exe', t('程序', 'Program'),
-            h('span', { className: 'dsh-tts-grow' },
-              h(TextInput, {
-                className: 'dsh-tts-input wide', value: config.piperPath, disabled: busy,
-                placeholder: 'C:\\path\\to\\piper.exe',
-                onCommit: (value) => void save({ piperPath: value }),
-              }),
-            ),
-            piper.exe ? t('已找到', 'found') : t('未找到', 'missing'),
-          ) : null,
-          localEngine ? row('piper-model', t('音色模型', 'Voice model'),
-            h('span', { className: 'dsh-tts-grow' },
-              localVoices.length > 0
-                ? h('select', {
-                    className: 'dsh-tts-select', value: config.piperModel, disabled: busy,
-                    onChange: (event) => save({ piperModel: event.target.value }),
-                    children: [
-                      ...(localVoices.some((voice) => voice.path === config.piperModel)
-                        ? []
-                        : [h('option', { value: config.piperModel || '', key: 'current' }, t('当前（自定义路径）', 'current (custom path)'))]),
-                      ...localVoices.map((voice) => h('option', { value: voice.path, key: voice.path },
-                        voice.name + ' · ' + (voice.sampleRate / 1000).toFixed(2) + ' kHz')),
-                    ],
-                  })
-                : h(TextInput, {
-                    className: 'dsh-tts-input wide', value: config.piperModel, disabled: busy,
-                    placeholder: 'C:\\voices\\zh_CN-huayan-medium.onnx',
-                    onCommit: (value) => void save({ piperModel: value }),
-                  }),
-            ),
-            piper.model ? t('已找到', 'found') : t('未找到', 'missing'),
-          ) : null,
+          localEngine ? row('piper-exe', t('程序', 'Program'), [
+            h(TextInput, {
+              key: 'input',
+              className: 'dsh-tts-input wide', value: config.piperPath, disabled: busy,
+              placeholder: 'C:\\path\\to\\piper.exe',
+              onCommit: (value) => void save({ piperPath: value }),
+            }),
+            badge('state', piper.exe === true, piper.exe ? t('已找到', 'found') : t('未找到', 'missing')),
+          ]) : null,
+          localEngine ? row('piper-model', t('音色模型', 'Voice model'), [
+            localVoices.length > 0
+              ? h('select', {
+                  key: 'select',
+                  className: 'dsh-tts-select', value: config.piperModel, disabled: busy,
+                  onChange: (event) => save({ piperModel: event.target.value }),
+                  children: [
+                    ...(localVoices.some((voice) => voice.path === config.piperModel)
+                      ? []
+                      : [h('option', { value: config.piperModel || '', key: 'current' }, t('当前（自定义路径）', 'current (custom path)'))]),
+                    ...localVoices.map((voice) => h('option', { value: voice.path, key: voice.path },
+                      voice.name + ' · ' + (voice.sampleRate / 1000).toFixed(2) + ' kHz')),
+                  ],
+                })
+              : h(TextInput, {
+                  key: 'input',
+                  className: 'dsh-tts-input wide', value: config.piperModel, disabled: busy,
+                  placeholder: 'C:\\voices\\zh_CN-huayan-medium.onnx',
+                  onCommit: (value) => void save({ piperModel: value }),
+                }),
+            badge('state', piper.model === true, piper.model ? t('已找到', 'found') : t('未找到', 'missing')),
+          ]) : null,
           localEngine ? null : row('voice', t('音色', 'Voice'),
-            h('span', { className: 'dsh-tts-grow' },
-              h('select', {
-                className: 'dsh-tts-select', value: config.voice, disabled: busy,
-                onChange: (event) => save({ voice: event.target.value }),
-                children: [
-                  h('option', { value: 'stella', key: 'stella' }, 'stella · ' + t('女声', 'female')),
-                  h('option', { value: 'tide', key: 'tide' }, 'tide · ' + t('男声', 'male')),
-                ],
-              }),
-            ),
+            h('select', {
+              className: 'dsh-tts-select', value: config.voice, disabled: busy,
+              onChange: (event) => save({ voice: event.target.value }),
+              children: [
+                h('option', { value: 'stella', key: 'stella' }, 'stella · ' + t('女声', 'female')),
+                h('option', { value: 'tide', key: 'tide' }, 'tide · ' + t('男声', 'male')),
+              ],
+            }),
           ),
           localEngine ? null : row('key', 'API Key',
-            h('span', { className: 'dsh-tts-grow' },
-              config.keyConfigured
-                ? h('span', { className: 'dsh-tts-badge ok' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured · DEEPSEEK_API_KEY'))
-                : h('span', { className: 'dsh-tts-badge warn' }, t('未配置，请到 设置 → 模型 填 Key', 'Not configured — set a key in Settings → Models')),
-            ),
+            badge('state', config.keyConfigured === true, config.keyConfigured
+              ? t('已配置（DEEPSEEK_API_KEY）', 'Configured · DEEPSEEK_API_KEY')
+              : t('未配置，请到 设置 → 模型 填 Key', 'Not configured — set a key in Settings → Models')),
           ),
-          localEngine ? h('div', { className: 'dsh-tts-note', key: 'piper-hint' },
-            t('本地引擎需要自备 Piper 与语音模型（.onnx 与同名 .json 放一起）；填好后点喇叭即可离线合成。',
-              'The local engine needs a Piper executable and a voice model (.onnx plus its .json in the same folder). Fill both in and the speaker button synthesizes offline.')) : null,
+          localEngine ? row('guide', t('安装帮助', 'Setup'),
+            h('button', {
+              key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,
+              onClick: () => setGuideOpen(true),
+              children: t('离线安装说明', 'Offline install guide'),
+            }),
+          ) : null,
         ),
         h('div', { className: 'dsh-tts-card', key: 'speech' },
-          h('div', { className: 'dsh-tts-head' },
-            h('div', { className: 'dsh-tts-h1' }, t('朗读', 'Playback')),
-          ),
-          row('chars', t('每段上限', 'Max per part'),
-            h('span', { className: 'dsh-tts-grow' },
-              h(NumberInput, {
-                className: 'dsh-tts-input num', min: 100, max: 4000, step: 100,
-                value: config.maxChars, disabled: busy,
-                onCommit: (value) => void save({ maxChars: value }),
-              }),
-              h('span', { className: 'dsh-tts-unit' }, t('字', 'chars')),
-            ),
-          ),
-          row('speed', t('速度', 'Speed'),
-            h('span', { className: 'dsh-tts-grow' },
-              h('input', {
-                className: 'dsh-tts-range', type: 'range', min: 0.5, max: 2, step: 0.05,
-                value: speedDraft === null ? config.speed : speedDraft,
-                disabled: busy,
-                'aria-label': t('朗读速度', 'Playback speed'),
-                onChange: (event) => setSpeedDraft(event.target.value),
-                onPointerUp: commitSpeed,
-                onKeyUp: commitSpeed,
-                onBlur: commitSpeed,
-              }),
-              h('span', { className: 'dsh-tts-value' }, (Number(speedDraft === null ? config.speed : speedDraft) || 1).toFixed(2) + '×'),
-            ),
-            t('无变调', 'pitch kept'),
-          ),
+          head('head', t('朗读', 'Playback'),
+            t('每段字数决定一次合成多长；速度只改播放快慢，不改音调。',
+              'Part size sets how much text one synthesis covers; speed only changes playback, never pitch.')),
+          row('chars', t('每段上限', 'Max per part'), [
+            h(NumberInput, {
+              key: 'input',
+              className: 'dsh-tts-input num', min: 100, max: 4000, step: 100,
+              value: config.maxChars, disabled: busy,
+              onCommit: (value) => void save({ maxChars: value }),
+            }),
+            h('span', { className: 'dsh-tts-unit', key: 'unit' }, t('字', 'chars')),
+          ]),
+          row('speed', t('速度', 'Speed'), [
+            h('input', {
+              key: 'range',
+              className: 'dsh-tts-range', type: 'range', min: 0.5, max: 2, step: 0.05,
+              value: speedDraft === null ? config.speed : speedDraft,
+              disabled: busy,
+              'aria-label': t('朗读速度', 'Playback speed'),
+              onChange: (event) => setSpeedDraft(event.target.value),
+              onPointerUp: commitSpeed,
+              onKeyUp: commitSpeed,
+              onBlur: commitSpeed,
+            }),
+            h('span', { className: 'dsh-tts-value', key: 'value' }, (Number(speedDraft === null ? config.speed : speedDraft) || 1).toFixed(2) + '×'),
+          ]),
         ),
         h('div', { className: 'dsh-tts-card', key: 'when' },
-          h('div', { className: 'dsh-tts-head' },
-            h('div', { className: 'dsh-tts-h1' }, t('自动朗读', 'Auto-read')),
-          ),
+          head('head', t('自动朗读', 'Auto-read'),
+            t('打开后自动念出对应内容；全关掉也还能点每条回复的喇叭。',
+              'Turn these on to speak automatically; the speaker button still works with all of them off.')),
           // Every switch here is auto-reading; the label only names the source,
           // so the old "when to speak" framing is gone.
           check('auto', 'autoRead', t('读回复', 'Read replies'), t('回合结束的整条回复', "the turn's final reply"), config.autoRead === true),
@@ -1348,22 +1471,25 @@ window.__ModuleLoader__.load({
           check('ap', 'speakApprovals', t('读授权', 'Read approvals'), t('需要你确认的授权请求', 'requests that need your confirmation'), config.speakApprovals !== false),
         ),
         h('div', { className: 'dsh-tts-card', key: 'cache' },
-          h('div', { className: 'dsh-tts-head' },
-            h('div', { className: 'dsh-tts-h1' }, t('音频缓存', 'Audio cache')),
-            h('div', { className: 'dsh-tts-hint' }, (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'),
+          h('div', { className: 'dsh-tts-head', key: 'head' },
+            h('div', { className: 'dsh-tts-headrow', key: 'title' },
+              h('span', { className: 'dsh-tts-h1', key: 'h' }, t('音频缓存', 'Audio cache')),
+            ),
+            h('div', { className: 'dsh-tts-hint', key: 'hint' },
+              (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'),
             h('div', { className: 'dsh-tts-meter', key: 'meter' }, h('i', { style: { width: cachePct + '%' } })),
           ),
-          row('limit', t('上限', 'Limit'),
-            h('span', { className: 'dsh-tts-grow' },
-              h(NumberInput, {
-                className: 'dsh-tts-input num', min: MIN_CACHE_MB, max: MAX_CACHE_MB, step: 50,
-                value: config.cacheMaxMb, disabled: busy,
-                onCommit: (value) => void save({ cacheMaxMb: value }),
-              }),
-              h('span', { className: 'dsh-tts-unit' }, 'MB'),
-            ),
+          row('limit', t('上限', 'Limit'), [
+            h(NumberInput, {
+              key: 'input',
+              className: 'dsh-tts-input num', min: MIN_CACHE_MB, max: MAX_CACHE_MB, step: 50,
+              value: config.cacheMaxMb, disabled: busy,
+              onCommit: (value) => void save({ cacheMaxMb: value }),
+            }),
+            h('span', { className: 'dsh-tts-unit', key: 'unit' }, 'MB'),
             h('button', {
-              className: 'dsh-tts-btn danger', type: 'button', disabled: busy,
+              key: 'clear',
+              className: 'dsh-tts-btn danger push', type: 'button', disabled: busy,
               onClick: async () => {
                 try {
                   const response = await fetch(CLEAR_PATH, { method: 'POST' })
@@ -1375,11 +1501,12 @@ window.__ModuleLoader__.load({
               },
               children: t('清空缓存', 'Clear cache'),
             }),
-          ),
+          ]),
         ),
         h('div', { className: 'dsh-tts-foot', key: 'foot' }, t('回车、失焦或松手后保存。', 'Saves on Enter, blur, or release.')),
         notice ? h('div', { className: 'dsh-tts-toast ok', key: 'notice' }, notice) : null,
         failure ? h('div', { className: 'dsh-tts-toast err', key: 'failure' }, failure) : null,
+        h(InstallGuide, { key: 'guide', open: guideOpen, onClose: () => setGuideOpen(false) }),
       )
     }
 
@@ -1389,27 +1516,26 @@ window.__ModuleLoader__.load({
       '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
       '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
       // ---- settings page ----
-      // One rhythm: every row is a 48px three-column grid (label / control / meta),
-      // and every control is 30px tall with an explicit box model, so the page no
-      // longer changes shape per row type or per language.
+      // One rhythm: card head (title + status + one hint) over rows built from a
+      // fixed label gutter and one control column that every control fills, so
+      // the page keeps its shape per row type and per language.
       '.dsh-tts-settings{display:flex;flex-direction:column;gap:16px;font-size:13px;padding:8px 2px 20px;color:var(--dsw-alias-label-primary)}',
       '.dsh-tts-card{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}',
       '.dsh-tts-head{display:flex;flex-direction:column;gap:4px;padding:14px 16px 12px}',
+      '.dsh-tts-headrow{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}',
       '.dsh-tts-h1{font-size:13px;font-weight:600;line-height:1.4}',
       '.dsh-tts-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-head .dsh-tts-hint{font-size:12px;white-space:normal;overflow:visible}',
-      '.dsh-tts-row{box-sizing:border-box;display:grid;grid-template-columns:96px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2)}',
+      '.dsh-tts-row{box-sizing:border-box;display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;column-gap:12px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2)}',
       '.dsh-tts-label{font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-grow{display:flex;align-items:center;gap:8px;min-width:0}',
-      '.dsh-tts-meta{justify-self:end;max-width:170px;font-size:11px;line-height:1.4;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-unit{flex:0 0 auto;font-size:12px;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-tts-row > .dsh-tts-btn{justify-self:end}',
       '.dsh-tts-input,.dsh-tts-select{box-sizing:border-box;height:30px;margin:0;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.2;font-family:inherit;outline:none}',
       '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input.num{flex:0 0 auto;width:96px;text-align:right;font-variant-numeric:tabular-nums}',
       '.dsh-tts-input.wide{flex:1 1 auto;width:auto;min-width:0;text-align:left}',
       '.dsh-tts-input[type=number]::-webkit-inner-spin-button,.dsh-tts-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}',
-      '.dsh-tts-select{flex:0 1 auto;width:200px;max-width:100%;cursor:pointer}',
+      '.dsh-tts-select{flex:1 1 auto;width:auto;min-width:0;max-width:100%;cursor:pointer}',
       '.dsh-tts-range{flex:1 1 auto;min-width:80px;height:4px;margin:0;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',
       '.dsh-tts-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
       '.dsh-tts-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
@@ -1418,21 +1544,37 @@ window.__ModuleLoader__.load({
       '.dsh-tts-btn{box-sizing:border-box;height:30px;margin:0;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;font-family:inherit;cursor:pointer}',
       '.dsh-tts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}',
       '.dsh-tts-btn:disabled{opacity:.55;cursor:default}',
+      '.dsh-tts-btn.push{margin-left:auto}',
       '.dsh-tts-btn.danger:hover:not(:disabled){border-color:#e5484d;color:#e5484d}',
       '.dsh-tts-check{box-sizing:border-box;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2);font-size:13px;line-height:1.4;color:var(--dsw-alias-label-primary);cursor:pointer}',
       '.dsh-tts-check input{box-sizing:border-box;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}',
       '.dsh-tts-check-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-check .dsh-tts-hint{justify-self:end;max-width:220px}',
-      '.dsh-tts-badge{box-sizing:border-box;display:inline-flex;align-items:center;max-width:100%;height:22px;padding:0 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);font-size:11px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-badge{box-sizing:border-box;display:inline-flex;align-items:center;flex:0 1 auto;max-width:100%;min-width:0;min-height:22px;padding:2px 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);font-size:11px;line-height:1.35;white-space:normal;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary)}',
       '.dsh-tts-badge.ok{color:#30a46c;border-color:rgba(48,164,108,.5)}',
       '.dsh-tts-badge.warn{color:#e5484d;border-color:rgba(229,72,77,.5)}',
       '.dsh-tts-head .dsh-tts-meter{height:4px;margin-top:8px;border-radius:2px;background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
       '.dsh-tts-meter i{display:block;height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary);transition:width .25s}',
       '.dsh-tts-foot{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);padding:0 2px}',
-      '.dsh-tts-note{padding:10px 16px 12px;border-top:1px solid var(--dsw-alias-border-l2);font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
       '.dsh-tts-toast{font-size:12px;line-height:1.5;padding:0 2px}',
       '.dsh-tts-toast.ok{color:#30a46c}',
       '.dsh-tts-toast.err{color:#e5484d}',
+      // ---- install guide dialog ----
+      // A native <dialog> owns the top layer, the backdrop and Escape, so the
+      // guide cannot be clipped by the settings pane's own scroll box.
+      '.dsh-tts-dialog{box-sizing:border-box;width:min(560px,calc(100vw - 48px));max-height:min(82vh,720px);margin:auto;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.6;box-shadow:0 18px 48px rgba(0,0,0,.45);overflow:auto}',
+      '.dsh-tts-dialog::backdrop{background:rgba(0,0,0,.45)}',
+      '.dsh-tts-dialog-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}',
+      '.dsh-tts-dialog-title{font-size:14px;font-weight:600;line-height:1.4}',
+      '.dsh-tts-close{box-sizing:border-box;height:26px;min-width:26px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:14px;line-height:1;font-family:inherit;cursor:pointer}',
+      '.dsh-tts-close:hover{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}',
+      '.dsh-tts-dialog-body{display:flex;flex-direction:column;gap:12px;padding:14px 16px 18px}',
+      '.dsh-tts-dialog-body ol{display:flex;flex-direction:column;gap:8px;margin:0;padding-left:20px}',
+      '.dsh-tts-dialog-body li{margin:0}',
+      '.dsh-tts-kv{font-size:12px;line-height:1.6;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-3)}',
+      '.dsh-tts-dialog-foot{font-size:11px;line-height:1.7;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-dialog a{color:var(--dsw-alias-state-business-primary);text-decoration:none}',
+      '.dsh-tts-dialog a:hover{text-decoration:underline}',
     ].join('\n')
 
     function injectStyles() {
