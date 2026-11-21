@@ -347,8 +347,9 @@ window.__ModuleLoader__.load({
       // is pending puts it above that dialog.
       try { wrap.setAttribute('popover', 'manual') } catch {}
       // The popover UA stylesheet sets `inset: 0`; without explicit left/bottom
-      // the element sticks to the top-left corner.
-      wrap.style.cssText = 'position:fixed;top:56px;right:18px;left:auto;bottom:auto;'
+      // the element sticks to the top-left corner. `top`/`right` are recomputed
+      // by place() below so the button tracks the dialog it belongs to.
+      wrap.style.cssText = 'position:fixed;left:auto;bottom:auto;'
         + 'z-index:2147483647;display:none;'
         + 'margin:0;padding:0;border:0;background:transparent;overflow:visible'
       const button = document.createElement('button')
@@ -364,11 +365,134 @@ window.__ModuleLoader__.load({
       button.appendChild(labelEl)
       wrap.appendChild(button)
       document.body.appendChild(wrap)
+      let removed = false
+
+      // Placement ---------------------------------------------------------
+      // A hard-coded viewport offset drifts away from the request dialog as the
+      // window changes. Measure the open dialog's visible card instead and pin
+      // the button to its top-right corner, re-measuring whenever the layout
+      // could have moved (resize, dialog resize, scroll, open animation).
+      const CORNER_INSET = 10
+      const BUTTON_LIFT = 32
+      const EDGE_MIN = 8
+
+      // Fixed offsets resolve against the nearest ancestor with a transform,
+      // filter, perspective or contain — not the viewport. Return that box so a
+      // measured card rect can be converted into the right coordinate space.
+      const offsetBase = () => {
+        let node = wrap.parentElement
+        while (node && node !== document.documentElement && node !== document.body) {
+          let style
+          try { style = getComputedStyle(node) } catch { style = null }
+          if (style) {
+            const contain = String(style.contain || '')
+            if ((style.transform && style.transform !== 'none')
+              || (style.filter && style.filter !== 'none')
+              || (style.perspective && style.perspective !== 'none')
+              || String(style.willChange || '').includes('transform')
+              || /paint|layout|strict|content/.test(contain)) {
+              return node.getBoundingClientRect()
+            }
+          }
+          node = node.parentElement
+        }
+        return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+      }
+
+      // The visible card of the open dialog: the dialog itself, unless it is a
+      // full-viewport wrapper whose centered card is a child.
+      const dialogCardBox = () => {
+        const dialog = document.querySelector('dialog[open]')
+        if (!dialog) return null
+        const rect = dialog.getBoundingClientRect()
+        if (rect.width < 80 || rect.height < 60) return null
+        const vw = window.innerWidth
+        const vh = window.innerHeight
+        if (rect.width <= vw * 0.92 || rect.height <= vh * 0.92) return rect
+        let best = null
+        let bestArea = 0
+        for (const child of dialog.querySelectorAll('div,section,form,article')) {
+          if (wrap.contains(child)) continue
+          const r = child.getBoundingClientRect()
+          if (r.width < 200 || r.height < 80) continue
+          if (r.width > vw * 0.98 && r.height > vh * 0.98) continue
+          const area = r.width * r.height
+          if (area > bestArea) { best = r; bestArea = area }
+        }
+        return best || rect
+      }
+
+      let placeFrame = 0
+      const place = () => {
+        placeFrame = 0
+        if (removed) return
+        const base = offsetBase()
+        const card = dialogCardBox()
+        // Offsets are relative to `base`, which is the viewport for a plain
+        // fixed element but an ancestor box when that ancestor creates a
+        // containing block, so everything is measured against base.top/right.
+        let top
+        let right
+        if (card) {
+          const cardTop = card.top - base.top
+          // Sit on the card's top edge, right-aligned; fall inside when the
+          // card already touches the top of the screen.
+          top = cardTop - BUTTON_LIFT
+          if (top < EDGE_MIN) top = cardTop + EDGE_MIN
+          right = base.right - card.right + CORNER_INSET
+        } else {
+          top = 56
+          right = CORNER_INSET + 8
+        }
+        const maxTop = Math.max((base.bottom - base.top) - 36, EDGE_MIN)
+        top = Math.min(Math.max(top, EDGE_MIN), maxTop)
+        right = Math.max(right, EDGE_MIN)
+        wrap.style.top = Math.round(top) + 'px'
+        wrap.style.right = Math.round(right) + 'px'
+        wrap.style.left = 'auto'
+        wrap.style.bottom = 'auto'
+      }
+
+      const schedulePlace = () => {
+        if (placeFrame) return
+        try { placeFrame = requestAnimationFrame(place) } catch { placeFrame = 0; place() }
+      }
+
+      // Request dialogs animate in, so the corner keeps moving for a moment
+      // after they appear: poll the position briefly instead of trusting one
+      // measurement.
+      let settleTimer = 0
+      const settlePlace = () => {
+        try { clearInterval(settleTimer) } catch {}
+        let ticks = 12
+        settleTimer = setInterval(() => {
+          place()
+          if (--ticks <= 0) { try { clearInterval(settleTimer) } catch {} settleTimer = 0 }
+        }, 50)
+      }
+
+      let sizeObserver = null
+      let observedDialog = null
+      const watchLayout = () => {
+        if (removed) return
+        const dialog = document.querySelector('dialog[open]')
+        if (dialog === observedDialog) return
+        if (sizeObserver) { try { sizeObserver.disconnect() } catch {} sizeObserver = null }
+        observedDialog = dialog
+        if (!dialog || typeof ResizeObserver !== 'function') return
+        try {
+          sizeObserver = new ResizeObserver(() => schedulePlace())
+          sizeObserver.observe(dialog)
+        } catch { sizeObserver = null }
+      }
+
+      const onViewportChange = () => { watchLayout(); schedulePlace() }
+      window.addEventListener('resize', onViewportChange)
+      document.addEventListener('scroll', schedulePlace, true)
 
       let pending = null
       let lastSpoken = null
       let raisedFor = null
-      let removed = false
 
       const keyOf = (value) => 'prompt:' + (value.kind === 'approval' ? 'approval:' : '') + value.id
       const isPlaying = () => !!(current && pending && current.key === keyOf(pending))
@@ -391,7 +515,11 @@ window.__ModuleLoader__.load({
         try {
           const dialog = document.querySelector('dialog[open]')
           const target = dialog || document.body
-          if (wrap.parentNode !== target) target.appendChild(wrap)
+          if (wrap.parentNode !== target) {
+            target.appendChild(wrap)
+            watchLayout()
+            settlePlace()
+          }
         } catch {}
       }
 
@@ -404,6 +532,7 @@ window.__ModuleLoader__.load({
         iconEl.textContent = playing ? '⏹' : '🔊'
         labelEl.textContent = playing ? t('停止', 'Stop') : label
         button.title = playing ? t('点击停止', 'Click to stop') : label
+        schedulePlace()
       }
 
       const tick = () => {
@@ -415,7 +544,7 @@ window.__ModuleLoader__.load({
             adopt()
             if (pending && pending.text) {
               // Re-raise on every new request: the dialog may have opened since.
-              if (pending.id !== raisedFor) { raisePopover(); raisedFor = pending.id }
+              if (pending.id !== raisedFor) { raisePopover(); raisedFor = pending.id; settlePlace() }
               if (pending.id !== lastSpoken) {
                 const enabled = pending.kind === 'approval' ? speakApprovals : speakQuestions
                 if (enabled) {
@@ -444,6 +573,11 @@ window.__ModuleLoader__.load({
       return () => {
         removed = true
         clearInterval(timer)
+        try { clearInterval(settleTimer) } catch {}
+        if (placeFrame) { try { cancelAnimationFrame(placeFrame) } catch {} placeFrame = 0 }
+        if (sizeObserver) { try { sizeObserver.disconnect() } catch {} sizeObserver = null }
+        try { window.removeEventListener('resize', onViewportChange) } catch {}
+        try { document.removeEventListener('scroll', schedulePlace, true) } catch {}
         try { off() } catch {}
         try { wrap.remove() } catch {}
       }
