@@ -498,7 +498,7 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         if (!body || typeof body !== 'object') return writeJson(response, 400, { ok: false, code: 'BAD_BODY', error: '请求体不是 JSON' })
         const current = readSettings()
-        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'autoRead', 'speakQuestions', 'speakApprovals']) }, null)
+        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals']) }, null)
         if (body.clearCache === true) clearCache()
         if (!writeSettings(next)) return writeJson(response, 500, { ok: false, code: 'WRITE_FAILED', error: '写入设置失败' })
         pruneCache(next.cacheMaxMb * 1024 * 1024)
