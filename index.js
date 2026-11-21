@@ -205,6 +205,23 @@ function cacheFile(hash) {
   return path.join(cacheDir(), hash + '.wav')
 }
 
+/** True when the file is a WAV body we can stream; a damaged entry is dropped. */
+function hasCachedWav(file) {
+  try {
+    const stat = fs.statSync(file)
+    if (stat.size <= WAV_HEADER_BYTES) return false
+    const magic = Buffer.alloc(4)
+    const fd = fs.openSync(file, 'r')
+    try { fs.readSync(fd, magic, 0, 4, 0) } finally { fs.closeSync(fd) }
+    if (magic.toString('ascii') === 'RIFF') return true
+  } catch {
+    return false
+  }
+  // A damaged entry must not be served: drop it and synthesize again.
+  try { fs.unlinkSync(file) } catch {}
+  return false
+}
+
 function cacheStats() {
   let files = 0
   let bytes = 0
@@ -272,6 +289,101 @@ export function pcmToWav(pcm) {
   header.write('data', 36, 'ascii')
   header.writeUInt32LE(pcm.length, 40)
   return Buffer.concat([header, pcm])
+}
+
+// ---------------------------------------------------------------- speech units
+
+/**
+ * Markdown → the plain text a reader actually sees. One cache file per
+ * paragraph is only reusable for a selection if both sides go through this
+ * same funnel: the session stores markdown, a selection is rendered text.
+ */
+export function stripMarkdown(markdown) {
+  let text = String(markdown || '').replace(/\r\n?/g, '\n')
+  // Fenced code is skipped: reading code aloud is noise, and this matches what
+  // the upstream filter_markdown used to drop for us.
+  text = text.replace(/^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
+  // Inline code is short and often a word of the sentence, so it stays verbatim.
+  const stash = []
+  const keep = (value) => '\u0000' + (stash.push(value) - 1) + '\u0000'
+  text = text.replace(/`([^`\n]+)`/g, (_, body) => keep(body))
+  // Unescape markdown escapes before the markers themselves are stripped.
+  text = text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1')
+  // Images render as pictures, so the alt text is not spoken.
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+  // Links speak their label only.
+  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  // Table separator rows (|---|:--:|) carry no words; drop the whole line,
+  // newline included, so the rows around it stay one paragraph.
+  text = text.replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*\n?/gm, '')
+  // Table cells become words separated by spaces.
+  text = text.replace(/^[ \t]*\|/gm, ' ').replace(/\|[ \t]*$/gm, ' ').replace(/\|/g, ' ')
+  // Block markers at the start of a line.
+  text = text.replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
+  text = text.replace(/^[ \t]*>[ \t]?/gm, '')
+  text = text.replace(/^[ \t]*[-*+][ \t]+/gm, '')
+  text = text.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, '')
+  text = text.replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, '')
+  // Emphasis: only paired markers that do not sit inside a word, so snake_case
+  // identifiers survive.
+  text = text.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '$1')
+  text = text.replace(/(?<![\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1')
+  text = text.replace(/(?<![\w_])__(?=\S)([\s\S]*?\S)__(?![\w_])/g, '$1')
+  text = text.replace(/(?<![\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, '$1')
+  text = text.replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
+  text = text.replace(/\u0000(\d+)\u0000/g, (_, index) => stash[Number(index)])
+  return text
+}
+
+/** Split text into speakable paragraphs; blank lines are the paragraph breaks. */
+export function toParagraphs(text) {
+  return stripMarkdown(text)
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .filter((paragraph) => paragraph.length > 0)
+}
+
+/** Best break point for a paragraph longer than one request may hold. */
+function findBreak(text, limit) {
+  const window = text.slice(0, limit)
+  let cut = -1
+  const sentence = /[。！？!?；;…][”"』」）)]?\s*/g
+  let match
+  while ((match = sentence.exec(window))) cut = match.index + match[0].length
+  if (cut > limit * 0.3) return cut
+  const comma = Math.max(window.lastIndexOf('，'), window.lastIndexOf(','), window.lastIndexOf(' '))
+  return comma > limit * 0.3 ? comma + 1 : -1
+}
+
+/**
+ * One synthesis request per unit. Paragraphs are the unit boundary; a paragraph
+ * that is still too long is cut at sentence ends, then hard at the limit.
+ */
+export function planUnits(text, limit) {
+  const units = []
+  let truncated = false
+  for (const paragraph of toParagraphs(text)) {
+    let rest = paragraph
+    while (rest.length > limit) {
+      const cut = findBreak(rest, limit)
+      if (cut <= 0) {
+        units.push(rest.slice(0, limit))
+        rest = rest.slice(limit).trim()
+        truncated = true
+        continue
+      }
+      units.push(rest.slice(0, cut).trim())
+      rest = rest.slice(cut).trim()
+    }
+    if (rest) units.push(rest)
+  }
+  return { units: units.filter((unit) => unit.length > 0), truncated }
+}
+
+/** 240 ms of silence between paragraphs, so the join does not sound cut off. */
+export const PARAGRAPH_GAP_MS = 240
+export function silenceBytes(ms = PARAGRAPH_GAP_MS) {
+  return Buffer.alloc(Math.round((SAMPLE_RATE * ms) / 1000) * 2)
 }
 
 // ---------------------------------------------------------------- TTS upstream
@@ -626,103 +738,160 @@ export function apply(ctx, config) {
           }
           if (!text) return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
         }
-        const truncated = text.length > current.maxChars
-        if (truncated) text = text.slice(0, current.maxChars)
 
-        const hash = cacheKey(current.voice, text)
-        const file = cacheFile(hash)
-        const meta = { 'x-tts-voice': current.voice, 'x-tts-truncated': truncated ? '1' : '0' }
+        // One synthesis request (and one cache file) per paragraph, so reading a
+        // single paragraph later reuses the file the whole message already made.
+        const plan = planUnits(text, current.maxChars)
+        if (plan.units.length === 0) {
+          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
+        }
+        const units = plan.units.map((unit) => {
+          const file = cacheFile(cacheKey(current.voice, unit))
+          return { unit, file, cached: hasCachedWav(file) }
+        })
+        const hits = units.filter((item) => item.cached).length
+        const cacheState = hits === units.length ? 'hit' : hits === 0 ? 'miss' : 'mixed'
 
-        // 1) Cache hit: stream the PCM body after the WAV header.
-        try {
-          const stat = fs.statSync(file)
-          if (stat.size > WAV_HEADER_BYTES) {
-            const magic = Buffer.alloc(4)
-            const head = fs.openSync(file, 'r')
-            try { fs.readSync(head, magic, 0, 4, 0) } finally { fs.closeSync(head) }
-            if (magic.toString('ascii') === 'RIFF') {
-              response.writeHead(200, pcmHeaders({ ...meta, 'x-tts-cache': 'hit', 'content-length': String(stat.size - WAV_HEADER_BYTES) }))
-              const stream = fs.createReadStream(file, { start: WAV_HEADER_BYTES })
-              stream.on('error', () => { try { response.destroy() } catch {} })
-              stream.pipe(response)
-              return
-            }
-            // A damaged entry must not be served: drop it and synthesize again.
-            try { fs.unlinkSync(file) } catch {}
-          }
-        } catch {}
-
-        // 2) Miss: stream upstream PCM to the page while teeing it into the cache.
         const controller = new AbortController()
         const abort = () => { try { controller.abort() } catch {} }
         request.on('aborted', abort)
         response.on('close', () => { if (!response.writableEnded) abort() })
 
-        let upstream
-        try {
-          upstream = await openTtsStream(scope, text, current.voice, controller.signal)
-        } catch (error) {
-          return writeJson(response, 502, {
-            ok: false,
-            code: error?.code || 'TTS_FAILED',
-            error: error?.message ?? String(error),
-          })
-        }
+        let upstreams = 0
 
-        response.writeHead(200, pcmHeaders({ ...meta, 'x-tts-cache': 'miss' }))
-
-        let tmp = null
-        let fd = -1
-        let written = 0
-        let aborted = false
-        try {
-          fs.mkdirSync(cacheDir(), { recursive: true })
-          tmp = file + '.' + process.pid + '.' + Date.now() + '.tmp'
-          fd = fs.openSync(tmp, 'w')
-          writeWavHeader(fd)
-        } catch {
-          if (fd >= 0) { try { fs.closeSync(fd) } catch {} }
-          fd = -1
-          tmp = null
-        }
-
-        try {
-          for await (const chunk of Readable.fromWeb(upstream.body)) {
-            if (controller.signal.aborted) { aborted = true; break }
-            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-            written += buffer.length
-            if (fd >= 0) {
-              try { fs.writeSync(fd, buffer) } catch {
-                try { fs.closeSync(fd) } catch {}
-                fd = -1
-              }
+        /** PCM for one unit: the cached WAV body, or upstream bytes teed to disk. */
+        async function* unitChunks(item) {
+          if (item.cached) {
+            const stream = fs.createReadStream(item.file, { start: WAV_HEADER_BYTES })
+            try {
+              for await (const chunk of stream) yield chunk
+            } finally {
+              stream.destroy()
             }
-            if (!response.write(buffer)) await once(response, 'drain')
+            return
           }
-          if (!aborted) response.end()
-        } catch {
-          aborted = true
-          try { response.destroy() } catch {}
-        } finally {
-          if (fd >= 0) {
-            if (!aborted && written > 0) {
-              try {
-                patchWavSizes(fd, written)
-                fs.closeSync(fd)
-                fs.renameSync(tmp, file)
-                pruneCache(current.cacheMaxMb * 1024 * 1024)
-              } catch {
+          upstreams += 1
+          const upstream = await openTtsStream(scope, item.unit, current.voice, controller.signal)
+          let fd = -1
+          let tmp = null
+          let written = 0
+          let completed = false
+          try {
+            try {
+              fs.mkdirSync(cacheDir(), { recursive: true })
+              tmp = item.file + '.' + process.pid + '.' + upstreams + '.' + Date.now() + '.tmp'
+              fd = fs.openSync(tmp, 'w')
+              writeWavHeader(fd)
+            } catch {
+              if (fd >= 0) { try { fs.closeSync(fd) } catch {} }
+              fd = -1
+              tmp = null
+            }
+            for await (const chunk of Readable.fromWeb(upstream.body)) {
+              if (controller.signal.aborted) break
+              const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+              written += buffer.length
+              if (fd >= 0) {
+                try { fs.writeSync(fd, buffer) } catch {
+                  try { fs.closeSync(fd) } catch {}
+                  fd = -1
+                }
+              }
+              yield buffer
+            }
+            completed = true
+          } finally {
+            if (fd >= 0) {
+              if (completed && written > 0 && !controller.signal.aborted) {
+                try {
+                  patchWavSizes(fd, written)
+                  fs.closeSync(fd)
+                  fs.renameSync(tmp, item.file)
+                  pruneCache(current.cacheMaxMb * 1024 * 1024)
+                } catch {
+                  try { fs.closeSync(fd) } catch {}
+                  try { fs.unlinkSync(tmp) } catch {}
+                }
+              } else {
                 try { fs.closeSync(fd) } catch {}
                 try { fs.unlinkSync(tmp) } catch {}
               }
-            } else {
-              try { fs.closeSync(fd) } catch {}
-              try { if (tmp) fs.unlinkSync(tmp) } catch {}
+              fd = -1
+            } else if (tmp) {
+              try { fs.unlinkSync(tmp) } catch {}
             }
-            fd = -1
-          } else if (tmp) {
-            try { fs.unlinkSync(tmp) } catch {}
           }
+        }
+
+        const writeBytes = async (bytes) => {
+          if (!bytes || bytes.length === 0) return
+          if (!response.write(bytes)) await once(response, 'drain')
+        }
+
+        // Headers wait for the first chunk, so a failure can still answer JSON.
+        let first
+        const firstGen = unitChunks(units[0])
+        try {
+          first = await firstGen.next()
+          if (first.done) {
+            try { await firstGen.return() } catch {}
+            return writeJson(response, 502, { ok: false, code: 'EMPTY_AUDIO', error: 'TTS 上游没有返回音频流' })
+          }
+        } catch (error) {
+          try { await firstGen.return() } catch {}
+          return writeJson(response, 502, { ok: false, code: error?.code || 'TTS_FAILED', error: error?.message ?? String(error) })
+        }
+
+        response.writeHead(200, pcmHeaders({
+          'x-tts-voice': current.voice,
+          'x-tts-truncated': plan.truncated ? '1' : '0',
+          'x-tts-units': String(units.length),
+          'x-tts-cache': cacheState,
+        }))
+
+        // The next paragraph is synthesized one ahead, so the join does not stall.
+        let gen = firstGen
+        let step = first
+        let index = 0
+        let pending = null
+        if (units.length > 1) {
+          const nextGen = unitChunks(units[1])
+          pending = { gen: nextGen, first: nextGen.next() }
+        }
+        try {
+          for (;;) {
+            // A closed tab must stop the prefetch chain too, not just this write.
+            if (controller.signal.aborted) break
+            if (step.done) {
+              index += 1
+              if (index >= units.length) break
+              await writeBytes(silenceBytes())
+              const next = pending
+              pending = null
+              if (next) {
+                gen = next.gen
+                step = await next.first
+              } else {
+                gen = unitChunks(units[index])
+                step = await gen.next()
+              }
+              if (index + 1 < units.length) {
+                const lookahead = unitChunks(units[index + 1])
+                pending = { gen: lookahead, first: lookahead.next() }
+              }
+              continue
+            }
+            await writeBytes(step.value)
+            step = await gen.next()
+          }
+          response.end()
+        } catch (error) {
+          if (controller.signal.aborted) return
+          log?.warn?.('[dsh-tts-reader] 朗读失败：' + (error?.message ?? String(error)))
+          try { response.end() } catch {}
+        } finally {
+          try { await gen.return() } catch {}
+          if (pending) { try { await pending.gen.return() } catch {} }
         }
       },
     }), 'dsh-tts-reader: read')

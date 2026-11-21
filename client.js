@@ -1208,7 +1208,7 @@ window.__ModuleLoader__.load({
               }),
             ),
           ),
-          row('chars', t('单次上限', 'Max chars'),
+          row('chars', t('每段上限', 'Max per part'),
             h('span', { className: 'dsh-tts-grow' },
               h(NumberInput, {
                 className: 'dsh-tts-input num', min: 100, max: 4000, step: 100,
