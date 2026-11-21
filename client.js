@@ -342,7 +342,12 @@ window.__ModuleLoader__.load({
     function mountPromptButton() {
       if (typeof document === 'undefined' || !document.body) return () => {}
       const wrap = document.createElement('div')
-      wrap.style.cssText = 'position:fixed;top:10px;right:14px;z-index:2147483647;display:none'
+      // A modal <dialog> lives in the browser's top layer, where no z-index can
+      // reach. A manual popover is also top-layer; re-showing it while a request
+      // is pending puts it above that dialog.
+      try { wrap.setAttribute('popover', 'manual') } catch {}
+      wrap.style.cssText = 'position:fixed;top:10px;right:14px;z-index:2147483647;display:none;'
+        + 'margin:0;padding:0;border:0;background:transparent;overflow:visible'
       const button = document.createElement('button')
       button.type = 'button'
       button.style.cssText = 'display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;'
@@ -359,14 +364,37 @@ window.__ModuleLoader__.load({
 
       let pending = null
       let lastSpoken = null
+      let raisedFor = null
       let removed = false
 
       const keyOf = (value) => 'prompt:' + (value.kind === 'approval' ? 'approval:' : '') + value.id
       const isPlaying = () => !!(current && pending && current.key === keyOf(pending))
 
+      const raisePopover = () => {
+        try {
+          if (typeof wrap.hidePopover === 'function') wrap.hidePopover()
+        } catch {}
+        try {
+          if (typeof wrap.showPopover === 'function') wrap.showPopover()
+        } catch {}
+      }
+      const dropPopover = () => {
+        try { if (typeof wrap.hidePopover === 'function') wrap.hidePopover() } catch {}
+      }
+
+      // A native modal <dialog> is inert-hostile: only its own subtree stays
+      // interactive. Move the button into the open dialog when there is one.
+      const adopt = () => {
+        try {
+          const dialog = document.querySelector('dialog[open]')
+          const target = dialog || document.body
+          if (wrap.parentNode !== target) target.appendChild(wrap)
+        } catch {}
+      }
+
       const render = () => {
         if (removed) return
-        if (!pending || !pending.text) { wrap.style.display = 'none'; return }
+        if (!pending || !pending.text) { wrap.style.display = 'none'; dropPopover(); return }
         wrap.style.display = 'flex'
         const playing = isPlaying()
         const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
@@ -381,12 +409,19 @@ window.__ModuleLoader__.load({
           .then((body) => {
             if (removed || !body || !body.ok) return
             pending = body.value || null
-            if (pending && pending.text && pending.id !== lastSpoken) {
-              const enabled = pending.kind === 'approval' ? speakApprovals : speakQuestions
-              if (enabled) {
-                lastSpoken = pending.id
-                void startReadAloud(null, null, keyOf(pending), { text: pending.text })
+            adopt()
+            if (pending && pending.text) {
+              // Re-raise on every new request: the dialog may have opened since.
+              if (pending.id !== raisedFor) { raisePopover(); raisedFor = pending.id }
+              if (pending.id !== lastSpoken) {
+                const enabled = pending.kind === 'approval' ? speakApprovals : speakQuestions
+                if (enabled) {
+                  lastSpoken = pending.id
+                  void startReadAloud(null, null, keyOf(pending), { text: pending.text })
+                }
               }
+            } else {
+              raisedFor = null
             }
             render()
           })
