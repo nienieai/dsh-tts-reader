@@ -336,28 +336,39 @@ window.__ModuleLoader__.load({
       return () => { listeners.delete(fn) }
     }
 
-    // Imperative button mounted straight on document.body: request dialogs can
-    // cover slot-rendered content, but a later sibling of the app root still
-    // paints above them.
+    // Replay button for a pending question or approval. It is mounted straight
+    // into the request card's own header row, so it neither floats over the card
+    // nor depends on either UI package; the top-layer fallback only covers a
+    // native modal <dialog>, which makes everything outside it inert.
     function mountPromptButton() {
       if (typeof document === 'undefined' || !document.body) return () => {}
-      const wrap = document.createElement('div')
-      // A modal <dialog> lives in the browser's top layer, where no z-index can
-      // reach. A manual popover is also top-layer; re-showing it while a request
-      // is pending puts it above that dialog.
-      try { wrap.setAttribute('popover', 'manual') } catch {}
-      // The popover UA stylesheet sets `inset: 0`; without explicit left/bottom
-      // the element sticks to the top-left corner. `top`/`right` are recomputed
-      // by place() below so the button tracks the dialog it belongs to.
-      wrap.style.cssText = 'position:fixed;left:auto;bottom:auto;'
-        + 'z-index:2147483647;display:none;'
+      // Two mount modes. Inside a request card the button is an ordinary child
+      // of the card's header row (no top layer needed, no overlap). Otherwise it
+      // floats in the browser top layer so a native modal <dialog> cannot cover
+      // it — the popover UA stylesheet sets `inset: 0`, hence explicit sides.
+      const FLOAT_STYLE = 'position:fixed;left:auto;bottom:auto;z-index:2147483647;display:none;'
         + 'margin:0;padding:0;border:0;background:transparent;overflow:visible'
+      const CARD_STYLE = 'position:static;top:auto;right:auto;display:none;z-index:auto;'
+        + 'margin:0 0 0 auto;padding:0;border:0;background:transparent;overflow:visible;'
+        + 'align-self:center;flex:0 0 auto'
+      const BUTTON_BASE = 'display:inline-flex;align-items:center;gap:6px;white-space:nowrap;'
+        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);'
+        + 'background:var(--dsw-alias-bg-layer-2,#1c1c1c);color:var(--dsw-alias-label-primary,#eee);'
+        + 'font-size:12px;font-family:inherit;cursor:pointer'
+
+      const wrap = document.createElement('div')
+      try { wrap.setAttribute('popover', 'manual') } catch {}
+      wrap.style.cssText = FLOAT_STYLE
       const button = document.createElement('button')
       button.type = 'button'
-      button.style.cssText = 'display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;'
-        + 'border-radius:14px;border:1px solid var(--dsw-alias-border-l2,#3a3a3a);'
-        + 'background:var(--dsw-alias-bg-layer-2,#1c1c1c);color:var(--dsw-alias-label-primary,#eee);'
-        + 'font-size:12px;font-family:inherit;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.32)'
+      button.style.cssText = BUTTON_BASE
+      const styleButton = (compact) => {
+        button.style.height = compact ? '24px' : '28px'
+        button.style.padding = compact ? '0 8px' : '0 10px'
+        button.style.borderRadius = compact ? '12px' : '14px'
+        button.style.boxShadow = compact ? 'none' : '0 2px 8px rgba(0,0,0,.32)'
+      }
+      styleButton(false)
       const iconEl = document.createElement('span')
       iconEl.textContent = '🔊'
       const labelEl = document.createElement('span')
@@ -367,11 +378,13 @@ window.__ModuleLoader__.load({
       document.body.appendChild(wrap)
       let removed = false
 
-      // Placement ---------------------------------------------------------
-      // A hard-coded viewport offset drifts away from the request dialog as the
-      // window changes. Measure the open dialog's visible card instead and pin
-      // the button to its top-right corner, re-measuring whenever the layout
-      // could have moved (resize, dialog resize, scroll, open animation).
+      // Request surfaces are NOT native <dialog> elements: an approval or a
+      // question takes over the composer seat and renders as ordinary DOM with
+      // a stable data hook. Neither package exposes an extension slot inside the
+      // card (approval has only the single `conversation.approval.detail` seat
+      // that the command detail already owns; the question card renders none),
+      // so the button is mounted as a real child of the card's header row.
+      const ANCHOR_ROOTS = ['[data-approval-key]', '[data-question-key]']
       const CORNER_INSET = 10
       const BUTTON_LIFT = 32
       const EDGE_MIN = 8
@@ -399,17 +412,6 @@ window.__ModuleLoader__.load({
         return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
       }
 
-      // Request surfaces are NOT native <dialog> elements: an approval or a
-      // question takes over the composer seat and renders as ordinary DOM with
-      // a stable data hook (see ui-approval ApprovalCard and ui-user-questions
-      // QuestionComposer). Query those first, then fall back to a real dialog.
-      const ANCHOR_ROOTS = [
-        '[data-approval-key]',
-        '[data-question-key]',
-        'dialog[open]',
-        '[data-composer-card]',
-      ]
-
       const anchorRoot = () => {
         for (const selector of ANCHOR_ROOTS) {
           let root = null
@@ -422,7 +424,7 @@ window.__ModuleLoader__.load({
       // The visible card inside an anchor root. Takeover roots are full-width
       // centering wrappers, so the card is usually the first element child; a
       // screen-filling wrapper needs the largest child instead.
-      const cardOf = (root) => {
+      const cardElement = (root) => {
         const rect = root.getBoundingClientRect()
         if (rect.width < 80 || rect.height < 60) return null
         const viewport = Math.max(window.innerWidth * window.innerHeight, 1)
@@ -435,41 +437,96 @@ window.__ModuleLoader__.load({
             if (r.width < 200 || r.height < 60) continue
             if (r.width * r.height > viewport * 0.85) continue
             const area = r.width * r.height
-            if (area > bestArea) { best = r; bestArea = area }
+            if (area > bestArea) { best = child; bestArea = area }
           }
           if (best) return best
         }
         const child = root.firstElementChild
-        if (child) {
+        if (child && !wrap.contains(child)) {
           const r = child.getBoundingClientRect()
-          if (r.width >= 200 && r.height >= 60) return r
+          if (r.width >= 200 && r.height >= 60) return child
         }
-        return rect
+        return root
       }
 
-      const anchorBox = () => {
+      const anchorCard = () => {
         const root = anchorRoot()
-        return root ? cardOf(root) : null
+        return root ? cardElement(root) : null
+      }
+
+      // The header row of a request card: question cards use <header> and end
+      // with their icon buttons; approval cards lead with a status strip.
+      const headerRow = (card) => {
+        let header = null
+        try { header = card.querySelector('header') } catch { header = null }
+        if (!header) {
+          const first = card.firstElementChild
+          if (!first) return null
+          const rect = first.getBoundingClientRect()
+          if (rect.height <= 0 || rect.height > 64) return null
+          header = first
+        }
+        // Sit left of the card's own icon cluster when there is one, so the
+        // button never lands after the close control. A header whose only child
+        // is that cluster appends instead.
+        const last = header.lastElementChild
+        if (last && last !== wrap) {
+          const cluster = last.children.length > 0 && last.getBoundingClientRect().width < 160
+          if (cluster && header.children.length > 1) return { row: header, before: last }
+        }
+        return { row: header, before: null }
+      }
+
+      const applyMode = (mode) => {
+        if (mode === 'card') {
+          wrap.style.cssText = CARD_STYLE
+          styleButton(true)
+          return
+        }
+        wrap.style.cssText = FLOAT_STYLE
+        try { if (!wrap.hasAttribute('popover')) wrap.setAttribute('popover', 'manual') } catch {}
+        styleButton(false)
+      }
+
+      // True when the button now lives inside the card's header row.
+      const seatInCard = (card) => {
+        const seat = headerRow(card)
+        if (!seat) return false
+        if (wrap.parentNode !== seat.row) {
+          try { if (wrap.hasAttribute('popover')) wrap.removeAttribute('popover') } catch {}
+          if (seat.before) seat.row.insertBefore(wrap, seat.before)
+          else seat.row.appendChild(wrap)
+          applyMode('card')
+          return true
+        }
+        if (seat.before && wrap.nextElementSibling !== seat.before) {
+          seat.row.insertBefore(wrap, seat.before)
+        }
+        return true
       }
 
       let placeFrame = 0
       const place = () => {
         placeFrame = 0
         if (removed) return
+        // In-card placement is ordinary flow layout; only the floating fallback
+        // needs computed coordinates.
+        if (!wrap.hasAttribute('popover')) return
         const base = offsetBase()
-        const card = anchorBox()
+        const card = anchorCard()
+        const cardRect = card ? card.getBoundingClientRect() : null
         // Offsets are relative to `base`, which is the viewport for a plain
         // fixed element but an ancestor box when that ancestor creates a
         // containing block, so everything is measured against base.top/right.
         let top
         let right
-        if (card) {
-          const cardTop = card.top - base.top
+        if (cardRect) {
+          const cardTop = cardRect.top - base.top
           // Sit on the card's top edge, right-aligned; fall inside when the
           // card already touches the top of the screen.
           top = cardTop - BUTTON_LIFT
           if (top < EDGE_MIN) top = cardTop + EDGE_MIN
-          right = base.right - card.right + CORNER_INSET
+          right = base.right - cardRect.right + CORNER_INSET
         } else {
           top = 56
           right = CORNER_INSET + 8
@@ -505,8 +562,7 @@ window.__ModuleLoader__.load({
       let observedElement = null
       const watchLayout = () => {
         if (removed) return
-        const root = anchorRoot()
-        const target = root ? (root.firstElementChild || root) : null
+        const target = anchorCard()
         if (target === observedElement) return
         if (sizeObserver) { try { sizeObserver.disconnect() } catch {} sizeObserver = null }
         observedElement = target
@@ -529,6 +585,7 @@ window.__ModuleLoader__.load({
       const isPlaying = () => !!(current && pending && current.key === keyOf(pending))
 
       const raisePopover = () => {
+        if (!wrap.hasAttribute('popover')) return
         try {
           if (typeof wrap.hidePopover === 'function') wrap.hidePopover()
         } catch {}
@@ -537,20 +594,30 @@ window.__ModuleLoader__.load({
         } catch {}
       }
       const dropPopover = () => {
+        if (!wrap.hasAttribute('popover')) return
         try { if (typeof wrap.hidePopover === 'function') wrap.hidePopover() } catch {}
       }
 
-      // A native modal <dialog> is inert-hostile: only its own subtree stays
-      // interactive. Move the button into the open dialog when there is one.
+      // Preferred mount: a real child of the request card's header row. Fallback
+      // (no card, e.g. a native modal dialog): float in the top layer, and live
+      // inside the dialog when one is open because it makes the rest inert.
       const adopt = () => {
         try {
+          const card = anchorCard()
+          if (card && seatInCard(card)) { watchLayout(); return }
+        } catch {}
+        try {
+          applyMode('float')
           const dialog = document.querySelector('dialog[open]')
           const target = dialog || document.body
-          if (wrap.parentNode !== target) {
-            target.appendChild(wrap)
-            watchLayout()
-            settlePlace()
-          }
+          if (wrap.parentNode !== target) target.appendChild(wrap)
+          // A popover that is not open is display:none by UA rule, so entering
+          // the floating mode has to reopen it.
+          let open = false
+          try { open = typeof wrap.matches === 'function' && wrap.matches(':popover-open') } catch { open = false }
+          if (!open) raisePopover()
+          settlePlace()
+          watchLayout()
         } catch {}
       }
 
