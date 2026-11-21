@@ -1110,6 +1110,44 @@ window.__ModuleLoader__.load({
       })
     }
 
+    // Text fields commit on Enter or blur, like the numeric ones: typing a path
+    // must not POST the settings file on every keystroke.
+    function TextInput(props) {
+      const value = props && typeof props.value === 'string' ? props.value : ''
+      const onCommit = props && props.onCommit
+      const [draft, setDraft] = React.useState(null)
+
+      const commit = () => {
+        const raw = draft
+        setDraft(null)
+        if (raw === null) return
+        const next = String(raw).trim()
+        if (next === value || typeof onCommit !== 'function') return
+        onCommit(next)
+      }
+
+      return h('input', {
+        className: props.className,
+        type: 'text',
+        placeholder: props.placeholder,
+        spellCheck: false,
+        disabled: props.disabled,
+        value: draft === null ? value : draft,
+        onChange: (event) => setDraft(event.target.value),
+        onBlur: commit,
+        onKeyDown: (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            commit()
+            try { event.currentTarget.blur() } catch {}
+          } else if (event.key === 'Escape') {
+            setDraft(null)
+            try { event.currentTarget.blur() } catch {}
+          }
+        },
+      })
+    }
+
     function TtsSettings() {
       const [config, setConfig] = React.useState(null)
       const [notice, setNotice] = React.useState('')
@@ -1169,6 +1207,9 @@ window.__ModuleLoader__.load({
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
       const cacheLimit = config.cacheMaxMb || 200
       const cachePct = Math.min(100, Math.round(((config.cache && config.cache.bytes ? config.cache.bytes : 0) / (cacheLimit * 1048576)) * 100))
+      const piper = config.piper || { exe: false, model: false, sampleRate: 0 }
+      const localEngine = config.engine === 'piper'
+      const piperReady = localEngine && piper.exe === true && piper.model === true
 
       const row = (key, label, control, meta) => h('div', { className: 'dsh-tts-row', key },
         h('span', { className: 'dsh-tts-label' }, label),
@@ -1236,6 +1277,44 @@ window.__ModuleLoader__.load({
             ),
             t('无变调', 'pitch kept'),
           ),
+          row('engine', t('引擎', 'Engine'),
+            h('span', { className: 'dsh-tts-grow' },
+              h('select', {
+                className: 'dsh-tts-select', value: config.engine || 'deepseek', disabled: busy,
+                onChange: (event) => save({ engine: event.target.value }),
+                children: [
+                  h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
+                  h('option', { value: 'piper', key: 'piper' }, t('本地 Piper（离线）', 'Local Piper (offline)')),
+                ],
+              }),
+            ),
+            localEngine
+              ? (piperReady ? t('已就绪', 'ready') : t('需要配置', 'needs setup'))
+              : t('需联网', 'needs network'),
+          ),
+          localEngine ? row('piper-exe', t('程序', 'Program'),
+            h('span', { className: 'dsh-tts-grow' },
+              h(TextInput, {
+                className: 'dsh-tts-input wide', value: config.piperPath, disabled: busy,
+                placeholder: 'C:\\path\\to\\piper.exe',
+                onCommit: (value) => void save({ piperPath: value }),
+              }),
+            ),
+            piper.exe ? t('已找到', 'found') : t('未找到', 'missing'),
+          ) : null,
+          localEngine ? row('piper-model', t('模型', 'Model'),
+            h('span', { className: 'dsh-tts-grow' },
+              h(TextInput, {
+                className: 'dsh-tts-input wide', value: config.piperModel, disabled: busy,
+                placeholder: 'C:\\voices\\zh_CN-huayan-medium.onnx',
+                onCommit: (value) => void save({ piperModel: value }),
+              }),
+            ),
+            piper.model ? t('已找到', 'found') : t('未找到', 'missing'),
+          ) : null,
+          localEngine ? h('div', { className: 'dsh-tts-foot', key: 'piper-hint' },
+            t('本地引擎需要自备 Piper 程序与语音模型（模型 .onnx 与同名 .json 放一起）；填好后点喇叭即可离线合成。',
+              'The local engine needs a Piper executable and a voice model (.onnx plus its .json). Fill both in, then the speaker button synthesizes offline.')) : null,
         ),
         h('div', { className: 'dsh-tts-card', key: 'when' },
           h('div', { className: 'dsh-tts-head' },
@@ -1308,6 +1387,7 @@ window.__ModuleLoader__.load({
       '.dsh-tts-input,.dsh-tts-select{box-sizing:border-box;height:30px;margin:0;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.2;font-family:inherit;outline:none}',
       '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input.num{flex:0 0 auto;width:96px;text-align:right;font-variant-numeric:tabular-nums}',
+      '.dsh-tts-input.wide{flex:1 1 auto;width:auto;min-width:0;text-align:left}',
       '.dsh-tts-input[type=number]::-webkit-inner-spin-button,.dsh-tts-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}',
       '.dsh-tts-select{flex:0 1 auto;width:200px;max-width:100%;cursor:pointer}',
       '.dsh-tts-range{flex:1 1 auto;min-width:80px;height:4px;margin:0;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',

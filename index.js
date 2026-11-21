@@ -14,6 +14,7 @@
 
 import crypto from 'node:crypto'
 import { once } from 'node:events'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -39,6 +40,11 @@ const MIN_SPEED = 0.5
 const MAX_SPEED = 2
 
 const DEFAULTS = {
+  // Which synthesizer produces the audio: the DeepSeek API, or a local Piper
+  // executable the user installed themselves.
+  engine: 'deepseek',
+  piperPath: '',
+  piperModel: '',
   voice: 'stella',
   maxChars: 4000,
   cacheMaxMb: 200,
@@ -50,6 +56,8 @@ const DEFAULTS = {
   speakQuestions: true,
   speakApprovals: true,
 }
+
+const ENGINES = new Set(['deepseek', 'piper'])
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME
@@ -65,12 +73,17 @@ function cacheDir() {
   return path.join(dshHome(), 'cache', 'dsh-tts')
 }
 
-function readSettings() {
+/** Only what the user actually saved; defaults and seeds are applied later. */
+function readStoredSettings() {
   try {
     const parsed = JSON.parse(fs.readFileSync(storePath(), 'utf8'))
-    if (parsed && typeof parsed === 'object') return { ...DEFAULTS, ...parsed }
+    if (parsed && typeof parsed === 'object') return parsed
   } catch {}
-  return { ...DEFAULTS }
+  return {}
+}
+
+function readSettings() {
+  return { ...DEFAULTS, ...readStoredSettings() }
 }
 
 function writeSettings(next) {
@@ -101,7 +114,10 @@ function normalizeSettings(raw, seed) {
   const speed = Number.isFinite(rawSpeed) && rawSpeed > 0
     ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(rawSpeed * 100) / 100))
     : DEFAULTS.speed
-  return { voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals }
+  const engine = ENGINES.has(String(merged.engine)) ? String(merged.engine) : DEFAULTS.engine
+  const piperPath = typeof merged.piperPath === 'string' ? merged.piperPath.trim() : ''
+  const piperModel = typeof merged.piperModel === 'string' ? merged.piperModel.trim() : ''
+  return { engine, piperPath, piperModel, voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals }
 }
 
 // ---------------------------------------------------------------- HTTP helpers
@@ -197,8 +213,11 @@ async function readMessageText(sessionQuery, sessionId, messageId) {
 
 // ---------------------------------------------------------------- audio cache
 
-function cacheKey(voice, text) {
-  return crypto.createHash('sha256').update(voice).update('\u0000').update(text, 'utf8').digest('hex')
+function cacheKey(engine, voice, text) {
+  const hash = crypto.createHash('sha256')
+  // DeepSeek keeps the bare form, so audio cached before engines existed stays valid.
+  if (engine !== 'deepseek') hash.update(String(engine)).update('\u0000')
+  return hash.update(voice).update('\u0000').update(text, 'utf8').digest('hex')
 }
 
 function cacheFile(hash) {
@@ -508,6 +527,153 @@ async function openTtsStream(ctx, text, voice, signal) {
   return response
 }
 
+// ---------------------------------------------------------------- local engine
+
+/** Sample rate declared by a Piper voice config (`<model>.onnx.json`). */
+export function piperSampleRate(modelPath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(String(modelPath) + '.json', 'utf8'))
+    const rate = parsed && parsed.audio ? Number(parsed.audio.sample_rate) : NaN
+    if (Number.isFinite(rate) && rate >= 8000 && rate <= 96000) return rate
+  } catch {}
+  return 22050
+}
+
+/**
+ * Streaming linear resampler. Piper voices are 16–24 kHz while the page, the
+ * WSOLA stretcher and the cache all assume 24 kHz, so the bytes are rescaled
+ * here instead of teaching the browser a second rate.
+ */
+export function createResampler(from, to) {
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0 || from === to) {
+    return { push: (buffer) => buffer, flush: () => Buffer.alloc(0) }
+  }
+  const step = from / to
+  let pool = new Int16Array(0)
+  let pos = 0
+  let odd = null
+  return {
+    push(buffer) {
+      const bytes = odd ? Buffer.concat([odd, buffer]) : buffer
+      const usable = bytes.length - (bytes.length % 2)
+      odd = usable === bytes.length ? null : Buffer.from(bytes.subarray(usable))
+      const incoming = new Int16Array(usable / 2)
+      for (let i = 0; i < incoming.length; i += 1) incoming[i] = bytes.readInt16LE(i * 2)
+      const merged = new Int16Array(pool.length + incoming.length)
+      merged.set(pool, 0)
+      merged.set(incoming, pool.length)
+      pool = merged
+      const out = []
+      while (pos + 1 < pool.length) {
+        const index = Math.floor(pos)
+        const frac = pos - index
+        const left = pool[index]
+        out.push(Math.round(left + (pool[index + 1] - left) * frac))
+        pos += step
+      }
+      const drop = Math.floor(pos)
+      if (drop > 0) { pool = pool.slice(drop); pos -= drop }
+      const samples = Int16Array.from(out)
+      return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)
+    },
+    flush() {
+      odd = null
+      pool = new Int16Array(0)
+      pos = 0
+      return Buffer.alloc(0)
+    },
+  }
+}
+
+/** What the settings page needs to know about the local engine. */
+export function engineInfo(settings) {
+  const exe = settings && typeof settings.piperPath === 'string' ? settings.piperPath : ''
+  const model = settings && typeof settings.piperModel === 'string' ? settings.piperModel : ''
+  return {
+    piper: {
+      exe: exe ? fs.existsSync(exe) : false,
+      model: model ? fs.existsSync(model) : false,
+      sampleRate: model && fs.existsSync(model) ? piperSampleRate(model) : 0,
+    },
+  }
+}
+
+function engineError(message, code) {
+  const error = new Error(message)
+  error.code = code
+  error.status = 502
+  return error
+}
+
+// The C++ builds use `--output_raw`, the newer Python CLI `--output-raw`; try
+// both and keep whichever the installed binary accepts.
+const PIPER_FLAGS = ['--output-raw', '--output_raw']
+
+async function* startPiper(settings, flag, text, signal) {
+  const child = spawn(settings.piperPath, ['--model', settings.piperModel, flag], { windowsHide: true })
+  let stderr = ''
+  let spawnError = null
+  const exited = new Promise((resolve) => {
+    child.once('close', (code) => resolve(code ?? 0))
+    child.once('error', () => resolve(0))
+  })
+  child.on('error', (error) => { spawnError = error })
+  child.stderr.on('data', (chunk) => { if (stderr.length < 4000) stderr += chunk.toString() })
+  const abort = () => { try { child.kill() } catch {} }
+  if (signal) signal.addEventListener('abort', abort, { once: true })
+  try { child.stdin.end(text + '\n') } catch {}
+  try {
+    for await (const chunk of child.stdout) {
+      if (signal && signal.aborted) break
+      yield chunk
+    }
+  } finally {
+    if (signal) signal.removeEventListener('abort', abort)
+  }
+  const code = await exited
+  if (spawnError) throw engineError('无法启动 piper：' + (spawnError.message || String(spawnError)), 'NO_ENGINE')
+  if (code !== 0) throw engineError('piper 退出码 ' + code + (stderr.trim() ? '：' + stderr.trim().slice(0, 300) : ''), 'TTS_FAILED')
+}
+
+async function* piperChunks(settings, text, signal) {
+  if (!settings.piperPath) throw engineError('本地引擎未配置：请先填写 piper 程序路径', 'NO_ENGINE')
+  if (!fs.existsSync(settings.piperPath)) throw engineError('找不到 piper 程序：' + settings.piperPath, 'NO_ENGINE')
+  if (!settings.piperModel) throw engineError('本地引擎未配置：请先填写模型路径', 'NO_ENGINE')
+  let failure = null
+  for (const flag of PIPER_FLAGS) {
+    let produced = false
+    try {
+      for await (const chunk of startPiper(settings, flag, text, signal)) {
+        if (chunk.length) produced = true
+        yield chunk
+      }
+      return
+    } catch (error) {
+      if (produced || (signal && signal.aborted)) throw error
+      failure = error
+    }
+  }
+  throw failure || engineError('piper 没有输出音频', 'TTS_FAILED')
+}
+
+/** 24 kHz mono PCM for one paragraph, from whichever engine is configured. */
+async function* engineChunks(scope, settings, text, signal) {
+  if (settings.engine === 'piper') {
+    const resampler = createResampler(piperSampleRate(settings.piperModel), SAMPLE_RATE)
+    for await (const chunk of piperChunks(settings, text, signal)) {
+      const pcm = resampler.push(chunk)
+      if (pcm.length) yield pcm
+    }
+    const tail = resampler.flush()
+    if (tail.length) yield tail
+    return
+  }
+  const upstream = await openTtsStream(scope, text, settings.voice, signal)
+  for await (const chunk of Readable.fromWeb(upstream.body)) {
+    yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+  }
+}
+
 /** Raw PCM response headers; the browser converts Int16 → Float32 itself. */
 function pcmHeaders(extra) {
   return {
@@ -546,9 +712,9 @@ export function apply(ctx, config) {
   })()
 
   const seed = normalizeSettings(config, null)
-  const stored = readSettings()
-  const settings = normalizeSettings(stored, seed)
-  if (JSON.stringify(stored) !== JSON.stringify(settings)) writeSettings(settings)
+  const stored = readStoredSettings()
+  // The patch config seeds the first run only; afterwards the file is authoritative.
+  if (Object.keys(stored).length === 0) writeSettings(normalizeSettings(stored, seed))
 
   // Live feed for auto-read: one SSE line per assistant message.
   const listeners = new Set()
@@ -700,13 +866,13 @@ export function apply(ctx, config) {
             const info = await scope.credentials.describe(KEY_REF)
             keyConfigured = !!(info && info.configured)
           } catch {}
-          return writeJson(response, 200, { ok: true, value: { ...current, voices: [...VOICES], cache: cacheStats(), keyConfigured, sseClients: listeners.size, sse: { ...sseStats, clients: listeners.size, recentSeq } } })
+          return writeJson(response, 200, { ok: true, value: { ...current, ...engineInfo(current), voices: [...VOICES], cache: cacheStats(), keyConfigured, sseClients: listeners.size, sse: { ...sseStats, clients: listeners.size, recentSeq } } })
         }
         if (method !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
         const body = await readJsonBody(request)
         if (!body || typeof body !== 'object') return writeJson(response, 400, { ok: false, code: 'BAD_BODY', error: '请求体不是 JSON' })
         const current = readSettings()
-        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals']) }, null)
+        const next = normalizeSettings({ ...current, ...pick(body, ['engine', 'piperPath', 'piperModel', 'voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals']) }, null)
         if (body.clearCache === true) clearCache()
         if (!writeSettings(next)) return writeJson(response, 500, { ok: false, code: 'WRITE_FAILED', error: '写入设置失败' })
         pruneCache(next.cacheMaxMb * 1024 * 1024)
@@ -715,7 +881,7 @@ export function apply(ctx, config) {
           const info = await scope.credentials.describe(KEY_REF)
           keyConfigured = !!(info && info.configured)
         } catch {}
-        return writeJson(response, 200, { ok: true, value: { ...next, voices: [...VOICES], cache: cacheStats(), keyConfigured } })
+        return writeJson(response, 200, { ok: true, value: { ...next, ...engineInfo(next), voices: [...VOICES], cache: cacheStats(), keyConfigured } })
       },
     }), 'dsh-tts-reader: config')
 
@@ -842,7 +1008,7 @@ export function apply(ctx, config) {
           }
         }
         const units = unitTexts.map((unit) => {
-          const file = cacheFile(cacheKey(current.voice, unit))
+          const file = cacheFile(cacheKey(current.engine, current.voice, unit))
           return { unit, file, cached: hasCachedWav(file) }
         })
         if (units.length === 0) {
@@ -870,7 +1036,6 @@ export function apply(ctx, config) {
             return
           }
           upstreams += 1
-          const upstream = await openTtsStream(scope, item.unit, current.voice, controller.signal)
           let fd = -1
           let tmp = null
           let written = 0
@@ -886,7 +1051,7 @@ export function apply(ctx, config) {
               fd = -1
               tmp = null
             }
-            for await (const chunk of Readable.fromWeb(upstream.body)) {
+            for await (const chunk of engineChunks(scope, current, item.unit, controller.signal)) {
               if (controller.signal.aborted) break
               const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
               written += buffer.length
@@ -946,6 +1111,7 @@ export function apply(ctx, config) {
           'x-tts-truncated': truncated ? '1' : '0',
           'x-tts-units': String(units.length),
           'x-tts-cache': cacheState,
+          'x-tts-engine': current.engine,
         }))
 
         // The next paragraph is synthesized one ahead, so the join does not stall.

@@ -19,6 +19,15 @@
 - 版权：Copyright (c) 2026 DeepSeek
 - 参考内容：公开插件 API（slot 注册、`ctx.locale`、`webServer`、`sessionQuery`、`settings.section.icon` 等）与页面 DOM 钩子（`[data-approval-key]`、`[data-question-key]`）。
 
+## 用户自行安装的本地引擎（不随本项目分发）
+
+本地引擎模式调用使用者自己安装的 [Piper](https://github.com/OHF-Voice/piper1-gpl) 可执行文件与语音模型。本仓库不包含、也不分发这些文件：
+
+- Piper（含 espeak-ng）：GPL-3.0，由安装者自行遵守；
+- 语音模型：各自的许可证与商用条款，见模型发布页。
+
+插件只通过命令行调用它们，属于独立程序之间的调用。
+
 ## Lucide Icons（ISC）
 
 - 仓库：<https://github.com/lucide-icons/lucide>
