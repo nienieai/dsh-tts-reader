@@ -529,8 +529,10 @@ window.__ModuleLoader__.load({
 
       try {
         const payload = {}
+        // Both ids travel even with an explicit text: the Host widens the
+        // selection to the whole paragraph(s) it sits in, and needs the message.
+        if (sessionId && messageId) { payload.sessionId = sessionId; payload.messageId = messageId }
         if (text) payload.text = text
-        else if (sessionId && messageId) { payload.sessionId = sessionId; payload.messageId = messageId }
         const response = await fetch(READ_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -1036,7 +1038,7 @@ window.__ModuleLoader__.load({
             ? t('点击停止', 'Click to stop')
             : cached
               ? t('再次播放（本地缓存）', 'Play again (cached)')
-              : t('朗读这条回复（选中文字则只读选中部分）', 'Read this reply aloud (selected text only, if any)')
+              : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
 
       return h('button', {
         type: 'button',
@@ -1208,7 +1210,7 @@ window.__ModuleLoader__.load({
               }),
             ),
           ),
-          row('chars', t('单次上限', 'Max chars'),
+          row('chars', t('每段上限', 'Max per part'),
             h('span', { className: 'dsh-tts-grow' },
               h(NumberInput, {
                 className: 'dsh-tts-input num', min: 100, max: 4000, step: 100,
@@ -1240,7 +1242,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-tts-h1' }, t('自动朗读', 'Auto-read')),
           ),
           // Every switch here is auto-reading; the label only names the source,
-          // so the old "朗读时机 / when to speak" framing is gone.
+          // so the old "when to speak" framing is gone.
           check('auto', 'autoRead', t('读回复', 'Read replies'), t('回合结束的整条回复', "the turn's final reply"), config.autoRead === true),
           check('interim', 'autoReadInterim', t('读中途输出', 'Read mid-turn output'), t('需先开启「读回复」', 'needs "Read replies"'), config.autoReadInterim === true),
           check('q', 'speakQuestions', t('读提问', 'Read questions'), t('需要你作答的问题', 'prompts that need your answer'), config.speakQuestions !== false),
