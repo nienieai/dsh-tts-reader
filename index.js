@@ -606,8 +606,9 @@ function engineError(message, code) {
 }
 
 // The C++ builds use `--output_raw`, the newer Python CLI `--output-raw`; try
-// both and keep whichever the installed binary accepts.
+// both, then remember which one this install accepted.
 const PIPER_FLAGS = ['--output-raw', '--output_raw']
+let piperFlagUsed = ''
 
 async function* startPiper(settings, flag, text, signal) {
   const child = spawn(settings.piperPath, ['--model', settings.piperModel, flag], { windowsHide: true })
@@ -640,13 +641,15 @@ async function* piperChunks(settings, text, signal) {
   if (!fs.existsSync(settings.piperPath)) throw engineError('找不到 piper 程序：' + settings.piperPath, 'NO_ENGINE')
   if (!settings.piperModel) throw engineError('本地引擎未配置：请先填写模型路径', 'NO_ENGINE')
   let failure = null
-  for (const flag of PIPER_FLAGS) {
+  const flags = piperFlagUsed ? [piperFlagUsed, ...PIPER_FLAGS.filter((flag) => flag !== piperFlagUsed)] : PIPER_FLAGS
+  for (const flag of flags) {
     let produced = false
     try {
       for await (const chunk of startPiper(settings, flag, text, signal)) {
         if (chunk.length) produced = true
         yield chunk
       }
+      piperFlagUsed = flag
       return
     } catch (error) {
       if (produced || (signal && signal.aborted)) throw error
@@ -657,7 +660,7 @@ async function* piperChunks(settings, text, signal) {
 }
 
 /** 24 kHz mono PCM for one paragraph, from whichever engine is configured. */
-async function* engineChunks(scope, settings, text, signal) {
+export async function* engineChunks(scope, settings, text, signal) {
   if (settings.engine === 'piper') {
     const resampler = createResampler(piperSampleRate(settings.piperModel), SAMPLE_RATE)
     for await (const chunk of piperChunks(settings, text, signal)) {
