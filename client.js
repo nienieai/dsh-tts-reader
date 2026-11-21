@@ -374,7 +374,12 @@ window.__ModuleLoader__.load({
       const playing = state.key === key && state.phase !== 'idle'
       const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
       return h('div', {
-        style: { position: 'fixed', top: '10px', right: '14px', zIndex: 2147483000, display: 'flex' },
+        style: {
+          position: 'fixed', top: '10px', right: '14px', zIndex: 2147483000,
+          display: 'flex',
+          // The overlay layer is click-through; an occupant must opt back in.
+          pointerEvents: 'auto',
+        },
       },
         h('button', {
           type: 'button',
