@@ -539,97 +539,101 @@ window.__ModuleLoader__.load({
       if (!config) return h('div', { style: { padding: '4px 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, t('加载中…', 'Loading…'))
 
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
-      const card = {
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px',
-        background: 'var(--dsw-alias-bg-layer-2)', padding: '10px',
-        display: 'flex', flexDirection: 'column', gap: '8px',
-      }
-      const row = { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }
-      const sub = { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' }
-      const input = {
-        padding: '5px 8px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '6px',
-        background: 'var(--dsw-alias-bg-layer-3)', color: 'var(--dsw-alias-label-primary)',
-        fontSize: '12px', fontFamily: 'inherit',
-      }
-      const plain = {
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '6px', background: 'transparent',
-        color: 'var(--dsw-alias-label-primary)', fontSize: '12px', padding: '3px 10px', cursor: 'pointer',
-      }
+      const cacheLimit = config.cacheMaxMb || 200
+      const cachePct = Math.min(100, Math.round(((config.cache && config.cache.bytes ? config.cache.bytes : 0) / (cacheLimit * 1048576)) * 100))
 
-      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', padding: '4px 0' } },
-        h('div', { style: card },
-          h('div', { style: row },
-            h('span', { style: { fontSize: '13px', fontWeight: 600 }, key: 't' }, t('语音朗读', 'Read aloud')),
-            h('span', { style: sub, key: 's' }, t('用 DeepSeek 官方 TTS 流式朗读助手回复；音频缓存在本机', 'Streams replies with the DeepSeek TTS API; audio cached on this machine')),
+      return h('div', { className: 'dsh-tts-settings' },
+        h('div', { className: 'dsh-tts-card', key: 'sound' },
+          h('div', { className: 'dsh-tts-head', key: 'head' },
+            h('div', { className: 'dsh-tts-h1', key: 'h' }, t('语音朗读', 'Read aloud')),
+            h('div', { className: 'dsh-tts-hint', key: 'd' }, t('用 DeepSeek 官方 TTS 朗读助手回复，音频缓存在本机；页面只发消息 id，Key 不出 Host。', 'Speaks replies with the DeepSeek TTS API. The page only sends a message id; the key never leaves the Host.')),
           ),
-          h('div', { style: row },
-            h('span', { style: sub, key: 'k' }, 'API Key'),
-            config.keyConfigured
-              ? h('span', { style: { fontSize: '12px', color: '#30a46c' }, key: 'v' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured (DEEPSEEK_API_KEY)'))
-              : h('span', { style: { fontSize: '12px', color: '#e5484d' }, key: 'v' }, t('未配置，请先在 设置 → 模型 里填 DeepSeek Key', 'Not configured — set a DeepSeek key in Settings → Models')),
+          h('div', { className: 'dsh-tts-row', key: 'key' },
+            h('span', { className: 'dsh-tts-label' }, 'API Key'),
+            h('span', { className: 'dsh-tts-grow' },
+              config.keyConfigured
+                ? h('span', { className: 'dsh-tts-badge ok' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured'))
+                : h('span', { className: 'dsh-tts-badge warn' }, t('未配置，请先在 设置 → 模型 填 Key', 'Not configured — set a key in Settings → Models')),
+            ),
           ),
-          h('div', { style: row },
-            h('span', { style: sub, key: 'voice' }, t('音色', 'Voice')),
-            h('select', {
-              key: 'voice-select', style: input, value: config.voice, disabled: busy,
-              onChange: (event) => save({ voice: event.target.value }),
-              children: [
-                h('option', { value: 'stella', key: 'stella' }, 'stella（女声）'),
-                h('option', { value: 'tide', key: 'tide' }, 'tide（男声）'),
-              ],
-            }),
-            h('span', { style: sub, key: 'chars-label' }, t('单次上限', 'Max chars')),
+          h('div', { className: 'dsh-tts-row', key: 'voice' },
+            h('span', { className: 'dsh-tts-label' }, t('音色', 'Voice')),
+            h('span', { className: 'dsh-tts-grow' },
+              h('select', {
+                className: 'dsh-tts-select', value: config.voice, disabled: busy,
+                onChange: (event) => save({ voice: event.target.value }),
+                children: [
+                  h('option', { value: 'stella', key: 'stella' }, 'stella（女声）'),
+                  h('option', { value: 'tide', key: 'tide' }, 'tide（男声）'),
+                ],
+              }),
+            ),
+          ),
+          h('div', { className: 'dsh-tts-row', key: 'chars' },
+            h('span', { className: 'dsh-tts-label' }, t('单次上限', 'Max chars')),
+            h('span', { className: 'dsh-tts-grow' },
+              h('input', {
+                className: 'dsh-tts-input num', type: 'number', min: 100, max: 4000, step: 100,
+                value: config.maxChars, disabled: busy,
+                onChange: (event) => {
+                  const value = Number(event.target.value)
+                  if (Number.isFinite(value) && value >= 100) save({ maxChars: Math.min(4000, Math.floor(value)) })
+                },
+              }),
+              h('span', { className: 'dsh-tts-hint' }, t('字', 'chars')),
+            ),
+          ),
+        ),
+        h('div', { className: 'dsh-tts-card', key: 'when' },
+          h('div', { className: 'dsh-tts-head' },
+            h('div', { className: 'dsh-tts-h1' }, t('朗读时机', 'When to speak')),
+          ),
+          h('label', { className: 'dsh-tts-check', key: 'auto' },
             h('input', {
-              key: 'chars', type: 'number', min: 100, max: 4000, step: 100,
-              style: { ...input, width: '90px' }, value: config.maxChars, disabled: busy,
-              onChange: (event) => {
-                const value = Number(event.target.value)
-                if (Number.isFinite(value) && value >= 100) save({ maxChars: Math.min(4000, Math.floor(value)) })
-              },
+              type: 'checkbox', checked: config.autoRead === true, disabled: busy,
+              onChange: (event) => save({ autoRead: event.target.checked }),
             }),
+            t('新回复自动朗读', 'Read new replies automatically'),
+            h('span', { className: 'dsh-tts-hint' }, t('回复结束后整条朗读', 'Speak each finished reply')),
           ),
-          h('div', { style: row },
-            h('label', {
-              key: 'auto',
-              style: { ...sub, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' },
-            },
-              h('input', {
-                type: 'checkbox',
-                checked: config.autoRead === true,
-                disabled: busy,
-                onChange: (event) => save({ autoRead: event.target.checked }),
-              }),
-              t('新回复自动朗读', 'Read new replies automatically'),
-            ),
-            h('label', {
-              key: 'q',
-              style: { ...sub, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' },
-            },
-              h('input', {
-                type: 'checkbox',
-                checked: config.speakQuestions !== false,
-                disabled: busy,
-                onChange: (event) => save({ speakQuestions: event.target.checked }),
-              }),
-              t('提问时朗读', 'Read questions'),
-            ),
-            h('label', {
-              key: 'ap',
-              style: { ...sub, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' },
-            },
-              h('input', {
-                type: 'checkbox',
-                checked: config.speakApprovals !== false,
-                disabled: busy,
-                onChange: (event) => save({ speakApprovals: event.target.checked }),
-              }),
-              t('授权时朗读', 'Read approval requests'),
-            ),
+          h('label', { className: 'dsh-tts-check', key: 'q' },
+            h('input', {
+              type: 'checkbox', checked: config.speakQuestions !== false, disabled: busy,
+              onChange: (event) => save({ speakQuestions: event.target.checked }),
+            }),
+            t('提问时朗读', 'Read questions'),
           ),
-          h('div', { style: row },
-            h('span', { style: sub, key: 'cache' }, t('缓存：', 'Cache: ') + (config.cache ? config.cache.files : 0) + t(' 个文件 / ', ' files / ') + cacheMb + ' MB'),
+          h('label', { className: 'dsh-tts-check', key: 'ap' },
+            h('input', {
+              type: 'checkbox', checked: config.speakApprovals !== false, disabled: busy,
+              onChange: (event) => save({ speakApprovals: event.target.checked }),
+            }),
+            t('授权时朗读', 'Read approval requests'),
+          ),
+        ),
+        h('div', { className: 'dsh-tts-card', key: 'cache' },
+          h('div', { className: 'dsh-tts-head' },
+            h('div', { className: 'dsh-tts-h1' }, t('音频缓存', 'Audio cache')),
+            h('div', { className: 'dsh-tts-hint' }, (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'),
+          ),
+          h('div', { className: 'dsh-tts-row' },
+            h('div', { className: 'dsh-tts-meter' }, h('i', { style: { width: cachePct + '%' } })),
+          ),
+          h('div', { className: 'dsh-tts-row' },
+            h('span', { className: 'dsh-tts-label' }, t('上限', 'Limit')),
+            h('span', { className: 'dsh-tts-grow' },
+              h('input', {
+                className: 'dsh-tts-input num', type: 'number', min: 50, max: 4096, step: 50,
+                value: config.cacheMaxMb, disabled: busy,
+                onChange: (event) => {
+                  const value = Number(event.target.value)
+                  if (Number.isFinite(value) && value >= 50) save({ cacheMaxMb: Math.min(4096, Math.floor(value)) })
+                },
+              }),
+              h('span', { className: 'dsh-tts-hint' }, 'MB'),
+            ),
             h('button', {
-              key: 'clear', type: 'button', style: plain, disabled: busy,
+              className: 'dsh-tts-btn danger', type: 'button', disabled: busy,
               onClick: async () => {
                 try {
                   const response = await fetch(CLEAR_PATH, { method: 'POST' })
@@ -641,20 +645,10 @@ window.__ModuleLoader__.load({
               },
               children: t('清空缓存', 'Clear cache'),
             }),
-            h('span', { style: sub, key: 'cap' }, t('上限', 'Limit')),
-            h('input', {
-              key: 'cap-input', type: 'number', min: 50, max: 4096, step: 50,
-              style: { ...input, width: '90px' }, value: config.cacheMaxMb, disabled: busy,
-              onChange: (event) => {
-                const value = Number(event.target.value)
-                if (Number.isFinite(value) && value >= 50) save({ cacheMaxMb: Math.min(4096, Math.floor(value)) })
-              },
-            }),
-            h('span', { style: sub, key: 'cap-unit' }, 'MB'),
           ),
-          notice ? h('span', { style: { fontSize: '12px', color: '#30a46c' } }, notice) : null,
-          failure ? h('span', { style: { fontSize: '12px', color: '#e5484d' } }, failure) : null,
         ),
+        notice ? h('div', { className: 'dsh-tts-toast ok', key: 'notice' }, notice) : null,
+        failure ? h('div', { className: 'dsh-tts-toast err', key: 'failure' }, failure) : null,
       )
     }
 
@@ -663,6 +657,34 @@ window.__ModuleLoader__.load({
       '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:30%;animation:dsh-tts-bar .9s ease-in-out infinite}',
       '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
       '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
+      // ---- settings page ----
+      '.dsh-tts-settings{display:flex;flex-direction:column;gap:14px;font-size:13px;padding:6px 2px 18px;color:var(--dsw-alias-label-primary)}',
+      '.dsh-tts-card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}',
+      '.dsh-tts-head{display:flex;flex-direction:column;gap:3px;padding:12px 14px 10px}',
+      '.dsh-tts-h1{font-size:13px;font-weight:600}',
+      '.dsh-tts-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l2)}',
+      '.dsh-tts-label{min-width:64px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-grow{flex:1;min-width:0;display:flex;align-items:center;gap:8px}',
+      '.dsh-tts-input,.dsh-tts-select{height:28px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;outline:none}',
+      '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-tts-input.num{width:84px;text-align:right}',
+      '.dsh-tts-select{min-width:150px}',
+      '.dsh-tts-btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;cursor:pointer}',
+      '.dsh-tts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}',
+      '.dsh-tts-btn:disabled{opacity:.55;cursor:default}',
+      '.dsh-tts-btn.danger:hover:not(:disabled){border-color:#e5484d;color:#e5484d}',
+      '.dsh-tts-check{display:flex;align-items:center;gap:9px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l2);font-size:13px;cursor:pointer}',
+      '.dsh-tts-check input{width:14px;height:14px;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}',
+      '.dsh-tts-check .dsh-tts-hint{margin-left:auto}',
+      '.dsh-tts-badge{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-badge.ok{color:#30a46c;border-color:rgba(48,164,108,.5)}',
+      '.dsh-tts-badge.warn{color:#e5484d;border-color:rgba(229,72,77,.5)}',
+      '.dsh-tts-meter{flex:1;height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
+      '.dsh-tts-meter i{display:block;height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary);transition:width .25s}',
+      '.dsh-tts-toast{font-size:12px;padding:0 2px}',
+      '.dsh-tts-toast.ok{color:#30a46c}',
+      '.dsh-tts-toast.err{color:#e5484d}',
     ].join('\n')
 
     function injectStyles() {
