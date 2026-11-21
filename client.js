@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
     const READ_PATH = '/api/dsh-tts/read'
     const CLEAR_PATH = '/api/dsh-tts/cache/clear'
     const EVENTS_PATH = '/api/dsh-tts/events'
+    const RECENT_PATH = '/api/dsh-tts/recent'
 
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
@@ -102,15 +103,7 @@ window.__ModuleLoader__.load({
           return
         }
         if (payload.type !== 'assistant') return
-        if (!autoRead) return
-        // The Host tags each message: interim output is opt-in, the turn's last
-        // output (the one with the official action row) always plays.
-        if (payload.final !== true && !autoReadInterim) return
-        const sessionId = String(payload.sessionId || '')
-        const messageId = String(payload.messageId || '')
-        if (!sessionId || !messageId) return
-        if (!activeSessionId || sessionId !== activeSessionId) return
-        autoReadMessage(sessionId, messageId)
+        handleAssistant(payload.sessionId, payload.messageId, payload.final)
       }
       eventSource.onerror = () => {
         // Reconnect later instead of a tight retry loop.
@@ -122,6 +115,46 @@ window.__ModuleLoader__.load({
         try { eventSource && eventSource.close() } catch {}
         eventSource = null
       }, 'dsh-tts-reader: events')
+    }
+
+    // One assistant message from either transport (SSE or the polling
+    // fallback). Interim output is opt-in; the turn's last output always plays.
+    function handleAssistant(sessionId, messageId, final) {
+      if (!autoRead) return
+      if (final !== true && !autoReadInterim) return
+      const sid = String(sessionId || '')
+      const mid = String(messageId || '')
+      if (!sid || !mid) return
+      if (!activeSessionId || sid !== activeSessionId) return
+      autoReadMessage(sid, mid)
+    }
+
+    // Polling fallback for the assistant feed: the page's EventSource can drop
+    // silently (no error, no reconnect), and auto-read must not depend on it.
+    // The first successful poll only establishes the cursor, so a page load
+    // never replays the backlog.
+    let recentCursor = null
+    function pollRecent() {
+      const query = recentCursor === null ? '' : '?after=' + String(recentCursor)
+      fetch(RECENT_PATH + query, { headers: { accept: 'application/json' } })
+        .then((res) => res.json())
+        .then((body) => {
+          if (!body || !body.ok || !body.value) return
+          const items = Array.isArray(body.value.items) ? body.value.items : []
+          const seq = Number(body.value.seq)
+          if (recentCursor === null) {
+            recentCursor = Number.isFinite(seq) ? seq : 0
+            return
+          }
+          for (const item of items) {
+            if (!item) continue
+            const value = Number(item.seq)
+            if (Number.isFinite(value) && value > recentCursor) recentCursor = value
+            handleAssistant(item.sessionId, item.messageId, item.final)
+          }
+          if (Number.isFinite(seq) && seq > recentCursor) recentCursor = seq
+        })
+        .catch(() => {})
     }
 
     function setPlayback(patch) {
@@ -1070,19 +1103,35 @@ window.__ModuleLoader__.load({
         ctx.effect(() => {
           const timer = setInterval(() => {
             if (!eventSource) ensureEvents(ctx)
-            else if (typeof EventSource !== 'undefined' && eventSource.readyState === EventSource.CLOSED) {
+            else if (typeof EventSource !== 'undefined'
+              && (eventSource.readyState === EventSource.CLOSED || eventSource.readyState === EventSource.CONNECTING)) {
               try { eventSource.close() } catch {}
               eventSource = null
               ensureEvents(ctx)
             }
-          }, 30000)
+          }, 5000)
           const onFocus = () => { if (!eventSource) ensureEvents(ctx) }
+          const onVisible = () => {
+            if (document.visibilityState !== 'visible') return
+            if (!eventSource) ensureEvents(ctx)
+            pollRecent()
+          }
           try { window.addEventListener('focus', onFocus) } catch {}
+          try { document.addEventListener('visibilitychange', onVisible) } catch {}
           return () => {
             clearInterval(timer)
             try { window.removeEventListener('focus', onFocus) } catch {}
+            try { document.removeEventListener('visibilitychange', onVisible) } catch {}
           }
         }, 'dsh-tts-reader: watchdog')
+
+        // The assistant feed also has a pull path, so a silently dropped
+        // EventSource cannot stop auto-read.
+        ctx.effect(() => {
+          const timer = setInterval(pollRecent, 2500)
+          pollRecent()
+          return () => { clearInterval(timer) }
+        }, 'dsh-tts-reader: recent poll')
 
         // Follows the visible session even before it has any assistant message,
         // so auto-read always compares against the right session id.

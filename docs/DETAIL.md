@@ -30,6 +30,8 @@
 
 页面按块排程（首块留 0.1 秒缓冲），网络落后于播放时从“现在”续上，不补播过去的时间。
 
+自动朗读的消息来源有两条通道：`GET /api/dsh-tts/events`（SSE，低延迟）和 `GET /api/dsh-tts/recent?after=<seq>`（页面每 2.5 秒增量拉取）。页面把两者喂给同一个 `handleAssistant()`，用 `autoPlayed` 去重；SSE 断了也不会漏读。`/config` 里的 `sse` 字段（opened / closed / rejected / clients / recentSeq）用来判断页面是否真连上了事件流。
+
 Key 只在 Host 进程里，从 DSH 凭据 `DEEPSEEK_API_KEY` 解析；接口基址固定，路由不接受改地址的请求。
 
 ## 边界

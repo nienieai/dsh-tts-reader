@@ -28,6 +28,7 @@ const READ_PATH = PREFIX + '/read'
 const CLEAR_PATH = PREFIX + '/cache/clear'
 const EVENTS_PATH = PREFIX + '/events'
 const PENDING_PATH = PREFIX + '/pending'
+const RECENT_PATH = PREFIX + '/recent'
 
 const API_BASE = 'https://api.deepseek.com'
 const KEY_REF = 'DEEPSEEK_API_KEY'
@@ -354,8 +355,20 @@ export function apply(ctx, config) {
   const settings = normalizeSettings(stored, seed)
   if (JSON.stringify(stored) !== JSON.stringify(settings)) writeSettings(settings)
 
-  // Live feed for auto-read: one SSE line per finalized assistant message.
+  // Live feed for auto-read: one SSE line per assistant message.
   const listeners = new Set()
+  // Feed diagnostics, surfaced on /config so a silent disconnect is visible.
+  const sseStats = { opened: 0, closed: 0, rejected: 0 }
+  // Bounded ring behind GET /recent: the page polls it as a fallback, so
+  // auto-read keeps working when its EventSource is down.
+  let recentSeq = 0
+  const recent = []
+  const noteAssistant = (sessionId, messageId, final) => {
+    recentSeq += 1
+    recent.push({ seq: recentSeq, sessionId, messageId, final })
+    while (recent.length > 64) recent.shift()
+    broadcast({ type: 'assistant', sessionId, messageId, final })
+  }
   // The request the page may replay: a pending question or approval. Exposed by
   // GET /pending so the replay button does not depend on the event stream.
   let pendingPrompt = null
@@ -397,7 +410,7 @@ export function apply(ctx, config) {
       // ...and the turn's last output is remembered for the closing broadcast:
       // that is the one the official action row (and the replay button) hosts.
       lastAssistant.set(sessionId, messageId)
-      broadcast({ type: 'assistant', sessionId, messageId, final: false })
+      noteAssistant(sessionId, messageId, false)
     } catch {}
   }), 'dsh-tts-reader: session feed')
 
@@ -411,7 +424,7 @@ export function apply(ctx, config) {
       const messageId = lastAssistant.get(sessionId)
       if (!messageId) return
       lastAssistant.delete(sessionId)
-      broadcast({ type: 'assistant', sessionId, messageId, final: true })
+      noteAssistant(sessionId, messageId, true)
     } catch {}
   }), 'dsh-tts-reader: turn close')
 
@@ -492,7 +505,7 @@ export function apply(ctx, config) {
             const info = await scope.credentials.describe(KEY_REF)
             keyConfigured = !!(info && info.configured)
           } catch {}
-          return writeJson(response, 200, { ok: true, value: { ...current, voices: [...VOICES], cache: cacheStats(), keyConfigured, sseClients: listeners.size } })
+          return writeJson(response, 200, { ok: true, value: { ...current, voices: [...VOICES], cache: cacheStats(), keyConfigured, sseClients: listeners.size, sse: { ...sseStats, clients: listeners.size, recentSeq } } })
         }
         if (method !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
         const body = await readJsonBody(request)
@@ -527,7 +540,7 @@ export function apply(ctx, config) {
       kind: 'exact',
       path: EVENTS_PATH,
       handler: (request, response) => {
-        if (!guard(request, response)) return
+        if (!guard(request, response)) { sseStats.rejected += 1; return }
         response.writeHead(200, {
           'content-type': 'text/event-stream; charset=utf-8',
           'cache-control': 'no-store',
@@ -535,17 +548,38 @@ export function apply(ctx, config) {
         })
         response.write(': connected\n\n')
         listeners.add(response)
+        sseStats.opened += 1
         const heartbeat = setInterval(() => {
           try { response.write(': ping\n\n') } catch {}
         }, 25000)
         const cleanup = () => {
           clearInterval(heartbeat)
-          listeners.delete(response)
+          if (listeners.delete(response)) sseStats.closed += 1
         }
         request.on('close', cleanup)
         response.on('close', cleanup)
       },
     }), 'dsh-tts-reader: events')
+
+    // Polling fallback for the same feed: `after=<seq>` returns what the page
+    // has not seen yet, so auto-read survives a dead EventSource.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: RECENT_PATH,
+      handler: (request, response) => {
+        if (!guard(request, response)) return
+        let after = 0
+        try {
+          const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+          const raw = Number(url.searchParams.get('after'))
+          if (Number.isFinite(raw) && raw > 0) after = Math.floor(raw)
+        } catch {}
+        return writeJson(response, 200, {
+          ok: true,
+          value: { seq: recentSeq, items: recent.filter(item => item.seq > after) },
+        })
+      },
+    }), 'dsh-tts-reader: recent')
 
     // The replay button reads this; it must not depend on a live event stream.
     scope.effect(() => scope.webServer.register({
