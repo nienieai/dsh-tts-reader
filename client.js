@@ -51,26 +51,9 @@ window.__ModuleLoader__.load({
     const autoPlayed = new Set()
     let eventSource = null
 
-    // The pending question or approval request, re-readable from the composer.
-    let pendingPrompt = null
-    const promptListeners = new Set()
-
-    function setPendingPrompt(next) {
-      pendingPrompt = next
-      for (const listener of promptListeners) {
-        try { listener(pendingPrompt) } catch {}
-      }
-    }
-
-    function usePendingPrompt() {
-      const [value, setValue] = React.useState(pendingPrompt)
-      React.useEffect(() => {
-        promptListeners.add(setValue)
-        setValue(pendingPrompt)
-        return () => { promptListeners.delete(setValue) }
-      }, [])
-      return value
-    }
+    // The replay button polls the Host for the pending question / approval, so
+    // it shows up even if a particular page instance missed the event.
+    const PENDING_PATH = '/api/dsh-tts/pending'
 
     function applyRemoteConfig(value) {
       if (!value || typeof value !== 'object') return
@@ -105,7 +88,6 @@ window.__ModuleLoader__.load({
           const id = String(payload.id || '')
           const text = String(payload.text || '').trim()
           if (!id || !text) return
-          setPendingPrompt({ kind: 'question', id, text })
           if (speakQuestions && !autoPlayed.has('q:' + id)) {
             autoPlayed.add('q:' + id)
             void startReadAloud(null, null, 'prompt:' + id, { text })
@@ -113,14 +95,12 @@ window.__ModuleLoader__.load({
           return
         }
         if (payload.type === 'question-closed' || payload.type === 'approval-closed') {
-          if (pendingPrompt && pendingPrompt.id === String(payload.id || '')) setPendingPrompt(null)
           return
         }
         if (payload.type === 'approval') {
           const id = String(payload.id || '')
           const text = String(payload.text || '').trim()
           if (!id || !text) return
-          setPendingPrompt({ kind: 'approval', id, text })
           if (!speakApprovals || autoPlayed.has('a:' + id)) return
           autoPlayed.add('a:' + id)
           void startReadAloud(null, null, 'prompt:approval:' + id, { text })
@@ -355,7 +335,6 @@ window.__ModuleLoader__.load({
         // Leaving the session must not keep speaking into the new one.
         if (previous.current !== null && previous.current !== next) {
           stopPlayback()
-          setPendingPrompt(null)
         }
         previous.current = next
         activeSessionId = next
@@ -367,8 +346,20 @@ window.__ModuleLoader__.load({
     // dialog covers the composer, so this lives on the frame-wide overlay and
     // stays clickable above it.
     function PromptButton() {
-      const pending = usePendingPrompt()
+      const [pending, setPending] = React.useState(null)
       const state = usePlayback()
+      React.useEffect(() => {
+        let alive = true
+        const tick = () => {
+          fetch(PENDING_PATH, { headers: { accept: 'application/json' } })
+            .then((res) => res.json())
+            .then((body) => { if (alive && body && body.ok) setPending(body.value || null) })
+            .catch(() => {})
+        }
+        tick()
+        const timer = setInterval(tick, 2000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [])
       if (!pending || !pending.text) return null
       const key = 'prompt:' + (pending.kind === 'approval' ? 'approval:' : '') + pending.id
       const playing = state.key === key && state.phase !== 'idle'

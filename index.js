@@ -27,6 +27,7 @@ const CONFIG_PATH = PREFIX + '/config'
 const READ_PATH = PREFIX + '/read'
 const CLEAR_PATH = PREFIX + '/cache/clear'
 const EVENTS_PATH = PREFIX + '/events'
+const PENDING_PATH = PREFIX + '/pending'
 
 const API_BASE = 'https://api.deepseek.com'
 const KEY_REF = 'DEEPSEEK_API_KEY'
@@ -353,6 +354,9 @@ export function apply(ctx, config) {
 
   // Live feed for auto-read: one SSE line per finalized assistant message.
   const listeners = new Set()
+  // The request the page may replay: a pending question or approval. Exposed by
+  // GET /pending so the replay button does not depend on the event stream.
+  let pendingPrompt = null
   const broadcast = (payload) => {
     const line = 'data: ' + JSON.stringify(payload) + '\n\n'
     for (const response of listeners) {
@@ -367,12 +371,16 @@ export function apply(ctx, config) {
         const data = event.data || {}
         const tool = typeof data.toolName === 'string' && data.toolName ? data.toolName : '工具'
         const reason = typeof data.reason === 'string' && data.reason.trim() ? '，' + data.reason.trim() : ''
-        broadcast({ type: 'approval', id: String(data.id || ''), toolName: tool, text: '需要授权：' + tool + reason })
+        const text = '需要授权：' + tool + reason
+        pendingPrompt = { kind: 'approval', id: String(data.id || ''), text, at: Date.now() }
+        broadcast({ type: 'approval', id: String(data.id || ''), toolName: tool, text })
         return
       }
       if (event.type === 'approval/decided') {
         const data = event.data || {}
-        broadcast({ type: 'approval-closed', id: String(data.id || '') })
+        const id = String(data.id || '')
+        if (pendingPrompt && pendingPrompt.id === id) pendingPrompt = null
+        broadcast({ type: 'approval-closed', id })
         return
       }
       if (event.type !== 'assistant/message') return
@@ -411,7 +419,10 @@ export function apply(ctx, config) {
     try {
       if (exec && exec.name === 'ask_user_question' && exec.callId) {
         const text = questionSpeech(exec.arguments)
-        if (text) broadcast({ type: 'question', id: String(exec.callId), text })
+        if (text) {
+          pendingPrompt = { kind: 'question', id: String(exec.callId), text, at: Date.now() }
+          broadcast({ type: 'question', id: String(exec.callId), text })
+        }
       }
     } catch {}
     return next()
@@ -420,7 +431,9 @@ export function apply(ctx, config) {
   ctx.effect(() => ctx.on('tools/result', (exec) => {
     try {
       if (exec && exec.name === 'ask_user_question' && exec.callId) {
-        broadcast({ type: 'question-closed', id: String(exec.callId) })
+        const id = String(exec.callId)
+        if (pendingPrompt && pendingPrompt.id === id) pendingPrompt = null
+        broadcast({ type: 'question-closed', id })
       }
     } catch {}
   }), 'dsh-tts-reader: question replies')
@@ -501,6 +514,16 @@ export function apply(ctx, config) {
         response.on('close', cleanup)
       },
     }), 'dsh-tts-reader: events')
+
+    // The replay button reads this; it must not depend on a live event stream.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: PENDING_PATH,
+      handler: (request, response) => {
+        if (!guard(request, response)) return
+        return writeJson(response, 200, { ok: true, value: pendingPrompt })
+      },
+    }), 'dsh-tts-reader: pending')
 
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
