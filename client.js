@@ -45,12 +45,38 @@ window.__ModuleLoader__.load({
 
     // Auto-read state, kept in sync with the Host settings.
     let autoRead = false
+    let speakQuestions = true
+    let speakApprovals = true
     let activeSessionId = null
     const autoPlayed = new Set()
     let eventSource = null
 
+    // The pending agent question, shown as a speaker chip above the composer.
+    let pendingQuestion = null
+    const promptListeners = new Set()
+
+    function setPendingQuestion(next) {
+      pendingQuestion = next
+      for (const listener of promptListeners) {
+        try { listener(pendingQuestion) } catch {}
+      }
+    }
+
+    function usePendingQuestion() {
+      const [value, setValue] = React.useState(pendingQuestion)
+      React.useEffect(() => {
+        promptListeners.add(setValue)
+        setValue(pendingQuestion)
+        return () => { promptListeners.delete(setValue) }
+      }, [])
+      return value
+    }
+
     function applyRemoteConfig(value) {
-      if (value && typeof value === 'object') autoRead = value.autoRead === true
+      if (!value || typeof value !== 'object') return
+      autoRead = value.autoRead === true
+      speakQuestions = value.speakQuestions !== false
+      speakApprovals = value.speakApprovals !== false
     }
 
     let configLoaded = false
@@ -74,7 +100,32 @@ window.__ModuleLoader__.load({
       eventSource.onmessage = (event) => {
         let payload = null
         try { payload = JSON.parse(event.data) } catch { return }
-        if (!payload || payload.type !== 'assistant') return
+        if (!payload) return
+        if (payload.type === 'question') {
+          const id = String(payload.id || '')
+          const text = String(payload.text || '').trim()
+          if (!id || !text) return
+          setPendingQuestion({ id, text })
+          if (speakQuestions && !autoPlayed.has('q:' + id)) {
+            autoPlayed.add('q:' + id)
+            void startReadAloud(null, null, 'prompt:' + id, { text })
+          }
+          return
+        }
+        if (payload.type === 'question-closed') {
+          if (pendingQuestion && pendingQuestion.id === String(payload.id || '')) setPendingQuestion(null)
+          return
+        }
+        if (payload.type === 'approval') {
+          const id = String(payload.id || '')
+          const text = String(payload.text || '').trim()
+          if (!text || !speakApprovals) return
+          if (id && autoPlayed.has('a:' + id)) return
+          if (id) autoPlayed.add('a:' + id)
+          void startReadAloud(null, null, 'prompt:approval:' + (id || Date.now()), { text })
+          return
+        }
+        if (payload.type !== 'assistant') return
         if (!autoRead) return
         const sessionId = String(payload.sessionId || '')
         const messageId = String(payload.messageId || '')
@@ -206,8 +257,9 @@ window.__ModuleLoader__.load({
       }
 
       try {
-        const payload = { sessionId, messageId }
+        const payload = {}
         if (text) payload.text = text
+        else if (sessionId && messageId) { payload.sessionId = sessionId; payload.messageId = messageId }
         const response = await fetch(READ_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -297,11 +349,43 @@ window.__ModuleLoader__.load({
         if (!sessionId) return
         const next = String(sessionId)
         // Leaving the session must not keep speaking into the new one.
-        if (previous.current !== null && previous.current !== next) stopPlayback()
+        if (previous.current !== null && previous.current !== next) {
+          stopPlayback()
+          setPendingQuestion(null)
+        }
         previous.current = next
         activeSessionId = next
       }, [sessionId])
       return null
+    }
+
+    // Speaker chip above the composer while a question is waiting for an answer.
+    function QuestionChip() {
+      const pending = usePendingQuestion()
+      const state = usePlayback()
+      if (!pending || !pending.text) return null
+      const key = 'prompt:' + pending.id
+      const playing = state.key === key && state.phase !== 'idle'
+      return h('div', { style: { display: 'flex', justifyContent: 'flex-end', padding: '0 2px' } },
+        h('button', {
+          type: 'button',
+          title: playing ? t('点击停止', 'Click to stop') : t('朗读这个问题', 'Read this question aloud'),
+          onClick: () => {
+            if (playing) { stopPlayback(); return }
+            void startReadAloud(null, null, key, { text: pending.text })
+          },
+          style: {
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
+            height: '24px', padding: '0 8px', borderRadius: '12px',
+            border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent',
+            color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', cursor: 'pointer',
+          },
+          children: [
+            playing ? h(ReadingBars, { mode: 'playing', key: 'bars' }) : h(SpeakerIcon, { key: 'icon' }),
+            h('span', { key: 'label' }, t('朗读问题', 'Read question')),
+          ],
+        }),
+      )
     }
 
     function ReadAloudAction(props) {
@@ -456,6 +540,30 @@ window.__ModuleLoader__.load({
               }),
               t('新回复自动朗读', 'Read new replies automatically'),
             ),
+            h('label', {
+              key: 'q',
+              style: { ...sub, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' },
+            },
+              h('input', {
+                type: 'checkbox',
+                checked: config.speakQuestions !== false,
+                disabled: busy,
+                onChange: (event) => save({ speakQuestions: event.target.checked }),
+              }),
+              t('提问时朗读', 'Read questions'),
+            ),
+            h('label', {
+              key: 'ap',
+              style: { ...sub, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' },
+            },
+              h('input', {
+                type: 'checkbox',
+                checked: config.speakApprovals !== false,
+                disabled: busy,
+                onChange: (event) => save({ speakApprovals: event.target.checked }),
+              }),
+              t('授权时朗读', 'Read approval requests'),
+            ),
           ),
           h('div', { style: row },
             h('span', { style: sub, key: 'cache' }, t('缓存：', 'Cache: ') + (config.cache ? config.cache.files : 0) + t(' 个文件 / ', ' files / ') + cacheMb + ' MB'),
@@ -519,6 +627,12 @@ window.__ModuleLoader__.load({
           id: 'tts-reader-session',
           order: 900,
         }, SessionTracker))
+
+        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+          name: 'conversation.composer.dock',
+          id: 'tts-reader-question',
+          order: 901,
+        }, QuestionChip))
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',

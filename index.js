@@ -34,7 +34,14 @@ const VOICES = new Set(['stella', 'tide'])
 const HARD_MAX_CHARS = 4000
 const SAMPLE_RATE = 24000
 
-const DEFAULTS = { voice: 'stella', maxChars: 4000, cacheMaxMb: 200, autoRead: false }
+const DEFAULTS = {
+  voice: 'stella',
+  maxChars: 4000,
+  cacheMaxMb: 200,
+  autoRead: false,
+  speakQuestions: true,
+  speakApprovals: true,
+}
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME
@@ -79,7 +86,9 @@ function normalizeSettings(raw, seed) {
     ? Math.min(4096, Math.floor(merged.cacheMaxMb))
     : DEFAULTS.cacheMaxMb
   const autoRead = merged.autoRead === true
-  return { voice, maxChars, cacheMaxMb, autoRead }
+  const speakQuestions = merged.speakQuestions !== false
+  const speakApprovals = merged.speakApprovals !== false
+  return { voice, maxChars, cacheMaxMb, autoRead, speakQuestions, speakApprovals }
 }
 
 // ---------------------------------------------------------------- HTTP helpers
@@ -353,12 +362,60 @@ export function apply(ctx, config) {
 
   ctx.effect(() => ctx.on('session/event', (session, event) => {
     try {
-      if (!event || event.type !== 'assistant/message') return
+      if (!event) return
+      if (event.type === 'approval/asked') {
+        const data = event.data || {}
+        const tool = typeof data.toolName === 'string' && data.toolName ? data.toolName : '工具'
+        const reason = typeof data.reason === 'string' && data.reason.trim() ? '，' + data.reason.trim() : ''
+        broadcast({ type: 'approval', id: String(data.id || ''), toolName: tool, text: '需要授权：' + tool + reason })
+        return
+      }
+      if (event.type !== 'assistant/message') return
       const message = event.data && event.data.message
       if (!message || !message.id) return
       broadcast({ type: 'assistant', sessionId: String(session.id), messageId: String(message.id) })
     } catch {}
   }), 'dsh-tts-reader: session feed')
+
+  // Questions and plan review: the tool call carries the text the user must
+  // answer, so snoop the waterfall and hand it to the page.
+  function questionSpeech(args) {
+    try {
+      const list = Array.isArray(args && args.questions) ? args.questions : []
+      const parts = []
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue
+        const head = typeof item.header === 'string' && item.header.trim() ? item.header.trim() + '：' : ''
+        const body = typeof item.question === 'string' ? item.question.trim() : ''
+        const options = Array.isArray(item.options)
+          ? item.options.map((option) => (option && typeof option.label === 'string' ? option.label.trim() : '')).filter(Boolean)
+          : []
+        const optionsText = options.length ? '。选项：' + options.join('、') : ''
+        if (head || body) parts.push(head + body + optionsText)
+      }
+      return parts.join('\n').slice(0, 2000)
+    } catch {
+      return ''
+    }
+  }
+
+  ctx.effect(() => ctx.on('tools/execute', (exec, next) => {
+    try {
+      if (exec && exec.name === 'ask_user_question' && exec.callId) {
+        const text = questionSpeech(exec.arguments)
+        if (text) broadcast({ type: 'question', id: String(exec.callId), text })
+      }
+    } catch {}
+    return next()
+  }), 'dsh-tts-reader: questions')
+
+  ctx.effect(() => ctx.on('tools/result', (exec) => {
+    try {
+      if (exec && exec.name === 'ask_user_question' && exec.callId) {
+        broadcast({ type: 'question-closed', id: String(exec.callId) })
+      }
+    } catch {}
+  }), 'dsh-tts-reader: question replies')
 
   ctx.inject(['webServer', 'credentials', 'sessionQuery'], (scope) => {
     const guard = (request, response) => {
@@ -388,7 +445,7 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         if (!body || typeof body !== 'object') return writeJson(response, 400, { ok: false, code: 'BAD_BODY', error: '请求体不是 JSON' })
         const current = readSettings()
-        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'autoRead']) }, null)
+        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'autoRead', 'speakQuestions', 'speakApprovals']) }, null)
         if (body.clearCache === true) clearCache()
         if (!writeSettings(next)) return writeJson(response, 500, { ok: false, code: 'WRITE_FAILED', error: '写入设置失败' })
         pruneCache(next.cacheMaxMb * 1024 * 1024)
