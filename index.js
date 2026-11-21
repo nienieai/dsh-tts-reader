@@ -298,32 +298,61 @@ export function pcmToWav(pcm) {
  * paragraph is only reusable for a selection if both sides go through this
  * same funnel: the session stores markdown, a selection is rendered text.
  */
+/** Table separator row: pipes plus only spaces, colons and at least 3 dashes. */
+function isTableSeparator(line) {
+  if (!line || line.indexOf('|') === -1) return false
+  if (!/^[\s|:-]+$/.test(line)) return false
+  return (line.match(/-/g) || []).length >= 3
+}
+
+/** Drop every row of a table: a spoken table is noise, not speech. */
+function dropTables(text) {
+  const lines = text.split('\n')
+  const drop = new Array(lines.length).fill(false)
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!isTableSeparator(lines[i])) continue
+    // The header sits directly above the separator, the body directly below.
+    let start = i - 1
+    while (start >= 0 && lines[start].trim() !== '' && !isTableSeparator(lines[start]) && lines[start].includes('|')) start -= 1
+    let end = i + 1
+    while (end < lines.length && lines[end].trim() !== '' && lines[end].includes('|')) end += 1
+    for (let k = start + 1; k < end; k += 1) drop[k] = true
+  }
+  return lines.filter((line, index) => !drop[index]).join('\n')
+}
+
 export function stripMarkdown(markdown) {
   let text = String(markdown || '').replace(/\r\n?/g, '\n')
-  // Fenced code is skipped: reading code aloud is noise, and this matches what
-  // the upstream filter_markdown used to drop for us.
+  // Fenced code is skipped: reading code aloud is noise, and this also covers
+  // ```mermaid diagrams.
   text = text.replace(/^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
   // Inline code is short and often a word of the sentence, so it stays verbatim.
   const stash = []
   const keep = (value) => '\u0000' + (stash.push(value) - 1) + '\u0000'
   text = text.replace(/`([^`\n]+)`/g, (_, body) => keep(body))
+  // Display math is not speech; inline $...$ stays, it may just be a price.
+  text = text.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/\\\[[\s\S]*?\\\]/g, '')
+  // Footnote definitions disappear; the markers left in the prose go too.
+  text = text.replace(/^[ \t]*\[\^[^\]]+\]:[^\n]*$/gm, '')
+  text = text.replace(/\[\^[^\]]+\]/g, '')
   // Unescape markdown escapes before the markers themselves are stripped.
   text = text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1')
   // Images render as pictures, so the alt text is not spoken.
   text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
   // Links speak their label only.
   text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-  // Table separator rows (|---|:--:|) carry no words; drop the whole line,
-  // newline included, so the rows around it stay one paragraph.
-  text = text.replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*\n?/gm, '')
-  // Table cells become words separated by spaces.
-  text = text.replace(/^[ \t]*\|/gm, ' ').replace(/\|[ \t]*$/gm, ' ').replace(/\|/g, ' ')
+  // HTML: keep the words, drop the tags.
+  text = text.replace(/<\/?[a-zA-Z][^>\n]*>/g, '')
   // Block markers at the start of a line.
   text = text.replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
   text = text.replace(/^[ \t]*>[ \t]?/gm, '')
   text = text.replace(/^[ \t]*[-*+][ \t]+/gm, '')
   text = text.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, '')
   text = text.replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, '')
+  // Tables go before the pipe cleanup, or their cells become words.
+  text = dropTables(text)
+  // Any remaining mid-line pipes become spaces.
+  text = text.replace(/^[ \t]*\|/gm, ' ').replace(/\|[ \t]*$/gm, ' ').replace(/\|/g, ' ')
   // Emphasis: only paired markers that do not sit inside a word, so snake_case
   // identifiers survive.
   text = text.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '$1')
@@ -331,7 +360,7 @@ export function stripMarkdown(markdown) {
   text = text.replace(/(?<![\w_])__(?=\S)([\s\S]*?\S)__(?![\w_])/g, '$1')
   text = text.replace(/(?<![\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, '$1')
   text = text.replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
-  text = text.replace(/\u0000(\d+)\u0000/g, (_, index) => stash[Number(index)])
+  text = text.replace(/\u0000(\d+)\u0000/g, (_, index) => stash[index])
   return text
 }
 
@@ -791,7 +820,7 @@ export function apply(ctx, config) {
           if (sessionError) {
             return writeJson(response, 500, { ok: false, code: 'SESSION_READ_FAILED', error: '读取会话失败：' + (sessionError?.message ?? String(sessionError)) })
           }
-          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
+          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
         }
 
         // One synthesis request (and one cache file) per paragraph, so reading a
@@ -816,6 +845,9 @@ export function apply(ctx, config) {
           const file = cacheFile(cacheKey(current.voice, unit))
           return { unit, file, cached: hasCachedWav(file) }
         })
+        if (units.length === 0) {
+          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
+        }
         const hits = units.filter((item) => item.cached).length
         const cacheState = hits === units.length ? 'hit' : hits === 0 ? 'miss' : 'mixed'
 
