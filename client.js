@@ -29,14 +29,46 @@ window.__ModuleLoader__.load({
     const START_DELAY = 0.1
     const MAX_CACHED_MESSAGES = 8
 
-    const LANG = (() => {
+    // Locale follows the Host's active language (what DSH itself shows), not the
+    // browser's: the plugin's copy must switch with the app. `ctx.locale` is
+    // wired in apply(); the navigator language is only the pre-injection guess.
+    let localeCtx = null
+    let localeListeners = []
+    function currentLang() {
+      try {
+        const snapshot = localeCtx && typeof localeCtx.getLocale === 'function' ? localeCtx.getLocale() : null
+        const active = snapshot && typeof snapshot.active === 'string' ? snapshot.active.toLowerCase() : ''
+        if (active) return active.startsWith('zh') ? 'zh' : 'en'
+      } catch {}
       try {
         return String(navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'
       } catch {
         return 'zh'
       }
-    })()
-    const t = (zh, en) => (LANG === 'zh' ? zh : en)
+    }
+    const t = (zh, en) => (currentLang() === 'zh' ? zh : en)
+
+    // Re-render a component when the app language changes.
+    function useLocaleTick() {
+      const [, force] = React.useReducer((value) => value + 1, 0)
+      React.useEffect(() => {
+        localeListeners.push(force)
+        return () => {
+          localeListeners = localeListeners.filter(entry => entry !== force)
+        }
+      }, [])
+    }
+
+    function watchLocale(ctx) {
+      try {
+        if (typeof ctx.locale.subscribe !== 'function') return
+        ctx.effect(() => ctx.locale.subscribe(() => {
+          for (const force of localeListeners.slice()) {
+            try { force() } catch {}
+          }
+        }), 'dsh-tts-reader: locale')
+      } catch {}
+    }
 
     // messageKey -> Float32Array[] (decoded PCM). LRU-ish by insertion order.
     const audioCache = new Map()
@@ -52,6 +84,9 @@ window.__ModuleLoader__.load({
     let autoReadInterim = false
     let speakQuestions = true
     let speakApprovals = true
+    // Playback rate: 1 is unchanged. Applied client-side as a pitch-preserving
+    // time-stretch — the TTS API has no speed parameter.
+    let speed = 1
     let activeSessionId = null
     const autoPlayed = new Set()
     let eventSource = null
@@ -66,6 +101,8 @@ window.__ModuleLoader__.load({
       autoReadInterim = value.autoReadInterim === true
       speakQuestions = value.speakQuestions !== false
       speakApprovals = value.speakApprovals !== false
+      const nextSpeed = Number(value.speed)
+      speed = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
     }
 
     let configLoaded = false
@@ -308,17 +345,158 @@ window.__ModuleLoader__.load({
       return { source, end: startAt + buffer.duration }
     }
 
-    function playFromMemory(context, stateKey, chunks) {
-      let nextTime = context.currentTime + START_DELAY
+    const EMPTY = new Float32Array(0)
+
+    // WSOLA (waveform-similarity overlap-add): changes duration without moving
+    // the pitch, which is the only way to get playback speed here — the DeepSeek
+    // TTS API has no speed parameter. Streaming: push() keeps the unfinished
+    // tail and returns output as soon as enough of it is settled.
+    class Stretcher {
+      /** @param {number} durationRatio played length ÷ original length (= 1/speed). */
+      constructor(durationRatio) {
+        this.ratio = Math.min(4, Math.max(0.25, durationRatio))
+        this.frame = 1024 // ~43 ms at 24 kHz
+        this.hop = this.frame >> 1
+        this.search = this.hop >> 1
+        this.minOut = 2048
+        this.window = new Float32Array(this.frame)
+        for (let i = 0; i < this.frame; i += 1) {
+          this.window[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / this.frame)
+        }
+        this.input = EMPTY
+        this.inputBase = 0
+        this.out = new Float32Array(4096)
+        this.outLen = 0
+        this.outBase = 0
+        this.frames = 0
+        this.prevStart = -1
+      }
+
+      #targetAbs() {
+        return Math.round((this.frames * this.hop) / this.ratio)
+      }
+
+      #grow(needed) {
+        if (needed <= this.out.length) return
+        let size = this.out.length
+        while (size < needed) size *= 2
+        const next = new Float32Array(size)
+        next.set(this.out.subarray(0, this.outLen))
+        this.out = next
+      }
+
+      // Nudge the frame start to the offset whose head best continues the
+      // previous frame, which is what keeps the waveform from canceling itself.
+      #frameStart(inputEnd) {
+        const target = this.#targetAbs()
+        if (this.prevStart < 0) return target
+        const ref = this.prevStart + this.hop
+        if (ref + this.hop > inputEnd) return target
+        let best = target
+        let bestScore = Infinity
+        const from = Math.max(0, target - this.search)
+        const to = target + this.search
+        for (let candidate = from; candidate <= to; candidate += 1) {
+          if (candidate + this.frame > inputEnd) break
+          let score = 0
+          for (let n = 0; n < this.hop; n += 1) {
+            const diff = this.input[ref + n - this.inputBase] - this.input[candidate + n - this.inputBase]
+            score += diff * diff
+            if (score >= bestScore) break
+          }
+          if (score < bestScore) { bestScore = score; best = candidate }
+        }
+        return best
+      }
+
+      #take() {
+        const readyAbs = this.frames * this.hop
+        const ready = readyAbs - this.outBase
+        if (ready < this.minOut) return EMPTY
+        const output = this.out.slice(0, ready)
+        const rest = this.out.slice(ready, this.outLen)
+        this.out = new Float32Array(Math.max(rest.length + this.frame * 2, 4096))
+        this.out.set(rest)
+        this.outLen = rest.length
+        this.outBase = readyAbs
+        return output
+      }
+
+      push(samples) {
+        if (!samples || samples.length === 0) return EMPTY
+        const merged = new Float32Array(this.input.length + samples.length)
+        merged.set(this.input)
+        merged.set(samples, this.input.length)
+        this.input = merged
+        const inputEnd = this.inputBase + this.input.length
+        for (;;) {
+          const start = this.#frameStart(inputEnd)
+          if (start + this.frame > inputEnd) break
+          const at = this.frames * this.hop - this.outBase
+          const local = start - this.inputBase
+          this.#grow(at + this.frame)
+          for (let n = 0; n < this.frame; n += 1) {
+            this.out[at + n] += this.window[n] * this.input[local + n]
+          }
+          if (at + this.frame > this.outLen) this.outLen = at + this.frame
+          this.prevStart = start
+          this.frames += 1
+          // Drop input that can no longer be reached by a future frame.
+          const keepFrom = Math.max(0, this.#targetAbs() - this.search - this.hop)
+          if (keepFrom > this.inputBase) {
+            this.input = this.input.slice(keepFrom - this.inputBase)
+            this.inputBase = keepFrom
+          }
+        }
+        return this.#take()
+      }
+
+      flush() {
+        if (this.outLen <= 0) return EMPTY
+        const output = this.out.slice(0, this.outLen)
+        this.out = new Float32Array(4096)
+        this.outLen = 0
+        this.outBase += output.length
+        return output
+      }
+    }
+
+    // One scheduler for both the cache path and the streaming path, applying
+    // the speed stretch and chaining Web Audio buffers gaplessly.
+    function createScheduler(context, stateKey) {
+      const durationRatio = speed > 0 ? 1 / speed : 1
+      const stretcher = Math.abs(durationRatio - 1) > 0.01 ? new Stretcher(durationRatio) : null
+      let nextTime = 0
       let last = null
-      for (const chunk of chunks) {
-        const scheduled = schedule(context, chunk, nextTime)
+      const emit = (samples) => {
+        if (!samples || samples.length === 0) return
+        const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
+        const scheduled = schedule(context, samples, startAt)
         nextTime = scheduled.end
         last = scheduled.source
+        if (playback.phase === 'loading') setPlayback({ phase: 'playing' })
       }
+      return {
+        feed(samples) {
+          if (stretcher) emit(stretcher.push(samples))
+          else emit(samples)
+        },
+        done() {
+          if (stretcher) {
+            const tail = stretcher.flush()
+            if (tail.length > 0) emit(tail)
+          }
+          if (!last) { finish(stateKey); return }
+          last.onended = () => finish(stateKey)
+        },
+      }
+    }
+
+    function playFromMemory(context, stateKey, chunks) {
       setPlayback({ key: stateKey, phase: 'playing', error: '' })
-      if (!last) { finish(stateKey); return }
-      last.onended = () => finish(stateKey)
+      const scheduler = createScheduler(context, stateKey)
+      for (const chunk of chunks) scheduler.feed(chunk)
+      scheduler.done()
     }
 
     function hashString(value) {
@@ -373,9 +551,8 @@ window.__ModuleLoader__.load({
         controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
 
         let rest = new Uint8Array(0)
-        let nextTime = 0
-        let last = null
         const collected = []
+        const scheduler = createScheduler(context, stateKey)
 
         for (;;) {
           const { done, value } = await reader.read()
@@ -385,18 +562,15 @@ window.__ModuleLoader__.load({
           const samples = toFloat32(merged)
           rest = merged.slice(samples.length * 2)
           if (samples.length === 0) continue
+          // The cache keeps the original recording, so changing the speed later
+          // replays from disk without synthesizing again.
           collected.push(samples)
-          const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
-          const scheduled = schedule(context, samples, startAt)
-          nextTime = scheduled.end
-          last = scheduled.source
-          if (playback.phase === 'loading') setPlayback({ phase: 'playing' })
+          scheduler.feed(samples)
         }
 
         if (controller.signal.aborted) return
         rememberAudio(cacheKey, collected)
-        if (!last) { finish(stateKey); return }
-        last.onended = () => finish(stateKey)
+        scheduler.done()
       } catch (error) {
         if (controller.signal.aborted) return
         fail(stateKey, error)
@@ -820,10 +994,15 @@ window.__ModuleLoader__.load({
 
       const timer = setInterval(tick, 2000)
       const off = subscribePlayback(render)
+      // The button lives outside React, so it subscribes to language changes
+      // itself.
+      const localeListener = () => render()
+      localeListeners.push(localeListener)
       tick()
       return () => {
         removed = true
         clearInterval(timer)
+        localeListeners = localeListeners.filter(entry => entry !== localeListener)
         try { clearInterval(settleTimer) } catch {}
         if (placeFrame) { try { cancelAnimationFrame(placeFrame) } catch {} placeFrame = 0 }
         if (sizeObserver) { try { sizeObserver.disconnect() } catch {} sizeObserver = null }
@@ -840,6 +1019,7 @@ window.__ModuleLoader__.load({
       const key = String(sessionId) + ':' + String(messageId)
       const state = usePlayback()
       const selectionRef = React.useRef('')
+      useLocaleTick()
       React.useEffect(() => {
         if (sessionId) activeSessionId = String(sessionId)
       }, [sessionId])
@@ -933,6 +1113,10 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState('')
       const [failure, setFailure] = React.useState('')
       const [busy, setBusy] = React.useState(false)
+      // The speed slider previews while dragging and only saves on release, so
+      // one drag is one write instead of dozens.
+      const [speedDraft, setSpeedDraft] = React.useState(null)
+      useLocaleTick()
 
       const load = React.useCallback(() => {
         fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
@@ -967,11 +1151,37 @@ window.__ModuleLoader__.load({
       const MIN_CACHE_MB = 50
       const MAX_CACHE_MB = 4096
 
+      const commitSpeed = () => {
+        const raw = speedDraft
+        setSpeedDraft(null)
+        if (raw === null) return
+        const parsed = Number(raw)
+        if (!Number.isFinite(parsed)) return
+        const next = Math.round(Math.min(2, Math.max(0.5, parsed)) * 100) / 100
+        if (config && next === config.speed) return
+        void save({ speed: next })
+      }
+
       if (!config) return h('div', { style: { padding: '4px 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, t('加载中…', 'Loading…'))
 
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
       const cacheLimit = config.cacheMaxMb || 200
       const cachePct = Math.min(100, Math.round(((config.cache && config.cache.bytes ? config.cache.bytes : 0) / (cacheLimit * 1048576)) * 100))
+
+      const row = (key, label, control, meta) => h('div', { className: 'dsh-tts-row', key },
+        h('span', { className: 'dsh-tts-label' }, label),
+        control,
+        meta ? (typeof meta === 'string' ? h('span', { className: 'dsh-tts-meta' }, meta) : meta) : null,
+      )
+
+      const check = (key, field, text, hint, checked) => h('label', { className: 'dsh-tts-check', key },
+        h('input', {
+          type: 'checkbox', checked: checked, disabled: busy,
+          onChange: (event) => save({ [field]: event.target.checked }),
+        }),
+        h('span', { className: 'dsh-tts-check-text' }, text),
+        hint ? h('span', { className: 'dsh-tts-hint' }, hint) : null,
+      )
 
       return h('div', { className: 'dsh-tts-settings' },
         h('div', { className: 'dsh-tts-card', key: 'sound' },
@@ -979,91 +1189,77 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-tts-h1', key: 'h' }, t('语音朗读', 'Read aloud')),
             h('div', { className: 'dsh-tts-hint', key: 'd' }, t('用 DeepSeek 官方 TTS 朗读助手回复，音频缓存在本机；页面只发消息 id，Key 不出 Host。', 'Speaks replies with the DeepSeek TTS API. The page only sends a message id; the key never leaves the Host.')),
           ),
-          h('div', { className: 'dsh-tts-row', key: 'key' },
-            h('span', { className: 'dsh-tts-label' }, 'API Key'),
+          row('key', 'API Key',
             h('span', { className: 'dsh-tts-grow' },
               config.keyConfigured
-                ? h('span', { className: 'dsh-tts-badge ok' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured'))
-                : h('span', { className: 'dsh-tts-badge warn' }, t('未配置，请先在 设置 → 模型 填 Key', 'Not configured — set a key in Settings → Models')),
+                ? h('span', { className: 'dsh-tts-badge ok' }, t('已配置（DEEPSEEK_API_KEY）', 'Configured · DEEPSEEK_API_KEY'))
+                : h('span', { className: 'dsh-tts-badge warn' }, t('未配置，请到 设置 → 模型 填 Key', 'Not configured — set a key in Settings → Models')),
             ),
           ),
-          h('div', { className: 'dsh-tts-row', key: 'voice' },
-            h('span', { className: 'dsh-tts-label' }, t('音色', 'Voice')),
+          row('voice', t('音色', 'Voice'),
             h('span', { className: 'dsh-tts-grow' },
               h('select', {
                 className: 'dsh-tts-select', value: config.voice, disabled: busy,
                 onChange: (event) => save({ voice: event.target.value }),
                 children: [
-                  h('option', { value: 'stella', key: 'stella' }, 'stella（女声）'),
-                  h('option', { value: 'tide', key: 'tide' }, 'tide（男声）'),
+                  h('option', { value: 'stella', key: 'stella' }, 'stella · ' + t('女声', 'female')),
+                  h('option', { value: 'tide', key: 'tide' }, 'tide · ' + t('男声', 'male')),
                 ],
               }),
             ),
           ),
-          h('div', { className: 'dsh-tts-row', key: 'chars' },
-            h('span', { className: 'dsh-tts-label' }, t('单次上限', 'Max chars')),
+          row('chars', t('单次上限', 'Max chars'),
             h('span', { className: 'dsh-tts-grow' },
               h(NumberInput, {
                 className: 'dsh-tts-input num', min: 100, max: 4000, step: 100,
                 value: config.maxChars, disabled: busy,
                 onCommit: (value) => void save({ maxChars: value }),
               }),
-              h('span', { className: 'dsh-tts-hint' }, t('字 · 回车或失焦生效', 'chars · applies on Enter or blur')),
+              h('span', { className: 'dsh-tts-unit' }, t('字', 'chars')),
             ),
+          ),
+          row('speed', t('速度', 'Speed'),
+            h('span', { className: 'dsh-tts-grow' },
+              h('input', {
+                className: 'dsh-tts-range', type: 'range', min: 0.5, max: 2, step: 0.05,
+                value: speedDraft === null ? config.speed : speedDraft,
+                disabled: busy,
+                'aria-label': t('朗读速度', 'Playback speed'),
+                onChange: (event) => setSpeedDraft(event.target.value),
+                onPointerUp: commitSpeed,
+                onKeyUp: commitSpeed,
+                onBlur: commitSpeed,
+              }),
+              h('span', { className: 'dsh-tts-value' }, (Number(speedDraft === null ? config.speed : speedDraft) || 1).toFixed(2) + '×'),
+            ),
+            t('无变调', 'pitch kept'),
           ),
         ),
         h('div', { className: 'dsh-tts-card', key: 'when' },
           h('div', { className: 'dsh-tts-head' },
-            h('div', { className: 'dsh-tts-h1' }, t('朗读时机', 'When to speak')),
+            h('div', { className: 'dsh-tts-h1' }, t('自动朗读', 'Auto-read')),
           ),
-          h('label', { className: 'dsh-tts-check', key: 'auto' },
-            h('input', {
-              type: 'checkbox', checked: config.autoRead === true, disabled: busy,
-              onChange: (event) => save({ autoRead: event.target.checked }),
-            }),
-            t('新回复自动朗读', 'Read new replies automatically'),
-            h('span', { className: 'dsh-tts-hint' }, t('关闭时只读回合结束的最后一条', 'Off: only the turn\'s final message is spoken')),
-          ),
-          h('label', { className: 'dsh-tts-check', key: 'interim' },
-            h('input', {
-              type: 'checkbox', checked: config.autoReadInterim === true, disabled: busy,
-              onChange: (event) => save({ autoReadInterim: event.target.checked }),
-            }),
-            t('中途输出也朗读', 'Read intermediate output too'),
-            h('span', { className: 'dsh-tts-hint' }, t('回合中间的每段输出依次朗读；提问/授权排在它后面', 'Speaks each mid-turn message in order; requests queue behind it')),
-          ),
-          h('label', { className: 'dsh-tts-check', key: 'q' },
-            h('input', {
-              type: 'checkbox', checked: config.speakQuestions !== false, disabled: busy,
-              onChange: (event) => save({ speakQuestions: event.target.checked }),
-            }),
-            t('提问时朗读', 'Read questions'),
-          ),
-          h('label', { className: 'dsh-tts-check', key: 'ap' },
-            h('input', {
-              type: 'checkbox', checked: config.speakApprovals !== false, disabled: busy,
-              onChange: (event) => save({ speakApprovals: event.target.checked }),
-            }),
-            t('授权时朗读', 'Read approval requests'),
-          ),
+          // Every switch here is auto-reading; the label only names the source,
+          // so the old "朗读时机 / when to speak" framing is gone.
+          check('auto', 'autoRead', t('读回复', 'Read replies'), t('回合结束的整条回复', "the turn's final reply"), config.autoRead === true),
+          check('interim', 'autoReadInterim', t('读中途输出', 'Read mid-turn output'), t('需先开启「读回复」', 'needs "Read replies"'), config.autoReadInterim === true),
+          check('q', 'speakQuestions', t('读提问', 'Read questions'), t('需要你作答的问题', 'prompts that need your answer'), config.speakQuestions !== false),
+          check('ap', 'speakApprovals', t('读授权', 'Read approvals'), t('需要你确认的授权请求', 'requests that need your confirmation'), config.speakApprovals !== false),
         ),
         h('div', { className: 'dsh-tts-card', key: 'cache' },
           h('div', { className: 'dsh-tts-head' },
             h('div', { className: 'dsh-tts-h1' }, t('音频缓存', 'Audio cache')),
             h('div', { className: 'dsh-tts-hint' }, (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'),
+            h('div', { className: 'dsh-tts-meter', key: 'meter' }, h('i', { style: { width: cachePct + '%' } })),
           ),
-          h('div', { className: 'dsh-tts-row' },
-            h('div', { className: 'dsh-tts-meter' }, h('i', { style: { width: cachePct + '%' } })),
-          ),
-          h('div', { className: 'dsh-tts-row' },
-            h('span', { className: 'dsh-tts-label' }, t('上限', 'Limit')),
+          row('limit', t('上限', 'Limit'),
             h('span', { className: 'dsh-tts-grow' },
               h(NumberInput, {
                 className: 'dsh-tts-input num', min: MIN_CACHE_MB, max: MAX_CACHE_MB, step: 50,
                 value: config.cacheMaxMb, disabled: busy,
                 onCommit: (value) => void save({ cacheMaxMb: value }),
               }),
-              h('span', { className: 'dsh-tts-hint' }, t('MB · 回车或失焦生效', 'MB · applies on Enter or blur')),
+              h('span', { className: 'dsh-tts-unit' }, 'MB'),
             ),
             h('button', {
               className: 'dsh-tts-btn danger', type: 'button', disabled: busy,
@@ -1080,6 +1276,7 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
+        h('div', { className: 'dsh-tts-foot', key: 'foot' }, t('回车、失焦或松手后保存。', 'Saves on Enter, blur, or release.')),
         notice ? h('div', { className: 'dsh-tts-toast ok', key: 'notice' }, notice) : null,
         failure ? h('div', { className: 'dsh-tts-toast err', key: 'failure' }, failure) : null,
       )
@@ -1091,31 +1288,46 @@ window.__ModuleLoader__.load({
       '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
       '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
       // ---- settings page ----
-      '.dsh-tts-settings{display:flex;flex-direction:column;gap:14px;font-size:13px;padding:6px 2px 18px;color:var(--dsw-alias-label-primary)}',
-      '.dsh-tts-card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}',
-      '.dsh-tts-head{display:flex;flex-direction:column;gap:3px;padding:12px 14px 10px}',
-      '.dsh-tts-h1{font-size:13px;font-weight:600}',
-      '.dsh-tts-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-tts-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l2)}',
-      '.dsh-tts-label{min-width:64px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
-      '.dsh-tts-grow{flex:1;min-width:0;display:flex;align-items:center;gap:8px}',
-      '.dsh-tts-input,.dsh-tts-select{height:28px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;outline:none}',
-      '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-tts-input.num{width:84px;text-align:right}',
-      '.dsh-tts-select{min-width:150px}',
-      '.dsh-tts-btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;cursor:pointer}',
+      // One rhythm: every row is a 48px three-column grid (label / control / meta),
+      // and every control is 30px tall with an explicit box model, so the page no
+      // longer changes shape per row type or per language.
+      '.dsh-tts-settings{display:flex;flex-direction:column;gap:16px;font-size:13px;padding:8px 2px 20px;color:var(--dsw-alias-label-primary)}',
+      '.dsh-tts-card{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}',
+      '.dsh-tts-head{display:flex;flex-direction:column;gap:4px;padding:14px 16px 12px}',
+      '.dsh-tts-h1{font-size:13px;font-weight:600;line-height:1.4}',
+      '.dsh-tts-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-tts-head .dsh-tts-hint{font-size:12px;white-space:normal;overflow:visible}',
+      '.dsh-tts-row{box-sizing:border-box;display:grid;grid-template-columns:96px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2)}',
+      '.dsh-tts-label{font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-tts-grow{display:flex;align-items:center;gap:8px;min-width:0}',
+      '.dsh-tts-meta{justify-self:end;max-width:170px;font-size:11px;line-height:1.4;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-tts-unit{flex:0 0 auto;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-row > .dsh-tts-btn{justify-self:end}',
+      '.dsh-tts-input,.dsh-tts-select{box-sizing:border-box;height:30px;margin:0;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.2;font-family:inherit;outline:none}',
+      '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
+      '.dsh-tts-input.num{flex:0 0 auto;width:96px;text-align:right;font-variant-numeric:tabular-nums}',
+      '.dsh-tts-input[type=number]::-webkit-inner-spin-button,.dsh-tts-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}',
+      '.dsh-tts-select{flex:0 1 auto;width:200px;max-width:100%;cursor:pointer}',
+      '.dsh-tts-range{flex:1 1 auto;min-width:80px;height:4px;margin:0;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',
+      '.dsh-tts-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
+      '.dsh-tts-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
+      '.dsh-tts-range:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}',
+      '.dsh-tts-value{flex:0 0 46px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}',
+      '.dsh-tts-btn{box-sizing:border-box;height:30px;margin:0;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;font-family:inherit;cursor:pointer}',
       '.dsh-tts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}',
       '.dsh-tts-btn:disabled{opacity:.55;cursor:default}',
       '.dsh-tts-btn.danger:hover:not(:disabled){border-color:#e5484d;color:#e5484d}',
-      '.dsh-tts-check{display:flex;align-items:center;gap:9px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l2);font-size:13px;cursor:pointer}',
-      '.dsh-tts-check input{width:14px;height:14px;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}',
-      '.dsh-tts-check .dsh-tts-hint{margin-left:auto}',
-      '.dsh-tts-badge{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}',
+      '.dsh-tts-check{box-sizing:border-box;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2);font-size:13px;line-height:1.4;color:var(--dsw-alias-label-primary);cursor:pointer}',
+      '.dsh-tts-check input{box-sizing:border-box;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}',
+      '.dsh-tts-check-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dsh-tts-check .dsh-tts-hint{justify-self:end;max-width:220px}',
+      '.dsh-tts-badge{box-sizing:border-box;display:inline-flex;align-items:center;max-width:100%;height:22px;padding:0 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);font-size:11px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}',
       '.dsh-tts-badge.ok{color:#30a46c;border-color:rgba(48,164,108,.5)}',
       '.dsh-tts-badge.warn{color:#e5484d;border-color:rgba(229,72,77,.5)}',
-      '.dsh-tts-meter{flex:1;height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
+      '.dsh-tts-head .dsh-tts-meter{height:4px;margin-top:8px;border-radius:2px;background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
       '.dsh-tts-meter i{display:block;height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary);transition:width .25s}',
-      '.dsh-tts-toast{font-size:12px;padding:0 2px}',
+      '.dsh-tts-foot{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);padding:0 2px}',
+      '.dsh-tts-toast{font-size:12px;line-height:1.5;padding:0 2px}',
       '.dsh-tts-toast.ok{color:#30a46c}',
       '.dsh-tts-toast.err{color:#e5484d}',
     ].join('\n')
@@ -1129,10 +1341,31 @@ window.__ModuleLoader__.load({
       return () => { try { style.remove() } catch {} }
     }
 
+    // Settings navigation glyph for this plugin's own section id.
+    function SettingsIcon(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      const active = props && props.active === true
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+        stroke: 'currentColor', strokeWidth: active ? 2 : 1.8,
+        strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true, style: { opacity: active ? 1 : 0.85 },
+      },
+        h('path', {
+          d: 'M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z',
+          key: 'body',
+        }),
+        h('path', { d: 'M16 9a5 5 0 0 1 0 6', key: 'wave-1' }),
+        h('path', { d: 'M19.4 18.4a9 9 0 0 0 0-12.8', key: 'wave-2' }),
+      )
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
+        localeCtx = ctx.locale
+        watchLocale(ctx)
         loadConfigOnce()
         ensureEvents(ctx)
 
@@ -1186,15 +1419,23 @@ window.__ModuleLoader__.load({
           name: 'conversation.chat.assistant-actions',
           id: 'tts-reader',
           order: 40,
-          label: t('朗读', 'Read aloud'),
+          // A thunk: the owner re-reads it per projection, so the label follows
+          // the app language without re-registering.
+          label: () => t('朗读', 'Read aloud'),
         }, ReadAloudAction))
 
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'tts-reader',
           order: 26,
-          label: t('语音朗读', 'Read aloud'),
+          label: () => t('语音朗读', 'Read aloud'),
         }, TtsSettings))
+
+        // The settings navigation glyph for our own section id.
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'tts-reader',
+        }, SettingsIcon))
       },
     }
   },
