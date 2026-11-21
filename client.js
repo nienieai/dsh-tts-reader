@@ -274,6 +274,14 @@ window.__ModuleLoader__.load({
       })
     }
 
+    function SessionTracker(props) {
+      const sessionId = props && props.sessionId
+      React.useEffect(() => {
+        if (sessionId) activeSessionId = String(sessionId)
+      }, [sessionId])
+      return null
+    }
+
     function ReadAloudAction(props) {
       const messageId = props && props.messageId
       const sessionId = props && props.sessionId
@@ -476,6 +484,14 @@ window.__ModuleLoader__.load({
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
         loadConfigOnce()
         ensureEvents(ctx)
+
+        // Follows the visible session even before it has any assistant message,
+        // so auto-read always compares against the right session id.
+        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+          name: 'conversation.composer.dock',
+          id: 'tts-reader-session',
+          order: 900,
+        }, SessionTracker))
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',
