@@ -2,23 +2,32 @@
 
 本项目是 **DSH（DeepSeek Harness）的社区插件**，通过 DSH 的公开插件接口接入，并调用 DeepSeek 开放平台的 TTS 接口合成语音。
 
-下列项目只用于参考接口、协议与交互方式；**本仓库不包含它们的源码文件**。如果将来某个文件确实改编自它们，会在该文件头部注明来源，并同样适用下方的 MIT 条款。
+下列项目被参考或包含少量改编内容；对应许可证全文附在文末。
 
-## DeepSeek chat-demo
+## DeepSeek chat-demo（MIT）
 
 - 仓库：<https://github.com/deepseek-ai/chat-demo>
-- 许可证：MIT
 - 版权：Copyright (c) 2026 DeepSeek
-- 参考内容：朗读（read-aloud）的交互流程与 TTS 请求格式（`format: 'pcm'`、`filter_markdown`）。
+- 参考/改编内容：
+  - 朗读按钮的交互流程（未朗读 → 加载中/朗读中点击停止）与 TTS 请求格式（`format: 'pcm'`、`filter_markdown`）；
+  - 朗读状态条的**概念**（4 根竖条、`mode: 'loading' | 'playing'` 两态）。本仓库的实现是 CSS `@keyframes` 的 `<span>` + `<i>`，与上游的 SVG/SMIL 版本不同；
+  - 喇叭图标的圆角形状（见下方 Lucide 条目，上游同样使用该图标集）。
 
-## DeepSeek Harness（dsh）
+## DeepSeek Harness / dsh（MIT）
 
 - 仓库：<https://github.com/deepseek-ai/deepseek-harness>
-- 许可证：MIT
 - 版权：Copyright (c) 2026 DeepSeek
 - 参考内容：公开插件 API（slot 注册、`ctx.locale`、`webServer`、`sessionQuery`、`settings.section.icon` 等）与页面 DOM 钩子（`[data-approval-key]`、`[data-question-key]`）。
 
-## MIT 许可文本
+## Lucide Icons（ISC）
+
+- 仓库：<https://github.com/lucide-icons/lucide>
+- 版权：Copyright (c) 2026 Lucide Icons and Contributors
+- 使用内容：`client.js` 里 `SpeakerIcon` / `SettingsIcon` 的喇叭路径改编自 Lucide 的 `volume-2` 图标（数值做了取整）。
+
+---
+
+## MIT License（适用于 chat-demo 与 deepseek-harness）
 
 ```text
 MIT License
@@ -42,4 +51,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+## ISC License（适用于 Lucide Icons）
+
+```text
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```

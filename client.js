@@ -589,8 +589,8 @@ window.__ModuleLoader__.load({
     }
 
     function SpeakerIcon() {
-      // Rounded speaker + two arcs, matching the volume glyph used by the web
-      // clients in the reference screenshots.
+      // Rounded speaker + two arcs, adapted from Lucide's volume-2 icon (ISC,
+      // see THIRD_PARTY.md); the web client renders the same shape.
       return h('svg', {
         width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
         strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
@@ -1343,7 +1343,8 @@ window.__ModuleLoader__.load({
       return () => { try { style.remove() } catch {} }
     }
 
-    // Settings navigation glyph for this plugin's own section id.
+    // Settings navigation glyph for this plugin's own section id; same adapted
+    // Lucide volume-2 paths as SpeakerIcon (ISC, see THIRD_PARTY.md).
     function SettingsIcon(props) {
       const size = props && typeof props.size === 'number' ? props.size : 16
       const active = props && props.active === true
