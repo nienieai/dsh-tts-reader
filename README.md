@@ -91,4 +91,6 @@ git checkout dev
 
 ## License
 
-MIT
+MIT，见 [LICENSE](LICENSE)。
+
+本插件是**非官方社区项目**，与 DeepSeek（深度求索）没有隶属或背书关系；名称里的 "DeepSeek" 只用于说明它对接的接口。插件通过 DSH 的公开插件接口接入，并调用 DeepSeek 开放平台的 TTS 接口；参考过的 MIT 开源项目（chat-demo、deepseek-harness）及各自的版权声明见 [THIRD_PARTY.md](THIRD_PARTY.md)。

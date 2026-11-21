@@ -18,7 +18,8 @@
     "locale/*.json",
     "docs",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "THIRD_PARTY.md"
   ],
   "keywords": [
     "dsh",
