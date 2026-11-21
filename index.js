@@ -446,16 +446,23 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
         const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
-        if (!sessionId || !messageId) return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '需要 sessionId 与 messageId' })
+        // An explicit text wins: it carries a selected paragraph the page already
+        // has, so the Host does not have to re-read the whole message.
+        const explicitText = typeof body?.text === 'string' ? body.text.trim() : ''
+        if (!explicitText && (!sessionId || !messageId)) {
+          return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '需要 sessionId 与 messageId（或直接给 text）' })
+        }
 
         const current = readSettings()
-        let text = ''
-        try {
-          text = await readMessageText(scope.sessionQuery, sessionId, messageId)
-        } catch (error) {
-          return writeJson(response, 500, { ok: false, code: 'SESSION_READ_FAILED', error: '读取会话失败：' + (error?.message ?? String(error)) })
+        let text = explicitText
+        if (!text) {
+          try {
+            text = await readMessageText(scope.sessionQuery, sessionId, messageId)
+          } catch (error) {
+            return writeJson(response, 500, { ok: false, code: 'SESSION_READ_FAILED', error: '读取会话失败：' + (error?.message ?? String(error)) })
+          }
+          if (!text) return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
         }
-        if (!text) return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
         const truncated = text.length > current.maxChars
         if (truncated) text = text.slice(0, current.maxChars)
 

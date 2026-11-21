@@ -169,7 +169,7 @@ window.__ModuleLoader__.load({
       return { source, end: startAt + buffer.duration }
     }
 
-    function playFromMemory(context, key, chunks) {
+    function playFromMemory(context, stateKey, chunks) {
       let nextTime = context.currentTime + START_DELAY
       let last = null
       for (const chunk of chunks) {
@@ -177,31 +177,41 @@ window.__ModuleLoader__.load({
         nextTime = scheduled.end
         last = scheduled.source
       }
-      setPlayback({ key, phase: 'playing', error: '' })
-      if (!last) { finish(key); return }
-      last.onended = () => finish(key)
+      setPlayback({ key: stateKey, phase: 'playing', error: '' })
+      if (!last) { finish(stateKey); return }
+      last.onended = () => finish(stateKey)
     }
 
-    async function startReadAloud(sessionId, messageId, key) {
+    function hashString(value) {
+      let hash = 5381
+      for (let i = 0; i < value.length; i += 1) hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0
+      return (hash >>> 0).toString(36)
+    }
+
+    async function startReadAloud(sessionId, messageId, stateKey, options) {
+      const text = options && options.text ? options.text : ''
+      const cacheKey = text ? stateKey + '|s:' + hashString(text) : stateKey
       stopPlayback()
       // Must be created synchronously inside the click: the browser only lets a
       // gesture-created AudioContext produce sound.
       const context = new AudioContext({ sampleRate: SAMPLE_RATE })
       const controller = new AbortController()
-      current = { key, controller, context }
-      setPlayback({ key, phase: 'loading', error: '' })
+      current = { key: stateKey, cacheKey, controller, context }
+      setPlayback({ key: stateKey, phase: 'loading', error: '' })
 
-      const cached = audioCache.get(key)
+      const cached = audioCache.get(cacheKey)
       if (cached && cached.length) {
-        try { playFromMemory(context, key, cached) } catch (error) { fail(key, error) }
+        try { playFromMemory(context, stateKey, cached) } catch (error) { fail(stateKey, error) }
         return
       }
 
       try {
+        const payload = { sessionId, messageId }
+        if (text) payload.text = text
         const response = await fetch(READ_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, messageId }),
+          body: JSON.stringify(payload),
           signal: controller.signal,
         })
         const type = String(response.headers.get('content-type') || '')
@@ -239,12 +249,12 @@ window.__ModuleLoader__.load({
         }
 
         if (controller.signal.aborted) return
-        rememberAudio(key, collected)
-        if (!last) { finish(key); return }
-        last.onended = () => finish(key)
+        rememberAudio(cacheKey, collected)
+        if (!last) { finish(stateKey); return }
+        last.onended = () => finish(stateKey)
       } catch (error) {
         if (controller.signal.aborted) return
-        fail(key, error)
+        fail(stateKey, error)
       }
     }
 
@@ -258,8 +268,8 @@ window.__ModuleLoader__.load({
 
     function SpeakerIcon() {
       return h('svg', {
-        width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
-        strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
+        width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
       },
         h('path', { d: 'M11 5 6 9H3v6h3l5 4V5z', key: 'body' }),
         h('path', { d: 'M15.5 8.5a5 5 0 0 1 0 7', key: 'wave' }),
@@ -276,8 +286,14 @@ window.__ModuleLoader__.load({
 
     function SessionTracker(props) {
       const sessionId = props && props.sessionId
+      const previous = React.useRef(null)
       React.useEffect(() => {
-        if (sessionId) activeSessionId = String(sessionId)
+        if (!sessionId) return
+        const next = String(sessionId)
+        // Leaving the session must not keep speaking into the new one.
+        if (previous.current !== null && previous.current !== next) stopPlayback()
+        previous.current = next
+        activeSessionId = next
       }, [sessionId])
       return null
     }
@@ -287,6 +303,7 @@ window.__ModuleLoader__.load({
       const sessionId = props && props.sessionId
       const key = String(sessionId) + ':' + String(messageId)
       const state = usePlayback()
+      const selectionRef = React.useRef('')
       React.useEffect(() => {
         if (sessionId) activeSessionId = String(sessionId)
       }, [sessionId])
@@ -303,23 +320,27 @@ window.__ModuleLoader__.load({
             ? t('点击停止', 'Click to stop')
             : cached
               ? t('再次播放（本地缓存）', 'Play again (cached)')
-              : t('朗读这条回复', 'Read this reply aloud')
+              : t('朗读这条回复（选中文字则只读选中部分）', 'Read this reply aloud (selected text only, if any)')
 
       return h('button', {
         type: 'button',
         title,
         'aria-label': title,
+        // Capture the selection before mousedown clears it.
+        onMouseDown: () => {
+          try { selectionRef.current = String(window.getSelection() || '').trim() } catch { selectionRef.current = '' }
+        },
         onClick: () => {
           if (phase === 'loading' || phase === 'playing') { stopPlayback(); return }
-          void startReadAloud(sessionId, messageId, key)
+          const selected = selectionRef.current.slice(0, 4000)
+          void startReadAloud(sessionId, messageId, key, selected ? { text: selected } : undefined)
         },
         style: {
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
-          height: '24px', minWidth: '24px', padding: '0 6px', border: '1px solid transparent',
-          borderRadius: '6px', background: 'transparent', cursor: 'pointer', fontSize: '12px',
-          lineHeight: '1',
-          color: error ? '#e5484d' : (phase === 'idle' ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-state-business-primary)'),
-          borderColor: phase === 'idle' ? 'transparent' : 'var(--dsw-alias-state-business-primary)',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          height: '24px', minWidth: '22px', padding: '0 3px', border: 'none',
+          background: 'transparent', cursor: 'pointer', borderRadius: '4px',
+          color: error ? '#e5484d' : 'var(--dsw-alias-label-secondary)',
+          opacity: phase === 'idle' && !cached ? 0.9 : 1,
         },
         children: [
           phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingBars, { mode: phase, key: 'bars' }),
@@ -463,8 +484,8 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = [
-      '.dsh-tts-bars{display:inline-flex;align-items:flex-end;gap:2px;height:13px;width:15px;justify-content:center}',
-      '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:35%;animation:dsh-tts-bar .9s ease-in-out infinite}',
+      '.dsh-tts-bars{display:inline-flex;align-items:center;gap:2px;height:16px;width:16px;justify-content:center}',
+      '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:30%;animation:dsh-tts-bar .9s ease-in-out infinite}',
       '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
       '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
     ].join('\n')
@@ -510,3 +531,4 @@ window.__ModuleLoader__.load({
     }
   },
 })
+
