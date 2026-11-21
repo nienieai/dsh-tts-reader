@@ -84,26 +84,12 @@ window.__ModuleLoader__.load({
         let payload = null
         try { payload = JSON.parse(event.data) } catch { return }
         if (!payload) return
-        if (payload.type === 'question') {
-          const id = String(payload.id || '')
-          const text = String(payload.text || '').trim()
-          if (!id || !text) return
-          if (speakQuestions && !autoPlayed.has('q:' + id)) {
-            autoPlayed.add('q:' + id)
-            void startReadAloud(null, null, 'prompt:' + id, { text })
-          }
-          return
-        }
-        if (payload.type === 'question-closed' || payload.type === 'approval-closed') {
+        if (payload.type === 'question' || payload.type === 'question-closed' || payload.type === 'approval-closed') {
+          // Speech for these comes from the /pending probe below, so one page
+          // instance owns it even when the feed reconnects.
           return
         }
         if (payload.type === 'approval') {
-          const id = String(payload.id || '')
-          const text = String(payload.text || '').trim()
-          if (!id || !text) return
-          if (!speakApprovals || autoPlayed.has('a:' + id)) return
-          autoPlayed.add('a:' + id)
-          void startReadAloud(null, null, 'prompt:approval:' + id, { text })
           return
         }
         if (payload.type !== 'assistant') return
@@ -348,12 +334,23 @@ window.__ModuleLoader__.load({
     function PromptButton() {
       const [pending, setPending] = React.useState(null)
       const state = usePlayback()
+      const lastSpoken = React.useRef(null)
       React.useEffect(() => {
         let alive = true
         const tick = () => {
           fetch(PENDING_PATH, { headers: { accept: 'application/json' } })
             .then((res) => res.json())
-            .then((body) => { if (alive && body && body.ok) setPending(body.value || null) })
+            .then((body) => {
+              if (!alive || !body || !body.ok) return
+              const value = body.value || null
+              setPending(value)
+              if (!value || !value.text || lastSpoken.current === value.id) return
+              const enabled = value.kind === 'approval' ? speakApprovals : speakQuestions
+              if (!enabled) return
+              lastSpoken.current = value.id
+              const key = 'prompt:' + (value.kind === 'approval' ? 'approval:' : '') + value.id
+              void startReadAloud(null, null, key, { text: value.text })
+            })
             .catch(() => {})
         }
         tick()
