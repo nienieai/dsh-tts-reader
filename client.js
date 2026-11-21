@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
     const CONFIG_PATH = '/api/dsh-tts/config'
     const READ_PATH = '/api/dsh-tts/read'
     const CLEAR_PATH = '/api/dsh-tts/cache/clear'
+    const EVENTS_PATH = '/api/dsh-tts/events'
 
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
@@ -41,6 +42,60 @@ window.__ModuleLoader__.load({
     let current = null // { key, controller, context }
     let playback = { key: null, phase: 'idle', error: '' }
     const listeners = new Set()
+
+    // Auto-read state, kept in sync with the Host settings.
+    let autoRead = false
+    let activeSessionId = null
+    const autoPlayed = new Set()
+    let eventSource = null
+
+    function applyRemoteConfig(value) {
+      if (value && typeof value === 'object') autoRead = value.autoRead === true
+    }
+
+    let configLoaded = false
+    function loadConfigOnce() {
+      if (configLoaded) return
+      configLoaded = true
+      fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
+        .then((res) => res.json())
+        .then((body) => { if (body && body.ok) applyRemoteConfig(body.value) })
+        .catch(() => {})
+    }
+
+    function ensureEvents(ctx) {
+      if (eventSource || typeof EventSource === 'undefined') return
+      try {
+        eventSource = new EventSource(EVENTS_PATH)
+      } catch {
+        eventSource = null
+        return
+      }
+      eventSource.onmessage = (event) => {
+        let payload = null
+        try { payload = JSON.parse(event.data) } catch { return }
+        if (!payload || payload.type !== 'assistant') return
+        if (!autoRead) return
+        const sessionId = String(payload.sessionId || '')
+        const messageId = String(payload.messageId || '')
+        if (!sessionId || !messageId) return
+        if (!activeSessionId || sessionId !== activeSessionId) return
+        const key = sessionId + ':' + messageId
+        if (autoPlayed.has(key)) return
+        autoPlayed.add(key)
+        void startReadAloud(sessionId, messageId, key)
+      }
+      eventSource.onerror = () => {
+        // Reconnect later instead of a tight retry loop.
+        try { eventSource.close() } catch {}
+        eventSource = null
+        setTimeout(() => { if (!eventSource) ensureEvents(ctx) }, 5000)
+      }
+      ctx.effect(() => () => {
+        try { eventSource && eventSource.close() } catch {}
+        eventSource = null
+      }, 'dsh-tts-reader: events')
+    }
 
     function setPlayback(patch) {
       playback = { ...playback, ...patch }
@@ -224,6 +279,9 @@ window.__ModuleLoader__.load({
       const sessionId = props && props.sessionId
       const key = String(sessionId) + ':' + String(messageId)
       const state = usePlayback()
+      React.useEffect(() => {
+        if (sessionId) activeSessionId = String(sessionId)
+      }, [sessionId])
       const mine = state.key === key
       const phase = mine ? state.phase : 'idle'
       const error = mine ? state.error : ''
@@ -271,7 +329,7 @@ window.__ModuleLoader__.load({
       const load = React.useCallback(() => {
         fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
           .then((res) => res.json())
-          .then((body) => { if (body && body.ok) setConfig(body.value) })
+          .then((body) => { if (body && body.ok) { setConfig(body.value); applyRemoteConfig(body.value) } })
           .catch(() => {})
       }, [])
 
@@ -288,6 +346,7 @@ window.__ModuleLoader__.load({
           const body = await response.json()
           if (!body || body.ok !== true) throw new Error((body && body.error) || t('保存失败', 'Save failed'))
           setConfig(body.value)
+          applyRemoteConfig(body.value)
           audioCache.clear()
           setNotice(t('已保存', 'Saved'))
         } catch (error) {
@@ -350,6 +409,20 @@ window.__ModuleLoader__.load({
             }),
           ),
           h('div', { style: row },
+            h('label', {
+              key: 'auto',
+              style: { ...sub, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' },
+            },
+              h('input', {
+                type: 'checkbox',
+                checked: config.autoRead === true,
+                disabled: busy,
+                onChange: (event) => save({ autoRead: event.target.checked }),
+              }),
+              t('新回复自动朗读', 'Read new replies automatically'),
+            ),
+          ),
+          h('div', { style: row },
             h('span', { style: sub, key: 'cache' }, t('缓存：', 'Cache: ') + (config.cache ? config.cache.files : 0) + t(' 个文件 / ', ' files / ') + cacheMb + ' MB'),
             h('button', {
               key: 'clear', type: 'button', style: plain, disabled: busy,
@@ -364,7 +437,16 @@ window.__ModuleLoader__.load({
               },
               children: t('清空缓存', 'Clear cache'),
             }),
-            h('span', { style: sub, key: 'cap' }, t('上限 ', 'limit ') + config.cacheMaxMb + ' MB'),
+            h('span', { style: sub, key: 'cap' }, t('上限', 'Limit')),
+            h('input', {
+              key: 'cap-input', type: 'number', min: 50, max: 4096, step: 50,
+              style: { ...input, width: '90px' }, value: config.cacheMaxMb, disabled: busy,
+              onChange: (event) => {
+                const value = Number(event.target.value)
+                if (Number.isFinite(value) && value >= 50) save({ cacheMaxMb: Math.min(4096, Math.floor(value)) })
+              },
+            }),
+            h('span', { style: sub, key: 'cap-unit' }, 'MB'),
           ),
           notice ? h('span', { style: { fontSize: '12px', color: '#30a46c' } }, notice) : null,
           failure ? h('span', { style: { fontSize: '12px', color: '#e5484d' } }, failure) : null,
@@ -392,6 +474,8 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
+        loadConfigOnce()
+        ensureEvents(ctx)
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',

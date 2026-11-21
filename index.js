@@ -26,6 +26,7 @@ const PREFIX = '/api/dsh-tts'
 const CONFIG_PATH = PREFIX + '/config'
 const READ_PATH = PREFIX + '/read'
 const CLEAR_PATH = PREFIX + '/cache/clear'
+const EVENTS_PATH = PREFIX + '/events'
 
 const API_BASE = 'https://api.deepseek.com'
 const KEY_REF = 'DEEPSEEK_API_KEY'
@@ -33,7 +34,7 @@ const VOICES = new Set(['stella', 'tide'])
 const HARD_MAX_CHARS = 4000
 const SAMPLE_RATE = 24000
 
-const DEFAULTS = { voice: 'stella', maxChars: 4000, cacheMaxMb: 200 }
+const DEFAULTS = { voice: 'stella', maxChars: 4000, cacheMaxMb: 200, autoRead: false }
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME
@@ -77,7 +78,8 @@ function normalizeSettings(raw, seed) {
   const cacheMaxMb = Number.isFinite(merged.cacheMaxMb) && merged.cacheMaxMb > 0
     ? Math.min(4096, Math.floor(merged.cacheMaxMb))
     : DEFAULTS.cacheMaxMb
-  return { voice, maxChars, cacheMaxMb }
+  const autoRead = merged.autoRead === true
+  return { voice, maxChars, cacheMaxMb, autoRead }
 }
 
 // ---------------------------------------------------------------- HTTP helpers
@@ -340,6 +342,24 @@ export function apply(ctx, config) {
   const settings = normalizeSettings(stored, seed)
   if (JSON.stringify(stored) !== JSON.stringify(settings)) writeSettings(settings)
 
+  // Live feed for auto-read: one SSE line per finalized assistant message.
+  const listeners = new Set()
+  const broadcast = (payload) => {
+    const line = 'data: ' + JSON.stringify(payload) + '\n\n'
+    for (const response of listeners) {
+      try { response.write(line) } catch {}
+    }
+  }
+
+  ctx.effect(() => ctx.on('session/event', (session, event) => {
+    try {
+      if (!event || event.type !== 'assistant/message') return
+      const message = event.data && event.data.message
+      if (!message || !message.id) return
+      broadcast({ type: 'assistant', sessionId: String(session.id), messageId: String(message.id) })
+    } catch {}
+  }), 'dsh-tts-reader: session feed')
+
   ctx.inject(['webServer', 'credentials', 'sessionQuery'], (scope) => {
     const guard = (request, response) => {
       if (!isLoopbackRequest(request) || !isSameOriginRequest(request)) {
@@ -368,9 +388,10 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         if (!body || typeof body !== 'object') return writeJson(response, 400, { ok: false, code: 'BAD_BODY', error: '请求体不是 JSON' })
         const current = readSettings()
-        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb']) }, null)
+        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'autoRead']) }, null)
         if (body.clearCache === true) clearCache()
         if (!writeSettings(next)) return writeJson(response, 500, { ok: false, code: 'WRITE_FAILED', error: '写入设置失败' })
+        pruneCache(next.cacheMaxMb * 1024 * 1024)
         let keyConfigured = false
         try {
           const info = await scope.credentials.describe(KEY_REF)
@@ -390,6 +411,31 @@ export function apply(ctx, config) {
         return writeJson(response, 200, { ok: true, value: { removed, cache: cacheStats() } })
       },
     }), 'dsh-tts-reader: cache')
+
+    // Auto-read feed: the page opens one EventSource and replays new replies.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: EVENTS_PATH,
+      handler: (request, response) => {
+        if (!guard(request, response)) return
+        response.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-store',
+          connection: 'keep-alive',
+        })
+        response.write(': connected\n\n')
+        listeners.add(response)
+        const heartbeat = setInterval(() => {
+          try { response.write(': ping\n\n') } catch {}
+        }, 25000)
+        const cleanup = () => {
+          clearInterval(heartbeat)
+          listeners.delete(response)
+        }
+        request.on('close', cleanup)
+        response.on('close', cleanup)
+      },
+    }), 'dsh-tts-reader: events')
 
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
