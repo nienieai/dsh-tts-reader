@@ -346,7 +346,10 @@ window.__ModuleLoader__.load({
       // reach. A manual popover is also top-layer; re-showing it while a request
       // is pending puts it above that dialog.
       try { wrap.setAttribute('popover', 'manual') } catch {}
-      wrap.style.cssText = 'position:fixed;top:10px;right:14px;z-index:2147483647;display:none;'
+      // The popover UA stylesheet sets `inset: 0`; without explicit left/bottom
+      // the element sticks to the top-left corner.
+      wrap.style.cssText = 'position:fixed;top:56px;right:18px;left:auto;bottom:auto;'
+        + 'z-index:2147483647;display:none;'
         + 'margin:0;padding:0;border:0;background:transparent;overflow:visible'
       const button = document.createElement('button')
       button.type = 'button'
