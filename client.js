@@ -399,27 +399,57 @@ window.__ModuleLoader__.load({
         return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
       }
 
-      // The visible card of the open dialog: the dialog itself, unless it is a
-      // full-viewport wrapper whose centered card is a child.
-      const dialogCardBox = () => {
-        const dialog = document.querySelector('dialog[open]')
-        if (!dialog) return null
-        const rect = dialog.getBoundingClientRect()
-        if (rect.width < 80 || rect.height < 60) return null
-        const vw = window.innerWidth
-        const vh = window.innerHeight
-        if (rect.width <= vw * 0.92 || rect.height <= vh * 0.92) return rect
-        let best = null
-        let bestArea = 0
-        for (const child of dialog.querySelectorAll('div,section,form,article')) {
-          if (wrap.contains(child)) continue
-          const r = child.getBoundingClientRect()
-          if (r.width < 200 || r.height < 80) continue
-          if (r.width > vw * 0.98 && r.height > vh * 0.98) continue
-          const area = r.width * r.height
-          if (area > bestArea) { best = r; bestArea = area }
+      // Request surfaces are NOT native <dialog> elements: an approval or a
+      // question takes over the composer seat and renders as ordinary DOM with
+      // a stable data hook (see ui-approval ApprovalCard and ui-user-questions
+      // QuestionComposer). Query those first, then fall back to a real dialog.
+      const ANCHOR_ROOTS = [
+        '[data-approval-key]',
+        '[data-question-key]',
+        'dialog[open]',
+        '[data-composer-card]',
+      ]
+
+      const anchorRoot = () => {
+        for (const selector of ANCHOR_ROOTS) {
+          let root = null
+          try { root = document.querySelector(selector) } catch { root = null }
+          if (root && !wrap.contains(root)) return root
         }
-        return best || rect
+        return null
+      }
+
+      // The visible card inside an anchor root. Takeover roots are full-width
+      // centering wrappers, so the card is usually the first element child; a
+      // screen-filling wrapper needs the largest child instead.
+      const cardOf = (root) => {
+        const rect = root.getBoundingClientRect()
+        if (rect.width < 80 || rect.height < 60) return null
+        const viewport = Math.max(window.innerWidth * window.innerHeight, 1)
+        if (rect.width * rect.height > viewport * 0.85) {
+          let best = null
+          let bestArea = 0
+          for (const child of root.querySelectorAll('section,div,form,article')) {
+            if (wrap.contains(child)) continue
+            const r = child.getBoundingClientRect()
+            if (r.width < 200 || r.height < 60) continue
+            if (r.width * r.height > viewport * 0.85) continue
+            const area = r.width * r.height
+            if (area > bestArea) { best = r; bestArea = area }
+          }
+          if (best) return best
+        }
+        const child = root.firstElementChild
+        if (child) {
+          const r = child.getBoundingClientRect()
+          if (r.width >= 200 && r.height >= 60) return r
+        }
+        return rect
+      }
+
+      const anchorBox = () => {
+        const root = anchorRoot()
+        return root ? cardOf(root) : null
       }
 
       let placeFrame = 0
@@ -427,7 +457,7 @@ window.__ModuleLoader__.load({
         placeFrame = 0
         if (removed) return
         const base = offsetBase()
-        const card = dialogCardBox()
+        const card = anchorBox()
         // Offsets are relative to `base`, which is the viewport for a plain
         // fixed element but an ancestor box when that ancestor creates a
         // containing block, so everything is measured against base.top/right.
@@ -472,17 +502,18 @@ window.__ModuleLoader__.load({
       }
 
       let sizeObserver = null
-      let observedDialog = null
+      let observedElement = null
       const watchLayout = () => {
         if (removed) return
-        const dialog = document.querySelector('dialog[open]')
-        if (dialog === observedDialog) return
+        const root = anchorRoot()
+        const target = root ? (root.firstElementChild || root) : null
+        if (target === observedElement) return
         if (sizeObserver) { try { sizeObserver.disconnect() } catch {} sizeObserver = null }
-        observedDialog = dialog
-        if (!dialog || typeof ResizeObserver !== 'function') return
+        observedElement = target
+        if (!target || typeof ResizeObserver !== 'function') return
         try {
           sizeObserver = new ResizeObserver(() => schedulePlace())
-          sizeObserver.observe(dialog)
+          sizeObserver.observe(target)
         } catch { sizeObserver = null }
       }
 
@@ -542,6 +573,9 @@ window.__ModuleLoader__.load({
             if (removed || !body || !body.ok) return
             pending = body.value || null
             adopt()
+            // The takeover card can mount a beat after the request exists, so
+            // re-resolve the anchor on every poll.
+            watchLayout()
             if (pending && pending.text) {
               // Re-raise on every new request: the dialog may have opened since.
               if (pending.id !== raisedFor) { raisePopover(); raisedFor = pending.id; settlePlace() }
