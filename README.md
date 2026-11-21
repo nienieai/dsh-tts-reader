@@ -40,7 +40,22 @@
 
 - 插件**不分发** piper 与模型；它们各自的许可证（Piper 为 GPL-3.0、espeak-ng 为 GPL-3.0、语音模型另有条款）由安装者自行遵守；
 - 采样率从 `<模型>.onnx.json` 里读，Host 重采样到 24 kHz——页面、WSOLA 与缓存只认这一种速率；
-- 本地合成失败会直接报错，不会悄悄改用云端，避免声音来源不明。
+- 本地合成失败会直接报错，不会悄悄改用云端，避免声音来源不明；
+- Piper 官方的中文音色共 4 个，放在同一个目录里会出现在「音色模型」下拉中：
+
+| 音色 | 性别 | 备注 |
+|---|---|---|
+| `zh_CN-huayan-medium`（花颜） | 女 | 2023 版 Windows 二进制也能跑，每段约 3 秒 |
+| `zh_CN-chaowen-medium`（超文） | 男 | 需要新版 piper（pip 版 1.8）与下方资源，每段约 10 秒 |
+| `zh_CN-xiao_ya-medium`（小雅） | 女 | 同上 |
+| `zh_CN-huayan-x_low`（花颜低配） | 女 | 质量更低，一般不用 |
+
+`chaowen` / `xiao_ya` 额外需要两份资源（约 250 MB）：
+
+1. `g2pW/`：放在**模型目录**下，内含 `g2pw.onnx` 等文件（piper 按 `cwd/g2pW` 查找，插件会把工作目录设成模型目录）；
+2. `bert-base-chinese` 分词器：进入 HuggingFace 缓存（`~/.cache/huggingface`），可由 `huggingface_hub.snapshot_download` 只下载 `vocab.txt`、`config.json` 等小文件。
+
+缺少这些资源时 piper 会报错，插件把 stderr 原样带出来。
 
 ## 数据与安全
 
