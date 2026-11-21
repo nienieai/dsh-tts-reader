@@ -213,11 +213,26 @@ async function readMessageText(sessionQuery, sessionId, messageId) {
 
 // ---------------------------------------------------------------- audio cache
 
-function cacheKey(engine, voice, text) {
+/** A short fingerprint of the local voice, so a model swap invalidates its audio. */
+export function voiceFingerprint(modelPath) {
+  if (!modelPath) return 'none'
+  let size = 0
+  try { size = fs.statSync(modelPath).size } catch {}
+  return crypto.createHash('sha1')
+    .update(path.basename(String(modelPath)))
+    .update(':')
+    .update(String(size))
+    .digest('hex')
+    .slice(0, 12)
+}
+
+function cacheKey(settings, text) {
+  const engine = settings.engine
+  const voice = settings.voice
   const hash = crypto.createHash('sha256')
   // DeepSeek keeps the bare form, so audio cached before engines existed stays valid.
-  // Local audio changed with the pause squasher, hence the versioned prefix.
-  if (engine === 'piper') hash.update('piper:v2').update('\u0000')
+  // Local audio depends on the model file, and changed with the pause squasher.
+  if (engine === 'piper') hash.update('piper:v2').update('\u0000').update(voiceFingerprint(settings.piperModel)).update('\u0000')
   else if (engine !== 'deepseek') hash.update(String(engine)).update('\u0000')
   return hash.update(voice).update('\u0000').update(text, 'utf8').digest('hex')
 }
@@ -1095,7 +1110,7 @@ export function apply(ctx, config) {
           }
         }
         const units = unitTexts.map((unit) => {
-          const file = cacheFile(cacheKey(current.engine, current.voice, unit))
+          const file = cacheFile(cacheKey(current, unit))
           return { unit, file, cached: hasCachedWav(file) }
         })
         if (units.length === 0) {
