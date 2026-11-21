@@ -216,7 +216,9 @@ async function readMessageText(sessionQuery, sessionId, messageId) {
 function cacheKey(engine, voice, text) {
   const hash = crypto.createHash('sha256')
   // DeepSeek keeps the bare form, so audio cached before engines existed stays valid.
-  if (engine !== 'deepseek') hash.update(String(engine)).update('\u0000')
+  // Local audio changed with the pause squasher, hence the versioned prefix.
+  if (engine === 'piper') hash.update('piper:v2').update('\u0000')
+  else if (engine !== 'deepseek') hash.update(String(engine)).update('\u0000')
   return hash.update(voice).update('\u0000').update(text, 'utf8').digest('hex')
 }
 
@@ -598,6 +600,56 @@ export function engineInfo(settings) {
   }
 }
 
+/** Longest silence the local engine is allowed to keep, in ms. */
+export const PIPER_PAUSE_CAP_MS = 140
+
+/**
+ * Piper's Chinese voice leaves 200–400 ms of dead air inside sentences, which
+ * reads as broken phrasing. Squash every silent run to the cap; speech is
+ * untouched and the cache stores exactly what was played.
+ */
+export function createSilenceSquasher(rate = SAMPLE_RATE, capMs = PIPER_PAUSE_CAP_MS, threshold = 0.02) {
+  const frameSize = Math.max(1, Math.round(rate * 0.01))
+  const frameBytes = frameSize * 2
+  const capFrames = Math.max(1, Math.round(capMs / 10))
+  let pending = Buffer.alloc(0)
+  let silent = 0
+  let peak = 0
+  return {
+    push(buffer) {
+      const merged = pending.length ? Buffer.concat([pending, buffer]) : buffer
+      const whole = Math.floor((merged.length >> 1) / frameSize) * frameBytes
+      const out = []
+      for (let offset = 0; offset + frameBytes <= whole; offset += frameBytes) {
+        const frame = merged.subarray(offset, offset + frameBytes)
+        let sum = 0
+        for (let i = 0; i < frameSize; i += 1) {
+          const value = frame.readInt16LE(i * 2) / 32768
+          sum += value * value
+        }
+        const rms = Math.sqrt(sum / frameSize)
+        if (rms > peak) peak = rms
+        // Relative floor, with an absolute minimum so leading silence counts too.
+        if (rms < Math.max(0.006, peak * threshold)) { silent += 1; continue }
+        if (silent > 0) {
+          out.push(Buffer.alloc(Math.min(silent, capFrames) * frameBytes))
+          silent = 0
+        }
+        out.push(Buffer.from(frame))
+      }
+      pending = Buffer.from(merged.subarray(whole))
+      return Buffer.concat(out)
+    },
+    flush() {
+      const silence = Buffer.alloc(Math.min(silent, capFrames) * frameBytes)
+      silent = 0
+      const rest = pending
+      pending = Buffer.alloc(0)
+      return Buffer.concat([silence, rest])
+    },
+  }
+}
+
 function engineError(message, code) {
   const error = new Error(message)
   error.code = code
@@ -663,12 +715,15 @@ async function* piperChunks(settings, text, signal) {
 export async function* engineChunks(scope, settings, text, signal) {
   if (settings.engine === 'piper') {
     const resampler = createResampler(piperSampleRate(settings.piperModel), SAMPLE_RATE)
+    const squasher = createSilenceSquasher()
     for await (const chunk of piperChunks(settings, text, signal)) {
-      const pcm = resampler.push(chunk)
+      const pcm = squasher.push(resampler.push(chunk))
       if (pcm.length) yield pcm
     }
-    const tail = resampler.flush()
+    const tail = squasher.push(resampler.flush())
     if (tail.length) yield tail
+    const end = squasher.flush()
+    if (end.length) yield end
     return
   }
   const upstream = await openTtsStream(scope, text, settings.voice, signal)
