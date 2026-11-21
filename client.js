@@ -529,8 +529,10 @@ window.__ModuleLoader__.load({
 
       try {
         const payload = {}
+        // Both ids travel even with an explicit text: the Host widens the
+        // selection to the whole paragraph(s) it sits in, and needs the message.
+        if (sessionId && messageId) { payload.sessionId = sessionId; payload.messageId = messageId }
         if (text) payload.text = text
-        else if (sessionId && messageId) { payload.sessionId = sessionId; payload.messageId = messageId }
         const response = await fetch(READ_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -1036,7 +1038,7 @@ window.__ModuleLoader__.load({
             ? t('点击停止', 'Click to stop')
             : cached
               ? t('再次播放（本地缓存）', 'Play again (cached)')
-              : t('朗读这条回复（选中文字则只读选中部分）', 'Read this reply aloud (selected text only, if any)')
+              : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
 
       return h('button', {
         type: 'button',

@@ -380,6 +380,51 @@ export function planUnits(text, limit) {
   return { units: units.filter((unit) => unit.length > 0), truncated }
 }
 
+/** Whitespace and copy artefacts collapsed, so a DOM selection can be matched. */
+export function normalizeForMatch(value) {
+  return String(value || '')
+    // Bullets and list glyphs the page may put into a copied selection.
+    .replace(/[\u2022\u25e6\u25cf\u00b7]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * The paragraphs a selection sits in. The cache key is a whole paragraph, so a
+ * selection of a few words has to widen to its paragraph (or the run of
+ * paragraphs it spans) before synthesis, or it could never be reused.
+ */
+export function locateParagraphs(units, selection) {
+  const needle = normalizeForMatch(selection)
+  if (!needle || units.length === 0) return null
+  const haystack = units.map(normalizeForMatch)
+  if (needle.length < 6) {
+    if (needle.length < 3) return null
+    const index = haystack.findIndex((unit) => unit.includes(needle))
+    return index === -1 ? null : [units[index]]
+  }
+  // A selection crossing a paragraph break is not contained in any single unit,
+  // so anchor on the longest prefix (and suffix) that still fits inside one.
+  const anchor = (pick, from) => {
+    let best = -1
+    let lo = 6
+    let hi = Math.min(needle.length, 240)
+    while (lo <= hi) {
+      const size = (lo + hi) >> 1
+      // Trim: a probe that ends on a paragraph break carries a stray space.
+      const probe = pick(needle, size).trim()
+      const index = haystack.findIndex((unit, at) => at >= from && unit.includes(probe))
+      if (index === -1) hi = size - 1
+      else { best = index; lo = size + 1 }
+    }
+    return best
+  }
+  const start = anchor((value, size) => value.slice(0, size), 0)
+  if (start === -1) return null
+  const tail = anchor((value, size) => value.slice(value.length - size), start)
+  return units.slice(start, tail >= start ? tail + 1 : start + 1)
+}
+
 /** 240 ms of silence between paragraphs, so the join does not sound cut off. */
 export const PARAGRAPH_GAP_MS = 240
 export function silenceBytes(ms = PARAGRAPH_GAP_MS) {
@@ -729,23 +774,45 @@ export function apply(ctx, config) {
         }
 
         const current = readSettings()
-        let text = explicitText
-        if (!text) {
+
+        // The message is always re-read, even when the page sends a selection:
+        // the cache key is a whole paragraph, so a selection has to be widened to
+        // the paragraphs it sits in, or it would never match a full read.
+        let messageText = ''
+        let sessionError = null
+        if (sessionId && messageId) {
           try {
-            text = await readMessageText(scope.sessionQuery, sessionId, messageId)
+            messageText = await readMessageText(scope.sessionQuery, sessionId, messageId)
           } catch (error) {
-            return writeJson(response, 500, { ok: false, code: 'SESSION_READ_FAILED', error: '读取会话失败：' + (error?.message ?? String(error)) })
+            sessionError = error
           }
-          if (!text) return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
+        }
+        if (!messageText && !explicitText) {
+          if (sessionError) {
+            return writeJson(response, 500, { ok: false, code: 'SESSION_READ_FAILED', error: '读取会话失败：' + (sessionError?.message ?? String(sessionError)) })
+          }
+          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
         }
 
         // One synthesis request (and one cache file) per paragraph, so reading a
         // single paragraph later reuses the file the whole message already made.
-        const plan = planUnits(text, current.maxChars)
-        if (plan.units.length === 0) {
-          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息里没有可朗读的文字' })
+        const whole = messageText ? planUnits(messageText, current.maxChars) : { units: [], truncated: false }
+        let unitTexts = whole.units
+        let truncated = whole.truncated
+        if (explicitText) {
+          const covering = locateParagraphs(whole.units, explicitText)
+          if (covering) {
+            unitTexts = covering
+            truncated = false
+          } else {
+            // Not part of the message text (a code block, say): synthesize the
+            // selection itself, which is the old behaviour.
+            const own = planUnits(explicitText, current.maxChars)
+            unitTexts = own.units
+            truncated = own.truncated
+          }
         }
-        const units = plan.units.map((unit) => {
+        const units = unitTexts.map((unit) => {
           const file = cacheFile(cacheKey(current.voice, unit))
           return { unit, file, cached: hasCachedWav(file) }
         })
@@ -844,7 +911,7 @@ export function apply(ctx, config) {
 
         response.writeHead(200, pcmHeaders({
           'x-tts-voice': current.voice,
-          'x-tts-truncated': plan.truncated ? '1' : '0',
+          'x-tts-truncated': truncated ? '1' : '0',
           'x-tts-units': String(units.length),
           'x-tts-cache': cacheState,
         }))

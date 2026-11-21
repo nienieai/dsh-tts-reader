@@ -13,7 +13,7 @@
 - 打开自动朗读后，Host 监听 `session/event` 里的 `assistant/message`：每条都带 `final:false` 推送（中途输出），并在 `agent/status` 转 `idle` 时用 `final:true` 推送该回合最后一条。页面默认只播 `final:true`，因为只有最后一条会渲染官方操作行（`conversation.chat.assistant-actions` 只存在于 turn-tail），按钮一定在。
 - 打开「中途输出也朗读」后，`final:false` 的消息依次播放；此时来了提问/审批，请求语音按**到达顺序**排队（严格 FIFO，中途输出先于请求），卡片按钮显示「等待上条朗读完成」，点击即切断当前音频并立刻朗读请求。
 - 审批/提问被确认或撤回后（`approval/decided`、`tools/result`，或 `/pending` 变空），该条语音立即停止并出队，不会继续念完。
-- 先选中文字再点喇叭：页面把选中的片段作为 `text` 发给 Host，Host 走同一套 markdown→纯文本→切段流程，所以选中一段能命中整条朗读时按该段生成的文件（缓存键是 `sha256(voice + 段落纯文本)`，与消息 id 无关）。
+- 先选中文字再点喇叭：页面把选区连同 `sessionId`/`messageId` 一起发给 Host，Host 读正文、按同一套规则切段，再用选区首尾（先 80 字、退到 24 字）定位它覆盖的连续段，只合成这些整段——所以选区在段内任意位置都能命中整段文件。选区不在正文里（代码块、表格外的东西）时退回按选区原文合成。
 - Agent 提问（`ask_user_question`）走 `tools/execute` 旁听：Host 抽出问题与选项，经 SSE 推给页面；开启时自动念。
 - 审批请求（`approval/asked`）同样旁听：念「需要授权：<工具>，原因…」。
 - 请求等待期间，按钮挂在请求卡片自己的头部行里（审批卡的状态行右端、提问卡的最小化/关闭左侧），用 `[data-approval-key]` / `[data-question-key]` 定位；`approval/decided` 或 `tools/result` 回来后按钮消失。
