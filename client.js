@@ -17,8 +17,6 @@ window.__ModuleLoader__.load({
   id: 'dsh-tts-reader',
   factory(require) {
     const React = require('react')
-    let ReactDOM = null
-    try { ReactDOM = require('react-dom') } catch { ReactDOM = null }
     const h = React.createElement
 
     const CONFIG_PATH = '/api/dsh-tts/config'
@@ -333,74 +331,84 @@ window.__ModuleLoader__.load({
     // Floating replay button for a pending question or approval. The request
     // dialog covers the composer, so this lives on the frame-wide overlay and
     // stays clickable above it.
-    function PromptButton() {
-      const [pending, setPending] = React.useState(null)
-      const state = usePlayback()
-      const lastSpoken = React.useRef(null)
-      React.useEffect(() => {
-        let alive = true
-        const tick = () => {
-          fetch(PENDING_PATH, { headers: { accept: 'application/json' } })
-            .then((res) => res.json())
-            .then((body) => {
-              if (!alive || !body || !body.ok) return
-              const value = body.value || null
-              setPending(value)
-              if (!value || !value.text || lastSpoken.current === value.id) return
-              const enabled = value.kind === 'approval' ? speakApprovals : speakQuestions
-              if (!enabled) return
-              lastSpoken.current = value.id
-              const key = 'prompt:' + (value.kind === 'approval' ? 'approval:' : '') + value.id
-              void startReadAloud(null, null, key, { text: value.text })
-            })
-            .catch(() => {})
-        }
-        tick()
-        const timer = setInterval(tick, 2000)
-        return () => { alive = false; clearInterval(timer) }
-      }, [])
-      if (!pending || !pending.text) return null
-      const key = 'prompt:' + (pending.kind === 'approval' ? 'approval:' : '') + pending.id
-      const playing = state.key === key && state.phase !== 'idle'
-      const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
-      const node = h('div', {
-        style: {
-          position: 'fixed', top: '10px', right: '14px', zIndex: 2147483000,
-          display: 'flex',
-          // The overlay layer is click-through; an occupant must opt back in.
-          pointerEvents: 'auto',
-        },
-      },
-        h('button', {
-          type: 'button',
-          title: playing ? t('点击停止', 'Click to stop') : label,
-          onClick: () => {
-            if (playing) { stopPlayback(); return }
-            void startReadAloud(null, null, key, { text: pending.text })
-          },
-          style: {
-            display: 'inline-flex', alignItems: 'center', gap: '5px',
-            height: '28px', padding: '0 10px', borderRadius: '14px',
-            border: '1px solid var(--dsw-alias-border-l2)',
-            background: 'var(--dsw-alias-bg-layer-2, #1c1c1c)',
-            color: 'var(--dsw-alias-label-primary)',
-            fontSize: '12px', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,.28)',
-          },
-          children: [
-            playing ? h(ReadingBars, { mode: 'playing', key: 'bars' }) : h(SpeakerIcon, { key: 'icon' }),
-            h('span', { key: 'label' }, label),
-          ],
-        }),
-      )
-      // Request dialogs render in their own layer above the frame overlay, so
-      // mount at document.body instead of inside the slot container.
-      try {
-        if (ReactDOM && typeof ReactDOM.createPortal === 'function'
-          && typeof document !== 'undefined' && document.body) {
-          return ReactDOM.createPortal(node, document.body)
-        }
-      } catch {}
-      return node
+    function subscribePlayback(fn) {
+      listeners.add(fn)
+      return () => { listeners.delete(fn) }
+    }
+
+    // Imperative button mounted straight on document.body: request dialogs can
+    // cover slot-rendered content, but a later sibling of the app root still
+    // paints above them.
+    function mountPromptButton() {
+      if (typeof document === 'undefined' || !document.body) return () => {}
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'position:fixed;top:10px;right:14px;z-index:2147483647;display:none'
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.style.cssText = 'display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;'
+        + 'border-radius:14px;border:1px solid var(--dsw-alias-border-l2,#3a3a3a);'
+        + 'background:var(--dsw-alias-bg-layer-2,#1c1c1c);color:var(--dsw-alias-label-primary,#eee);'
+        + 'font-size:12px;font-family:inherit;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.32)'
+      const iconEl = document.createElement('span')
+      iconEl.textContent = '🔊'
+      const labelEl = document.createElement('span')
+      button.appendChild(iconEl)
+      button.appendChild(labelEl)
+      wrap.appendChild(button)
+      document.body.appendChild(wrap)
+
+      let pending = null
+      let lastSpoken = null
+      let removed = false
+
+      const keyOf = (value) => 'prompt:' + (value.kind === 'approval' ? 'approval:' : '') + value.id
+      const isPlaying = () => !!(current && pending && current.key === keyOf(pending))
+
+      const render = () => {
+        if (removed) return
+        if (!pending || !pending.text) { wrap.style.display = 'none'; return }
+        wrap.style.display = 'flex'
+        const playing = isPlaying()
+        const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
+        iconEl.textContent = playing ? '⏹' : '🔊'
+        labelEl.textContent = playing ? t('停止', 'Stop') : label
+        button.title = playing ? t('点击停止', 'Click to stop') : label
+      }
+
+      const tick = () => {
+        fetch(PENDING_PATH, { headers: { accept: 'application/json' } })
+          .then((res) => res.json())
+          .then((body) => {
+            if (removed || !body || !body.ok) return
+            pending = body.value || null
+            if (pending && pending.text && pending.id !== lastSpoken) {
+              const enabled = pending.kind === 'approval' ? speakApprovals : speakQuestions
+              if (enabled) {
+                lastSpoken = pending.id
+                void startReadAloud(null, null, keyOf(pending), { text: pending.text })
+              }
+            }
+            render()
+          })
+          .catch(() => {})
+      }
+
+      button.addEventListener('click', () => {
+        if (!pending) return
+        if (isPlaying()) { stopPlayback(); render(); return }
+        void startReadAloud(null, null, keyOf(pending), { text: pending.text })
+        setTimeout(render, 60)
+      })
+
+      const timer = setInterval(tick, 2000)
+      const off = subscribePlayback(render)
+      tick()
+      return () => {
+        removed = true
+        clearInterval(timer)
+        try { off() } catch {}
+        try { wrap.remove() } catch {}
+      }
     }
 
     function ReadAloudAction(props) {
@@ -661,13 +669,9 @@ window.__ModuleLoader__.load({
           order: 900,
         }, SessionTracker))
 
-        // Replay control for the pending question / approval. It goes on the
-        // frame-wide overlay because the request dialog covers the composer.
-        ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'tts-reader-prompt',
-          order: 900,
-        }, PromptButton))
+        // Mounted on document.body instead of a slot: request dialogs can cover
+        // every slot-rendered surface.
+        ctx.effect(() => mountPromptButton(), 'dsh-tts-reader: prompt button')
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',

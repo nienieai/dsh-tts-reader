@@ -1,6 +1,6 @@
 {
   "name": "dsh-tts-reader",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "private": true,
   "description": "Read assistant replies aloud with the DeepSeek TTS API; audio is cached on disk and replayed from cache on the next click.",
   "license": "MIT",
