@@ -44,12 +44,8 @@ window.__ModuleLoader__.load({
     let playback = { key: null, phase: 'idle', error: '', queued: null }
     const listeners = new Set()
 
-    // Speech waiting for the current audio to end: { key, priority, speak }.
-    // Requests outrank mid-turn output, so a queued question is never dropped by
-    // an interim message arriving behind it.
-    const QUEUE_INTERIM = 1
-    const QUEUE_REQUEST = 2
-    let queuedSpeech = null
+    // Speech waiting for the audio before it, in arrival order: [{ key, speak }].
+    let speechQueue = []
 
     // Auto-read state, kept in sync with the Host settings.
     let autoRead = false
@@ -94,12 +90,22 @@ window.__ModuleLoader__.load({
         let payload = null
         try { payload = JSON.parse(event.data) } catch { return }
         if (!payload) return
-        if (payload.type === 'question' || payload.type === 'question-closed' || payload.type === 'approval-closed') {
+        if (payload.type === 'question' || payload.type === 'approval') {
           // Speech for these comes from the /pending probe below, so one page
           // instance owns it even when the feed reconnects.
           return
         }
-        if (payload.type === 'approval') {
+        if (payload.type === 'question-closed' || payload.type === 'approval-closed') {
+          // Answered or withdrawn: stop its audio now instead of waiting for the
+          // next poll. Both key spellings are tried because the close line only
+          // carries the id.
+          const id = String(payload.id || '')
+          if (id) {
+            for (const key of ['prompt:' + id, 'prompt:approval:' + id]) {
+              if (current && current.key === key) stopCurrentOnly()
+              dropQueued(key)
+            }
+          }
           return
         }
         if (payload.type !== 'assistant') return
@@ -182,8 +188,9 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function stopPlayback() {
-      clearQueue()
+    // Abort only what is audible; the waiting queue is untouched. Starting the
+    // next queued item uses this, so draining never discards the rest.
+    function stopCurrentOnly() {
       if (!current) {
         setPlayback({ key: null, phase: 'idle', error: '' })
         return
@@ -195,24 +202,39 @@ window.__ModuleLoader__.load({
       setPlayback({ key: null, phase: 'idle', error: '' })
     }
 
+    // A user stop: silence now AND drop everything waiting.
+    function stopPlayback() {
+      clearQueue()
+      stopCurrentOnly()
+    }
+
     function clearQueue() {
-      if (!queuedSpeech && playback.queued === null) return
-      queuedSpeech = null
+      if (speechQueue.length === 0 && playback.queued === null) return
+      speechQueue = []
       setPlayback({ queued: null })
     }
 
-    // Park a speech behind whatever is playing. A queued request keeps its slot
-    // over a newer interim read; an interim read never displaces a request.
-    function enqueueSpeech(key, priority, speak) {
-      if (queuedSpeech && queuedSpeech.priority > priority) return
-      queuedSpeech = { key, priority, speak }
-      setPlayback({ queued: key })
+    const queueHead = () => (speechQueue.length > 0 ? speechQueue[0].key : null)
+    const isQueued = (key) => speechQueue.some(item => item.key === key)
+
+    // Strict FIFO: an approval arriving while a mid-turn read is playing waits
+    // its turn behind both the current audio and the reads already queued.
+    function enqueueSpeech(key, speak) {
+      if (speechQueue.some(item => item.key === key)) return
+      speechQueue.push({ key, speak })
+      setPlayback({ queued: queueHead() })
+    }
+
+    function dropQueued(key) {
+      const next = speechQueue.filter(item => item.key !== key)
+      if (next.length === speechQueue.length) return
+      speechQueue = next
+      setPlayback({ queued: queueHead() })
     }
 
     function drainQueue() {
-      const next = queuedSpeech
-      queuedSpeech = null
-      setPlayback({ queued: null })
+      const next = speechQueue.shift()
+      setPlayback({ queued: queueHead() })
       if (next) {
         try { next.speak() } catch {}
       }
@@ -224,19 +246,20 @@ window.__ModuleLoader__.load({
       const key = sessionId + ':' + messageId
       if (autoPlayed.has(key)) return
       autoPlayed.add(key)
-      if (current) {
-        enqueueSpeech(key, QUEUE_INTERIM, () => { void startReadAloud(sessionId, messageId, key) })
+      const speak = () => { void startReadAloud(sessionId, messageId, key) }
+      if (current || speechQueue.length > 0) {
+        enqueueSpeech(key, speak)
         return
       }
-      void startReadAloud(sessionId, messageId, key)
+      speak()
     }
 
     // Speech for the pending question or approval. It waits for the current
-    // audio; the card button can cut in on demand.
+    // audio and for the reads queued before it; the card button can cut in.
     function autoReadPrompt(key, text) {
       if (!text) return
-      if (current && current.key !== key) {
-        enqueueSpeech(key, QUEUE_REQUEST, () => { void startReadAloud(null, null, key, { text }) })
+      if ((current && current.key !== key) || speechQueue.length > 0) {
+        enqueueSpeech(key, () => { void startReadAloud(null, null, key, { text }) })
         return
       }
       void startReadAloud(null, null, key, { text })
@@ -245,7 +268,7 @@ window.__ModuleLoader__.load({
     // A user gesture: cut whatever plays and speak this now.
     function speakNow(key, speak) {
       clearQueue()
-      stopPlayback()
+      stopCurrentOnly()
       speak()
     }
 
@@ -307,7 +330,9 @@ window.__ModuleLoader__.load({
     async function startReadAloud(sessionId, messageId, stateKey, options) {
       const text = options && options.text ? options.text : ''
       const cacheKey = text ? stateKey + '|s:' + hashString(text) : stateKey
-      stopPlayback()
+      // Only the audible item is replaced: the waiting queue must survive, or
+      // draining one entry would throw away the rest.
+      stopCurrentOnly()
       // Must be created synchronously inside the click: the browser only lets a
       // gesture-created AudioContext produce sound.
       const context = new AudioContext({ sampleRate: SAMPLE_RATE })
@@ -679,6 +704,7 @@ window.__ModuleLoader__.load({
       let pending = null
       let lastSpoken = null
       let raisedFor = null
+      let spokenFor = null
 
       const keyOf = (value) => 'prompt:' + (value.kind === 'approval' ? 'approval:' : '') + value.id
       const isPlaying = () => !!(current && pending && current.key === keyOf(pending))
@@ -725,9 +751,9 @@ window.__ModuleLoader__.load({
         if (!pending || !pending.text) { wrap.style.display = 'none'; dropPopover(); return }
         wrap.style.display = 'flex'
         const playing = isPlaying()
-        // A queued request has been decided but waits behind the audio that is
-        // already playing; clicking cuts in and starts it immediately.
-        const waiting = !!pending && playback.queued === keyOf(pending)
+        // A queued request waits behind the audio that is already playing;
+        // clicking cuts in and starts it immediately.
+        const waiting = !!pending && isQueued(keyOf(pending))
         const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
         const waitingLabel = t('等待上条朗读完成', 'Waiting for the current read')
         if (waiting && !playing) {
@@ -748,6 +774,14 @@ window.__ModuleLoader__.load({
           .then((body) => {
             if (removed || !body || !body.ok) return
             pending = body.value || null
+            // The request is over once it leaves /pending: an answered approval
+            // or question must not keep talking.
+            const nextKey = pending && pending.text ? keyOf(pending) : null
+            if (spokenFor !== null && spokenFor !== nextKey) {
+              if (current && current.key === spokenFor) stopCurrentOnly()
+              dropQueued(spokenFor)
+            }
+            spokenFor = nextKey
             adopt()
             // The takeover card can mount a beat after the request exists, so
             // re-resolve the anchor on every poll.
@@ -775,7 +809,7 @@ window.__ModuleLoader__.load({
         if (!pending) return
         const key = keyOf(pending)
         // Waiting state: cut the current audio and speak this request now.
-        if (playback.queued === key) {
+        if (isQueued(key)) {
           speakNow(key, () => { void startReadAloud(null, null, key, { text: pending.text }) })
           return
         }
@@ -835,7 +869,10 @@ window.__ModuleLoader__.load({
         onClick: () => {
           if (phase === 'loading' || phase === 'playing') { stopPlayback(); return }
           const selected = selectionRef.current.slice(0, 4000)
-          void startReadAloud(sessionId, messageId, key, selected ? { text: selected } : undefined)
+          // A manual read is a deliberate override: it drops the queue.
+          speakNow(key, () => {
+            void startReadAloud(sessionId, messageId, key, selected ? { text: selected } : undefined)
+          })
         },
         style: {
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
