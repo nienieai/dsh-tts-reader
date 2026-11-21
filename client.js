@@ -639,6 +639,9 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState('')
       const [failure, setFailure] = React.useState('')
       const [busy, setBusy] = React.useState(false)
+      // The cache limit is a draft until committed: typing "512" used to fire
+      // three saves (5, 51, 512). Now only blur or Enter writes it.
+      const [limitDraft, setLimitDraft] = React.useState(null)
 
       const load = React.useCallback(() => {
         fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
@@ -668,6 +671,21 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy(false)
         }
+      }
+
+      const MIN_CACHE_MB = 50
+      const MAX_CACHE_MB = 4096
+
+      // Commit the cache limit draft: Enter, blur, or Escape (which reverts).
+      const commitCacheLimit = () => {
+        const raw = limitDraft
+        setLimitDraft(null)
+        if (raw === null || String(raw).trim() === '') return
+        const value = Number(String(raw).trim())
+        if (!Number.isFinite(value)) return
+        const next = Math.min(MAX_CACHE_MB, Math.max(MIN_CACHE_MB, Math.floor(value)))
+        if (config && next === config.cacheMaxMb) return
+        void save({ cacheMaxMb: next })
       }
 
       if (!config) return h('div', { style: { padding: '4px 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, t('加载中…', 'Loading…'))
@@ -758,13 +776,22 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dsh-tts-grow' },
               h('input', {
                 className: 'dsh-tts-input num', type: 'number', min: 50, max: 4096, step: 50,
-                value: config.cacheMaxMb, disabled: busy,
-                onChange: (event) => {
-                  const value = Number(event.target.value)
-                  if (Number.isFinite(value) && value >= 50) save({ cacheMaxMb: Math.min(4096, Math.floor(value)) })
+                value: limitDraft === null ? config.cacheMaxMb : limitDraft,
+                disabled: busy,
+                onChange: (event) => setLimitDraft(event.target.value),
+                onBlur: commitCacheLimit,
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    commitCacheLimit()
+                    try { event.currentTarget.blur() } catch {}
+                  } else if (event.key === 'Escape') {
+                    setLimitDraft(null)
+                    try { event.currentTarget.blur() } catch {}
+                  }
                 },
               }),
-              h('span', { className: 'dsh-tts-hint' }, 'MB'),
+              h('span', { className: 'dsh-tts-hint' }, t('MB · 回车或失焦生效', 'MB · applies on Enter or blur')),
             ),
             h('button', {
               className: 'dsh-tts-btn danger', type: 'button', disabled: busy,
