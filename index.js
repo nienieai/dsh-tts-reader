@@ -35,11 +35,16 @@ const KEY_REF = 'DEEPSEEK_API_KEY'
 const VOICES = new Set(['stella', 'tide'])
 const HARD_MAX_CHARS = 4000
 const SAMPLE_RATE = 24000
+const MIN_SPEED = 0.5
+const MAX_SPEED = 2
 
 const DEFAULTS = {
   voice: 'stella',
   maxChars: 4000,
   cacheMaxMb: 200,
+  // Playback rate for the page's pitch-preserving time-stretch; the TTS API
+  // itself has no speed parameter, so this never reaches the request.
+  speed: 1,
   autoRead: false,
   autoReadInterim: false,
   speakQuestions: true,
@@ -92,7 +97,11 @@ function normalizeSettings(raw, seed) {
   const autoReadInterim = merged.autoReadInterim === true
   const speakQuestions = merged.speakQuestions !== false
   const speakApprovals = merged.speakApprovals !== false
-  return { voice, maxChars, cacheMaxMb, autoRead, autoReadInterim, speakQuestions, speakApprovals }
+  const rawSpeed = Number(merged.speed)
+  const speed = Number.isFinite(rawSpeed) && rawSpeed > 0
+    ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(rawSpeed * 100) / 100))
+    : DEFAULTS.speed
+  return { voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals }
 }
 
 // ---------------------------------------------------------------- HTTP helpers
@@ -511,7 +520,7 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         if (!body || typeof body !== 'object') return writeJson(response, 400, { ok: false, code: 'BAD_BODY', error: '请求体不是 JSON' })
         const current = readSettings()
-        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals']) }, null)
+        const next = normalizeSettings({ ...current, ...pick(body, ['voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals']) }, null)
         if (body.clearCache === true) clearCache()
         if (!writeSettings(next)) return writeJson(response, 500, { ok: false, code: 'WRITE_FAILED', error: '写入设置失败' })
         pruneCache(next.cacheMaxMb * 1024 * 1024)

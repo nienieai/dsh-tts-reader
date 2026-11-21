@@ -29,14 +29,46 @@ window.__ModuleLoader__.load({
     const START_DELAY = 0.1
     const MAX_CACHED_MESSAGES = 8
 
-    const LANG = (() => {
+    // Locale follows the Host's active language (what DSH itself shows), not the
+    // browser's: the plugin's copy must switch with the app. `ctx.locale` is
+    // wired in apply(); the navigator language is only the pre-injection guess.
+    let localeCtx = null
+    let localeListeners = []
+    function currentLang() {
+      try {
+        const snapshot = localeCtx && typeof localeCtx.getLocale === 'function' ? localeCtx.getLocale() : null
+        const active = snapshot && typeof snapshot.active === 'string' ? snapshot.active.toLowerCase() : ''
+        if (active) return active.startsWith('zh') ? 'zh' : 'en'
+      } catch {}
       try {
         return String(navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'
       } catch {
         return 'zh'
       }
-    })()
-    const t = (zh, en) => (LANG === 'zh' ? zh : en)
+    }
+    const t = (zh, en) => (currentLang() === 'zh' ? zh : en)
+
+    // Re-render a component when the app language changes.
+    function useLocaleTick() {
+      const [, force] = React.useReducer((value) => value + 1, 0)
+      React.useEffect(() => {
+        localeListeners.push(force)
+        return () => {
+          localeListeners = localeListeners.filter(entry => entry !== force)
+        }
+      }, [])
+    }
+
+    function watchLocale(ctx) {
+      try {
+        if (typeof ctx.locale.subscribe !== 'function') return
+        ctx.effect(() => ctx.locale.subscribe(() => {
+          for (const force of localeListeners.slice()) {
+            try { force() } catch {}
+          }
+        }), 'dsh-tts-reader: locale')
+      } catch {}
+    }
 
     // messageKey -> Float32Array[] (decoded PCM). LRU-ish by insertion order.
     const audioCache = new Map()
@@ -52,6 +84,9 @@ window.__ModuleLoader__.load({
     let autoReadInterim = false
     let speakQuestions = true
     let speakApprovals = true
+    // Playback rate: 1 is unchanged. Applied client-side as a pitch-preserving
+    // time-stretch — the TTS API has no speed parameter.
+    let speed = 1
     let activeSessionId = null
     const autoPlayed = new Set()
     let eventSource = null
@@ -66,6 +101,8 @@ window.__ModuleLoader__.load({
       autoReadInterim = value.autoReadInterim === true
       speakQuestions = value.speakQuestions !== false
       speakApprovals = value.speakApprovals !== false
+      const nextSpeed = Number(value.speed)
+      speed = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
     }
 
     let configLoaded = false
@@ -308,17 +345,158 @@ window.__ModuleLoader__.load({
       return { source, end: startAt + buffer.duration }
     }
 
-    function playFromMemory(context, stateKey, chunks) {
-      let nextTime = context.currentTime + START_DELAY
+    const EMPTY = new Float32Array(0)
+
+    // WSOLA (waveform-similarity overlap-add): changes duration without moving
+    // the pitch, which is the only way to get playback speed here — the DeepSeek
+    // TTS API has no speed parameter. Streaming: push() keeps the unfinished
+    // tail and returns output as soon as enough of it is settled.
+    class Stretcher {
+      /** @param {number} durationRatio played length ÷ original length (= 1/speed). */
+      constructor(durationRatio) {
+        this.ratio = Math.min(4, Math.max(0.25, durationRatio))
+        this.frame = 1024 // ~43 ms at 24 kHz
+        this.hop = this.frame >> 1
+        this.search = this.hop >> 1
+        this.minOut = 2048
+        this.window = new Float32Array(this.frame)
+        for (let i = 0; i < this.frame; i += 1) {
+          this.window[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / this.frame)
+        }
+        this.input = EMPTY
+        this.inputBase = 0
+        this.out = new Float32Array(4096)
+        this.outLen = 0
+        this.outBase = 0
+        this.frames = 0
+        this.prevStart = -1
+      }
+
+      #targetAbs() {
+        return Math.round((this.frames * this.hop) / this.ratio)
+      }
+
+      #grow(needed) {
+        if (needed <= this.out.length) return
+        let size = this.out.length
+        while (size < needed) size *= 2
+        const next = new Float32Array(size)
+        next.set(this.out.subarray(0, this.outLen))
+        this.out = next
+      }
+
+      // Nudge the frame start to the offset whose head best continues the
+      // previous frame, which is what keeps the waveform from canceling itself.
+      #frameStart(inputEnd) {
+        const target = this.#targetAbs()
+        if (this.prevStart < 0) return target
+        const ref = this.prevStart + this.hop
+        if (ref + this.hop > inputEnd) return target
+        let best = target
+        let bestScore = Infinity
+        const from = Math.max(0, target - this.search)
+        const to = target + this.search
+        for (let candidate = from; candidate <= to; candidate += 1) {
+          if (candidate + this.frame > inputEnd) break
+          let score = 0
+          for (let n = 0; n < this.hop; n += 1) {
+            const diff = this.input[ref + n - this.inputBase] - this.input[candidate + n - this.inputBase]
+            score += diff * diff
+            if (score >= bestScore) break
+          }
+          if (score < bestScore) { bestScore = score; best = candidate }
+        }
+        return best
+      }
+
+      #take() {
+        const readyAbs = this.frames * this.hop
+        const ready = readyAbs - this.outBase
+        if (ready < this.minOut) return EMPTY
+        const output = this.out.slice(0, ready)
+        const rest = this.out.slice(ready, this.outLen)
+        this.out = new Float32Array(Math.max(rest.length + this.frame * 2, 4096))
+        this.out.set(rest)
+        this.outLen = rest.length
+        this.outBase = readyAbs
+        return output
+      }
+
+      push(samples) {
+        if (!samples || samples.length === 0) return EMPTY
+        const merged = new Float32Array(this.input.length + samples.length)
+        merged.set(this.input)
+        merged.set(samples, this.input.length)
+        this.input = merged
+        const inputEnd = this.inputBase + this.input.length
+        for (;;) {
+          const start = this.#frameStart(inputEnd)
+          if (start + this.frame > inputEnd) break
+          const at = this.frames * this.hop - this.outBase
+          const local = start - this.inputBase
+          this.#grow(at + this.frame)
+          for (let n = 0; n < this.frame; n += 1) {
+            this.out[at + n] += this.window[n] * this.input[local + n]
+          }
+          if (at + this.frame > this.outLen) this.outLen = at + this.frame
+          this.prevStart = start
+          this.frames += 1
+          // Drop input that can no longer be reached by a future frame.
+          const keepFrom = Math.max(0, this.#targetAbs() - this.search - this.hop)
+          if (keepFrom > this.inputBase) {
+            this.input = this.input.slice(keepFrom - this.inputBase)
+            this.inputBase = keepFrom
+          }
+        }
+        return this.#take()
+      }
+
+      flush() {
+        if (this.outLen <= 0) return EMPTY
+        const output = this.out.slice(0, this.outLen)
+        this.out = new Float32Array(4096)
+        this.outLen = 0
+        this.outBase += output.length
+        return output
+      }
+    }
+
+    // One scheduler for both the cache path and the streaming path, applying
+    // the speed stretch and chaining Web Audio buffers gaplessly.
+    function createScheduler(context, stateKey) {
+      const durationRatio = speed > 0 ? 1 / speed : 1
+      const stretcher = Math.abs(durationRatio - 1) > 0.01 ? new Stretcher(durationRatio) : null
+      let nextTime = 0
       let last = null
-      for (const chunk of chunks) {
-        const scheduled = schedule(context, chunk, nextTime)
+      const emit = (samples) => {
+        if (!samples || samples.length === 0) return
+        const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
+        const scheduled = schedule(context, samples, startAt)
         nextTime = scheduled.end
         last = scheduled.source
+        if (playback.phase === 'loading') setPlayback({ phase: 'playing' })
       }
+      return {
+        feed(samples) {
+          if (stretcher) emit(stretcher.push(samples))
+          else emit(samples)
+        },
+        done() {
+          if (stretcher) {
+            const tail = stretcher.flush()
+            if (tail.length > 0) emit(tail)
+          }
+          if (!last) { finish(stateKey); return }
+          last.onended = () => finish(stateKey)
+        },
+      }
+    }
+
+    function playFromMemory(context, stateKey, chunks) {
       setPlayback({ key: stateKey, phase: 'playing', error: '' })
-      if (!last) { finish(stateKey); return }
-      last.onended = () => finish(stateKey)
+      const scheduler = createScheduler(context, stateKey)
+      for (const chunk of chunks) scheduler.feed(chunk)
+      scheduler.done()
     }
 
     function hashString(value) {
@@ -373,9 +551,8 @@ window.__ModuleLoader__.load({
         controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
 
         let rest = new Uint8Array(0)
-        let nextTime = 0
-        let last = null
         const collected = []
+        const scheduler = createScheduler(context, stateKey)
 
         for (;;) {
           const { done, value } = await reader.read()
@@ -385,18 +562,15 @@ window.__ModuleLoader__.load({
           const samples = toFloat32(merged)
           rest = merged.slice(samples.length * 2)
           if (samples.length === 0) continue
+          // The cache keeps the original recording, so changing the speed later
+          // replays from disk without synthesizing again.
           collected.push(samples)
-          const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
-          const scheduled = schedule(context, samples, startAt)
-          nextTime = scheduled.end
-          last = scheduled.source
-          if (playback.phase === 'loading') setPlayback({ phase: 'playing' })
+          scheduler.feed(samples)
         }
 
         if (controller.signal.aborted) return
         rememberAudio(cacheKey, collected)
-        if (!last) { finish(stateKey); return }
-        last.onended = () => finish(stateKey)
+        scheduler.done()
       } catch (error) {
         if (controller.signal.aborted) return
         fail(stateKey, error)
@@ -820,10 +994,15 @@ window.__ModuleLoader__.load({
 
       const timer = setInterval(tick, 2000)
       const off = subscribePlayback(render)
+      // The button lives outside React, so it subscribes to language changes
+      // itself.
+      const localeListener = () => render()
+      localeListeners.push(localeListener)
       tick()
       return () => {
         removed = true
         clearInterval(timer)
+        localeListeners = localeListeners.filter(entry => entry !== localeListener)
         try { clearInterval(settleTimer) } catch {}
         if (placeFrame) { try { cancelAnimationFrame(placeFrame) } catch {} placeFrame = 0 }
         if (sizeObserver) { try { sizeObserver.disconnect() } catch {} sizeObserver = null }
@@ -840,6 +1019,7 @@ window.__ModuleLoader__.load({
       const key = String(sessionId) + ':' + String(messageId)
       const state = usePlayback()
       const selectionRef = React.useRef('')
+      useLocaleTick()
       React.useEffect(() => {
         if (sessionId) activeSessionId = String(sessionId)
       }, [sessionId])
@@ -933,6 +1113,10 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState('')
       const [failure, setFailure] = React.useState('')
       const [busy, setBusy] = React.useState(false)
+      // The speed slider previews while dragging and only saves on release, so
+      // one drag is one write instead of dozens.
+      const [speedDraft, setSpeedDraft] = React.useState(null)
+      useLocaleTick()
 
       const load = React.useCallback(() => {
         fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
@@ -966,6 +1150,17 @@ window.__ModuleLoader__.load({
 
       const MIN_CACHE_MB = 50
       const MAX_CACHE_MB = 4096
+
+      const commitSpeed = () => {
+        const raw = speedDraft
+        setSpeedDraft(null)
+        if (raw === null) return
+        const parsed = Number(raw)
+        if (!Number.isFinite(parsed)) return
+        const next = Math.round(Math.min(2, Math.max(0.5, parsed)) * 100) / 100
+        if (config && next === config.speed) return
+        void save({ speed: next })
+      }
 
       if (!config) return h('div', { style: { padding: '4px 0', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, t('加载中…', 'Loading…'))
 
@@ -1009,6 +1204,23 @@ window.__ModuleLoader__.load({
                 onCommit: (value) => void save({ maxChars: value }),
               }),
               h('span', { className: 'dsh-tts-hint' }, t('字 · 回车或失焦生效', 'chars · applies on Enter or blur')),
+            ),
+          ),
+          h('div', { className: 'dsh-tts-row', key: 'speed' },
+            h('span', { className: 'dsh-tts-label' }, t('速度', 'Speed')),
+            h('span', { className: 'dsh-tts-grow' },
+              h('input', {
+                className: 'dsh-tts-range', type: 'range', min: 0.5, max: 2, step: 0.05,
+                value: speedDraft === null ? config.speed : speedDraft,
+                disabled: busy,
+                'aria-label': t('朗读速度', 'Playback speed'),
+                onChange: (event) => setSpeedDraft(event.target.value),
+                onPointerUp: commitSpeed,
+                onKeyUp: commitSpeed,
+                onBlur: commitSpeed,
+              }),
+              h('span', { className: 'dsh-tts-value' }, (Number(speedDraft === null ? config.speed : speedDraft) || 1).toFixed(2) + '×'),
+              h('span', { className: 'dsh-tts-hint' }, t('无变调 · 松手生效', 'Pitch preserved · applies on release')),
             ),
           ),
         ),
@@ -1103,6 +1315,11 @@ window.__ModuleLoader__.load({
       '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input.num{width:84px;text-align:right}',
       '.dsh-tts-select{min-width:150px}',
+      '.dsh-tts-range{flex:1;min-width:120px;height:4px;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',
+      '.dsh-tts-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
+      '.dsh-tts-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
+      '.dsh-tts-range:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}',
+      '.dsh-tts-value{min-width:46px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}',
       '.dsh-tts-btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;cursor:pointer}',
       '.dsh-tts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}',
       '.dsh-tts-btn:disabled{opacity:.55;cursor:default}',
@@ -1129,10 +1346,31 @@ window.__ModuleLoader__.load({
       return () => { try { style.remove() } catch {} }
     }
 
+    // Settings navigation glyph for this plugin's own section id.
+    function SettingsIcon(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      const active = props && props.active === true
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+        stroke: 'currentColor', strokeWidth: active ? 2 : 1.8,
+        strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true, style: { opacity: active ? 1 : 0.85 },
+      },
+        h('path', {
+          d: 'M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z',
+          key: 'body',
+        }),
+        h('path', { d: 'M16 9a5 5 0 0 1 0 6', key: 'wave-1' }),
+        h('path', { d: 'M19.4 18.4a9 9 0 0 0 0-12.8', key: 'wave-2' }),
+      )
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
+        localeCtx = ctx.locale
+        watchLocale(ctx)
         loadConfigOnce()
         ensureEvents(ctx)
 
@@ -1186,15 +1424,23 @@ window.__ModuleLoader__.load({
           name: 'conversation.chat.assistant-actions',
           id: 'tts-reader',
           order: 40,
-          label: t('朗读', 'Read aloud'),
+          // A thunk: the owner re-reads it per projection, so the label follows
+          // the app language without re-registering.
+          label: () => t('朗读', 'Read aloud'),
         }, ReadAloudAction))
 
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'tts-reader',
           order: 26,
-          label: t('语音朗读', 'Read aloud'),
+          label: () => t('语音朗读', 'Read aloud'),
         }, TtsSettings))
+
+        // The settings navigation glyph for our own section id.
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'tts-reader',
+        }, SettingsIcon))
       },
     }
   },
