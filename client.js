@@ -363,7 +363,9 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    // Composer-row button for the pending question or approval request.
+    // Floating replay button for a pending question or approval. The request
+    // dialog covers the composer, so this lives on the frame-wide overlay and
+    // stays clickable above it.
     function PromptButton() {
       const pending = usePendingPrompt()
       const state = usePlayback()
@@ -371,24 +373,30 @@ window.__ModuleLoader__.load({
       const key = 'prompt:' + (pending.kind === 'approval' ? 'approval:' : '') + pending.id
       const playing = state.key === key && state.phase !== 'idle'
       const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
-      return h('button', {
-        type: 'button',
-        title: playing ? t('点击停止', 'Click to stop') : label,
-        onClick: () => {
-          if (playing) { stopPlayback(); return }
-          void startReadAloud(null, null, key, { text: pending.text })
-        },
-        style: {
-          display: 'inline-flex', alignItems: 'center', gap: '4px',
-          height: '24px', padding: '0 8px', borderRadius: '12px',
-          border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent',
-          color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', cursor: 'pointer',
-        },
-        children: [
-          playing ? h(ReadingBars, { mode: 'playing', key: 'bars' }) : h(SpeakerIcon, { key: 'icon' }),
-          h('span', { key: 'label' }, label),
-        ],
-      })
+      return h('div', {
+        style: { position: 'fixed', top: '10px', right: '14px', zIndex: 2147483000, display: 'flex' },
+      },
+        h('button', {
+          type: 'button',
+          title: playing ? t('点击停止', 'Click to stop') : label,
+          onClick: () => {
+            if (playing) { stopPlayback(); return }
+            void startReadAloud(null, null, key, { text: pending.text })
+          },
+          style: {
+            display: 'inline-flex', alignItems: 'center', gap: '5px',
+            height: '28px', padding: '0 10px', borderRadius: '14px',
+            border: '1px solid var(--dsw-alias-border-l2)',
+            background: 'var(--dsw-alias-bg-layer-2, #1c1c1c)',
+            color: 'var(--dsw-alias-label-primary)',
+            fontSize: '12px', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,.28)',
+          },
+          children: [
+            playing ? h(ReadingBars, { mode: 'playing', key: 'bars' }) : h(SpeakerIcon, { key: 'icon' }),
+            h('span', { key: 'label' }, label),
+          ],
+        }),
+      )
     }
 
     function ReadAloudAction(props) {
@@ -649,12 +657,12 @@ window.__ModuleLoader__.load({
           order: 900,
         }, SessionTracker))
 
-        // Replay button for the pending question / approval, in the composer
-        // tool row where it is visible next to the input.
-        ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-          name: 'conversation.input.left',
+        // Replay control for the pending question / approval. It goes on the
+        // frame-wide overlay because the request dialog covers the composer.
+        ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
           id: 'tts-reader-prompt',
-          order: 60,
+          order: 900,
         }, PromptButton))
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
