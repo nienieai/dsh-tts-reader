@@ -26,6 +26,9 @@
 
 ### 修复
 
+- **中途停止朗读会把宿主进程带崩**（弹「应用无法启动或已意外停止」，日志 `dsh: fatal load failure: Error: piper 退出码 1…` / `[DOMException [AbortError]: This operation was aborted]`）：预取下一段时创建的 promise 在用户停止播放、或该段合成失败时没人接住，DSH 把未处理拒绝当致命错误直接退出。现在预取 promise 创建就带 `catch`，并在退出路径上再消费一次；piper 子进程的 stdin/stdout/stderr 补 `error` 监听（停止时被 kill 会触发 EPIPE）；所有路由都套一层兜底，写响应前检查连接是否还在，读请求体在连接关闭时立即返回；只在 `drain` 上等待改为同时等 `drain/close/error` 并清理监听，客户端断开不再让处理器挂住或堆监听。
+- **音频响应不再走 gzip**：PCM 加了 `cache-control: no-store, no-transform`。此前长音频流被宿主的压缩中间件包一层 Gzip，背压等待会把 drain 监听堆在 Gzip 上（日志里的 `MaxListenersExceededWarning: 11 drain listeners added to [Gzip]`），而且压缩对已经流式的 PCM 没有收益。
+
 - `cordis.patch.yml` 里的默认配置此前永远不生效（`readSettings` 先补全了默认值，导致 seed 被覆盖）；现在只在首次运行（没有 `settings.json`）时写入，之后以文件为准。
 - 本地引擎的停顿太长：Piper 中文音色会在句内留 200–400ms 空白，现在按 10ms 帧做静音检测，把超过 140ms 的空白压到 140ms（`PIPER_PAUSE_CAP_MS`）。实测一句 5.25s 的音频缩到 4.56s，最长空档从 270ms 降到 150ms；本地音频缓存键加 `piper:v2` 前缀，旧文件交给上限淘汰。
 

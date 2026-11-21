@@ -13,7 +13,6 @@
 // Every route is loopback-only and rejects cross-site browser requests.
 
 import crypto from 'node:crypto'
-import { once } from 'node:events'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -156,9 +155,39 @@ function isSameOriginRequest(request) {
 }
 
 function writeJson(response, status, value) {
-  const body = JSON.stringify(value)
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-  response.end(body)
+  // A response whose client already left must not be written to: on a wrapped
+  // or destroyed stream that throws, and a throw here has no caller to catch it.
+  if (!response || response.destroyed || response.writableEnded) return
+  try {
+    const body = JSON.stringify(value)
+    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    response.end(body)
+  } catch {}
+}
+
+/**
+ * Every route runs through this. The Host reports a rejected request handler as
+ * an unhandled rejection and turns it into a fatal error, so one escaping error
+ * (an aborted stream, a client that disconnected mid-body) would take the whole
+ * process down. Connections also get no-op error listeners: a socket that dies
+ * while a response is streaming emits 'error', and an unhandled 'error' event is
+ * an uncaught exception.
+ */
+function routeHandler(log, handler) {
+  return async (request, response) => {
+    const ignore = () => {}
+    try { request.on('error', ignore) } catch {}
+    try { response.on('error', ignore) } catch {}
+    try {
+      await handler(request, response)
+    } catch (error) {
+      try { log?.warn?.('[dsh-tts-reader] 请求处理失败：' + (error?.message ?? String(error))) } catch {}
+      try {
+        if (!response.headersSent) writeJson(response, 500, { ok: false, error: '内部错误' })
+        else if (!response.writableEnded) response.end()
+      } catch {}
+    }
+  }
 }
 
 function readJsonBody(request, limit = 64 * 1024) {
@@ -176,6 +205,9 @@ function readJsonBody(request, limit = 64 * 1024) {
       try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))) } catch { finish(undefined) }
     })
     request.on('error', () => finish(undefined))
+    // A client that leaves mid-body closes the request without 'error' on some
+    // versions; without this the handler would wait forever for a body.
+    request.on('close', () => finish(undefined))
   })
 }
 
@@ -827,6 +859,12 @@ async function* startPiper(settings, flag, text, signal) {
   })
   child.on('error', (error) => { spawnError = error })
   child.stderr.on('data', (chunk) => { if (stderr.length < 4000) stderr += chunk.toString() })
+  // Killing the child while its pipes are live surfaces as EPIPE / 'close' on
+  // these streams; an unhandled 'error' event is an uncaught exception, and the
+  // Host dies with it. Playback being stopped mid-sentence is normal, not fatal.
+  child.stdin.on('error', () => {})
+  child.stderr.on('error', () => {})
+  child.stdout.on('error', () => {})
   const abort = () => { try { child.kill() } catch {} }
   if (signal) signal.addEventListener('abort', abort, { once: true })
   try { child.stdin.end(text + '\n') } catch {}
@@ -891,7 +929,10 @@ export async function* engineChunks(scope, settings, text, signal) {
 function pcmHeaders(extra) {
   return {
     'content-type': 'application/octet-stream',
-    'cache-control': 'no-store',
+    // `no-transform` keeps the Host's gzip middleware away from raw audio: it
+    // gains nothing on PCM, and wrapping a long stream in a transform makes the
+    // response's backpressure proxy pile up drain listeners on the Gzip stream.
+    'cache-control': 'no-store, no-transform',
     'x-tts-sample-rate': String(SAMPLE_RATE),
     'x-tts-channels': '1',
     'x-tts-bits': '16',
@@ -951,7 +992,15 @@ export function apply(ctx, config) {
   const broadcast = (payload) => {
     const line = 'data: ' + JSON.stringify(payload) + '\n\n'
     for (const response of listeners) {
-      try { response.write(line) } catch {}
+      // A page that went away leaves its response behind; writing to it throws
+      // (or on a wrapped stream rejects), so drop it here instead.
+      if (response.destroyed || response.writableEnded) {
+        if (listeners.delete(response)) sseStats.closed += 1
+        continue
+      }
+      try { response.write(line) } catch {
+        if (listeners.delete(response)) sseStats.closed += 1
+      }
     }
   }
 
@@ -1069,7 +1118,7 @@ export function apply(ctx, config) {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: CONFIG_PATH,
-      handler: async (request, response) => {
+      handler: routeHandler(log, async (request, response) => {
         if (!guard(request, response)) return
         const method = request.method ?? 'GET'
         if (method === 'GET') {
@@ -1095,25 +1144,25 @@ export function apply(ctx, config) {
           keyConfigured = !!(info && info.configured)
         } catch {}
         return writeJson(response, 200, { ok: true, value: { ...next, ...engineInfo(next), voices: [...VOICES], cache: cacheStats(), keyConfigured } })
-      },
+      }),
     }), 'dsh-tts-reader: config')
 
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: CLEAR_PATH,
-      handler: async (request, response) => {
+      handler: routeHandler(log, async (request, response) => {
         if (!guard(request, response)) return
         if ((request.method ?? '') !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
         const removed = clearCache()
         return writeJson(response, 200, { ok: true, value: { removed, cache: cacheStats() } })
-      },
+      }),
     }), 'dsh-tts-reader: cache')
 
     // Auto-read feed: the page opens one EventSource and replays new replies.
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: EVENTS_PATH,
-      handler: (request, response) => {
+      handler: routeHandler(log, (request, response) => {
         if (!guard(request, response)) { sseStats.rejected += 1; return }
         response.writeHead(200, {
           'content-type': 'text/event-stream; charset=utf-8',
@@ -1124,7 +1173,8 @@ export function apply(ctx, config) {
         listeners.add(response)
         sseStats.opened += 1
         const heartbeat = setInterval(() => {
-          try { response.write(': ping\n\n') } catch {}
+          if (response.destroyed || response.writableEnded) { cleanup(); return }
+          try { response.write(': ping\n\n') } catch { cleanup() }
         }, 25000)
         const cleanup = () => {
           clearInterval(heartbeat)
@@ -1132,7 +1182,8 @@ export function apply(ctx, config) {
         }
         request.on('close', cleanup)
         response.on('close', cleanup)
-      },
+        response.on('error', cleanup)
+      }),
     }), 'dsh-tts-reader: events')
 
     // Polling fallback for the same feed: `after=<seq>` returns what the page
@@ -1140,7 +1191,7 @@ export function apply(ctx, config) {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: RECENT_PATH,
-      handler: (request, response) => {
+      handler: routeHandler(log, (request, response) => {
         if (!guard(request, response)) return
         let after = 0
         try {
@@ -1152,23 +1203,23 @@ export function apply(ctx, config) {
           ok: true,
           value: { seq: recentSeq, items: recent.filter(item => item.seq > after) },
         })
-      },
+      }),
     }), 'dsh-tts-reader: recent')
 
     // The replay button reads this; it must not depend on a live event stream.
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: PENDING_PATH,
-      handler: (request, response) => {
+      handler: routeHandler(log, (request, response) => {
         if (!guard(request, response)) return
         return writeJson(response, 200, { ok: true, value: pendingPrompt })
-      },
+      }),
     }), 'dsh-tts-reader: pending')
 
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: READ_PATH,
-      handler: async (request, response) => {
+      handler: routeHandler(log, async (request, response) => {
         if (!guard(request, response)) return
         if ((request.method ?? '') !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
         const body = await readJsonBody(request)
@@ -1311,9 +1362,58 @@ export function apply(ctx, config) {
           }
         }
 
+        /** True while the response can still take bytes. */
+        const alive = () => !response.destroyed && !response.writableEnded
+
+        /**
+         * Wait until the socket takes more bytes. Listening only for 'drain'
+         * would hang forever when the client disconnects mid-stream (no drain is
+         * ever emitted), and the listeners would stay on the underlying stream;
+         * every listener added here is removed on the first of drain / close /
+         * error.
+         */
+        const waitForDrain = () => new Promise((resolve) => {
+          const socket = response.socket
+          let settled = false
+          const finish = () => {
+            if (settled) return
+            settled = true
+            response.off('drain', finish)
+            response.off('close', finish)
+            response.off('error', finish)
+            if (socket) {
+              socket.off('drain', finish)
+              socket.off('close', finish)
+              socket.off('error', finish)
+            }
+            resolve()
+          }
+          response.once('drain', finish)
+          response.once('close', finish)
+          response.once('error', finish)
+          if (socket) {
+            socket.once('drain', finish)
+            socket.once('close', finish)
+            socket.once('error', finish)
+          }
+        })
+
         const writeBytes = async (bytes) => {
-          if (!bytes || bytes.length === 0) return
-          if (!response.write(bytes)) await once(response, 'drain')
+          if (!bytes || bytes.length === 0 || !alive()) return
+          let drained = false
+          try { drained = response.write(bytes) } catch { return }
+          if (!drained && alive()) await waitForDrain()
+        }
+
+        /**
+         * Synthesize one paragraph ahead. The promise is handled as soon as it
+         * exists: when playback stops, the prefetch may reject (killed child,
+         * aborted upstream) and an unhandled rejection is a fatal Host error.
+         */
+        const prefetch = (generator) => {
+          const first = generator.next()
+          first.catch(() => {})
+          return { gen: generator, first }
         }
 
         // Headers wait for the first chunk, so a failure can still answer JSON.
@@ -1343,10 +1443,7 @@ export function apply(ctx, config) {
         let step = first
         let index = 0
         let pending = null
-        if (units.length > 1) {
-          const nextGen = unitChunks(units[1])
-          pending = { gen: nextGen, first: nextGen.next() }
-        }
+        if (units.length > 1) pending = prefetch(unitChunks(units[1]))
         try {
           for (;;) {
             // A closed tab must stop the prefetch chain too, not just this write.
@@ -1364,25 +1461,27 @@ export function apply(ctx, config) {
                 gen = unitChunks(units[index])
                 step = await gen.next()
               }
-              if (index + 1 < units.length) {
-                const lookahead = unitChunks(units[index + 1])
-                pending = { gen: lookahead, first: lookahead.next() }
-              }
+              if (index + 1 < units.length) pending = prefetch(unitChunks(units[index + 1]))
               continue
             }
             await writeBytes(step.value)
             step = await gen.next()
           }
-          response.end()
+          if (alive()) response.end()
         } catch (error) {
           if (controller.signal.aborted) return
           log?.warn?.('[dsh-tts-reader] 朗读失败：' + (error?.message ?? String(error)))
-          try { response.end() } catch {}
+          try { if (alive()) response.end() } catch {}
         } finally {
           try { await gen.return() } catch {}
-          if (pending) { try { await pending.gen.return() } catch {} }
+          if (pending) {
+            try { await pending.gen.return() } catch {}
+            // Already handled above; awaiting again only keeps the rejection
+            // from being reported as unhandled if it settles after return().
+            try { await pending.first } catch {}
+          }
         }
-      },
+      }),
     }), 'dsh-tts-reader: read')
   })
 
