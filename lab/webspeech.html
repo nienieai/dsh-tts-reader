@@ -33,12 +33,22 @@
   .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
   .row + .row{margin-top:10px}
   label.fld{display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--dim)}
-  select, textarea, input[type=number]{
+  select, textarea, input[type=number], input[type=search]{
     background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:7px;
     padding:8px 10px; font:inherit;
   }
   select{min-width:min(520px, 100%)}
+  input[type=search]{width:100%}
   select:focus, textarea:focus, input:focus{outline:2px solid rgba(96,165,250,.45); outline-offset:1px}
+  /* Voice list is built on demand: Linux exposes 14000+ espeak voices. */
+  #voiceList{position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:20;
+    max-height:min(320px, 55vh); overflow:auto; background:#111318; border:1px solid var(--line);
+    border-radius:8px; box-shadow:0 12px 30px rgba(0,0,0,.45); padding:4px}
+  #voiceList .item{padding:6px 9px; border-radius:6px; font-size:13px; cursor:pointer;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  #voiceList .item:hover, #voiceList .item.hover{background:#1c2433}
+  #voiceList .item.current{color:var(--accent); font-weight:600}
+  #voiceList .more{padding:5px 9px; font-size:11.5px; color:var(--dim)}
   textarea{width:100%; min-height:132px; resize:vertical; line-height:1.6}
   input[type=range]{width:180px; accent-color:var(--accent)}
   button{
@@ -106,13 +116,16 @@
   <section class="card">
     <h2>音色</h2>
     <div class="row">
-      <label class="fld" style="flex:1">
+      <label class="fld" style="flex:1;position:relative">
         选择音色
-        <select id="voiceSel"><option value="">（尚无音色列表）</option></select>
+        <input id="voiceSearch" type="search" autocomplete="off" spellcheck="false"
+               placeholder="点开或输入筛选（例如 中文 / mandarin / cmn）">
+        <div id="voiceList" hidden></div>
       </label>
     </div>
     <div class="row" style="margin-top:10px">
       <label class="chk"><input type="checkbox" id="onlyLocal"> 只看本地音色（离线，不经过任何服务器）</label>
+      <span class="hint" id="voiceNote"></span>
     </div>
     <dl class="kv">
       <dt>voiceURI</dt><dd id="vUri">—</dd>
@@ -194,7 +207,7 @@
 
   var els = {};
   ['badge','badgeNote','kBrowser','kApi','kVoiceCount','kQueue','notes',
-   'voiceSel','vUri','vLang','vLocal','vDefault','onlyLocal','vHint',
+   'voiceSearch','voiceList','voiceNote','vUri','vLang','vLocal','vDefault','onlyLocal','vHint',
    'text','rate','rateVal','pitch','pitchVal','volume','volumeVal','chunkSize',
    'firstTimeout','timeoutAction',
    'btnRedetect','btnCopyDiag','btnSample','btnPlay','btnPause','btnResume','btnStop','btnFallback',
@@ -293,7 +306,7 @@
       notes.push('API 对象存在，getVoices() 返回空数组。多数情况下稍后会通过 voiceschanged 补齐；如果始终为空，说明这个内核没有安装/暴露任何语音引擎。');
       notes.push('Linux 上通常需要安装 speech-dispatcher 与音色包；无头浏览器与部分安卓 WebView 也会是空列表。');
     } else {
-      var cloud = list.filter(function (v) { return v.localService === false; }).length;
+      var cloud = list.filter(isCloud).length;
       var nat = list.filter(function (v) { return /natural/i.test(v.name || ''); }).length;
       setBadge('ok', '可用', list.length + ' 个音色（云端 ' + cloud + '，含 Natural ' + nat + '）');
       if (nat) notes.push('检测到 ' + nat + ' 个 Natural 音色：这类是厂商的神经网络音色（Edge 上通常是 Online 系列），音质明显好于本地 SAPI，但需要联网。');
@@ -327,15 +340,43 @@
   }
 
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
-  function isCloud(v) { return v.localService === false; }
+  /**
+   * Firefox marks every speech-dispatcher voice `localService: false`, so the
+   * engines known to run on this machine are recognised by name; anything else
+   * that calls itself remote is treated as a vendor server.
+   */
+  function isCloud(v) {
+    if (v.localService !== false) return false;
+    var name = String(v.name || '') + ' ' + String(v.voiceURI || '');
+    return !/espeak|speech-?dispatcher|speechd|festival|pico|svox|mbrola/i.test(name);
+  }
   function isNatural(v) { return /natural/i.test(v.name || ''); }
   function isGoogle(v) { return /^google/i.test(v.name || ''); }
   function isMicrosoft(v) { return /microsoft/i.test(v.name || ''); }
 
+  /** The page's own language decides which voices come first. */
+  function pageLang() {
+    return String(document.documentElement.lang || 'zh').toLowerCase().split(/[-_]/)[0];
+  }
+
+  function voiceRank(v) {
+    var lang = String(v.lang || '').toLowerCase().split(/[-_]/)[0];
+    var pref = pageLang();
+    if (lang === pref) return 0;
+    if (pref !== 'zh' && lang === 'zh') return 1;
+    if (lang === 'en' && pref !== 'en') return 2;
+    return 3;
+  }
+
   function cmpVoice(a, b) {
-    if (isZh(a) !== isZh(b)) return isZh(a) ? -1 : 1;
+    var ra = voiceRank(a), rb = voiceRank(b);
+    if (ra !== rb) return ra - rb;
     if (isNatural(a) !== isNatural(b)) return isNatural(a) ? -1 : 1;
     if (isCloud(a) !== isCloud(b)) return isCloud(a) ? -1 : 1;
+    // Plain names before espeak's "+Variant" copies.
+    var va = (a.name || '').indexOf('+') === -1 ? 0 : 1;
+    var vb = (b.name || '').indexOf('+') === -1 ? 0 : 1;
+    if (va !== vb) return va - vb;
     var la = a.lang || '', lb = b.lang || '';
     if (la !== lb) return la < lb ? -1 : 1;
     return (a.name || '') < (b.name || '') ? -1 : 1;
@@ -355,26 +396,17 @@
   function rebuildVoiceOptions() {
     var prev = st.selectedUri || '';
     st.visible = visibleVoices();
-    els.voiceSel.innerHTML = '';
 
     if (!st.visible.length) {
-      var o0 = document.createElement('option');
-      o0.value = '';
-      o0.textContent = els.onlyLocal.checked
+      st.selectedUri = '';
+      paintVoiceField();
+      els.voiceNote.textContent = els.onlyLocal.checked
         ? '（没有本地音色；取消勾选后可见云端音色）'
         : '（尚无音色列表）';
-      els.voiceSel.appendChild(o0);
-      st.selectedUri = '';
+      if (els.voiceList && !els.voiceList.hidden) renderVoiceList();
       renderVoiceDetail();
       return;
     }
-
-    st.visible.forEach(function (v, i) {
-      var o = document.createElement('option');
-      o.value = String(i);
-      o.textContent = voiceLabel(v);
-      els.voiceSel.appendChild(o);
-    });
 
     var pick = -1;
     for (var i = 0; i < st.visible.length; i++) {
@@ -385,16 +417,15 @@
         for (var k = 0; k < st.visible.length; k++) if (test(st.visible[k])) return k;
         return -1;
       };
-      pick = prefer(function (v) { return isZh(v) && isNatural(v); });
-      if (pick < 0) pick = prefer(isZh);
-      if (pick < 0) {
-        var lang = (navigator.language || '').toLowerCase();
-        pick = prefer(function (v) { return lang && (v.lang || '').toLowerCase().indexOf(lang) === 0; });
-      }
+      pick = prefer(function (v) { return voiceRank(v) === 0 && isNatural(v); });
+      if (pick < 0) pick = prefer(function (v) { return voiceRank(v) === 0; });
+      if (pick < 0) pick = prefer(function (v) { return isZh(v); });
       if (pick < 0) pick = 0;
     }
-    els.voiceSel.value = String(pick);
     st.selectedUri = st.visible[pick].voiceURI || '';
+    paintVoiceField();
+    els.voiceNote.textContent = st.visible.length + ' 个可选 · 输入可筛选';
+    if (els.voiceList && !els.voiceList.hidden) renderVoiceList();
     renderVoiceDetail();
   }
 
@@ -418,8 +449,10 @@
   }
 
   function currentVoice() {
-    var i = parseInt(els.voiceSel.value, 10);
-    return (i >= 0 && st.visible[i]) ? st.visible[i] : null;
+    if (!st.selectedUri) return null;
+    for (var i = 0; i < st.visible.length; i++) if (st.visible[i].voiceURI === st.selectedUri) return st.visible[i];
+    for (var j = 0; j < st.voices.length; j++) if (st.voices[j].voiceURI === st.selectedUri) return st.voices[j];
+    return null;
   }
 
   /* 把某个音色设为当前选择；它不在当前过滤结果里就自动取消“只看本地” */
@@ -430,14 +463,76 @@
       els.onlyLocal.checked = false;
       st.selectedUri = v.voiceURI || '';
       rebuildVoiceOptions();
-      i = st.visible.indexOf(v);
     }
-    if (i < 0) return false;
-    els.voiceSel.value = String(i);
+    if (st.visible.indexOf(v) < 0) return false;
     st.selectedUri = v.voiceURI || '';
+    paintVoiceField();
     renderVoiceDetail();
     savePrefs();
     return true;
+  }
+
+  /* ---------- 音色选择器：输入即筛选，列表按需生成 ---------- */
+
+  var LIST_LIMIT = 60;
+  var picker = { open: false, filter: '', hover: 0 };
+
+  function matchingVoices() {
+    var needle = String(picker.filter || '').trim().toLowerCase();
+    if (!needle) return st.visible;
+    return st.visible.filter(function (v) {
+      var hay = (String(v.name || '') + ' ' + String(v.lang || '')).toLowerCase();
+      return needle.split(/\s+/).every(function (part) { return hay.indexOf(part) !== -1; });
+    });
+  }
+
+  function paintVoiceField() {
+    var v = currentVoice();
+    els.voiceSearch.value = v ? voiceLabel(v) : (st.visible.length ? '' : '（没有可用音色）');
+  }
+
+  function renderVoiceList() {
+    var list = matchingVoices();
+    els.voiceList.textContent = '';
+    els.voiceList.hidden = false;
+    picker.open = true;
+    if (picker.hover >= list.length) picker.hover = 0;
+    list.slice(0, LIST_LIMIT).forEach(function (v, i) {
+      var item = document.createElement('div');
+      item.className = 'item' + (i === picker.hover ? ' hover' : '') + (v.voiceURI === st.selectedUri ? ' current' : '');
+      item.textContent = voiceLabel(v);
+      item.title = String(v.voiceURI || '');
+      item.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        chooseVoice(v);
+      });
+      els.voiceList.appendChild(item);
+    });
+    if (list.length > LIST_LIMIT) {
+      var more = document.createElement('div');
+      more.className = 'more';
+      more.textContent = '还有 ' + (list.length - LIST_LIMIT) + ' 个，继续输入缩小范围';
+      els.voiceList.appendChild(more);
+    }
+    if (!list.length) {
+      var none = document.createElement('div');
+      none.className = 'more';
+      none.textContent = '没有匹配的音色';
+      els.voiceList.appendChild(none);
+    }
+  }
+
+  function closeVoiceList() {
+    picker.open = false;
+    picker.filter = '';
+    picker.hover = 0;
+    els.voiceList.hidden = true;
+    paintVoiceField();
+  }
+
+  function chooseVoice(v) {
+    applyVoice(v);
+    closeVoiceList();
   }
 
   function renderVoiceDetail() {
@@ -796,11 +891,42 @@
     paintProgress();
   });
 
-  els.voiceSel.addEventListener('change', function () {
-    var v = currentVoice();
-    st.selectedUri = v ? (v.voiceURI || '') : '';
-    renderVoiceDetail();
-    savePrefs();
+  els.voiceSearch.addEventListener('focus', function () {
+    els.voiceSearch.select();
+    picker.filter = '';
+    picker.hover = 0;
+    renderVoiceList();
+  });
+  els.voiceSearch.addEventListener('input', function () {
+    picker.filter = els.voiceSearch.value;
+    picker.hover = 0;
+    renderVoiceList();
+  });
+  els.voiceSearch.addEventListener('keydown', function (event) {
+    var list = matchingVoices();
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!picker.open) { renderVoiceList(); return; }
+      var step = event.key === 'ArrowDown' ? 1 : -1;
+      picker.hover = Math.max(0, Math.min(list.length - 1, (picker.hover < 0 ? 0 : picker.hover) + step));
+      renderVoiceList();
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (picker.open && list.length) chooseVoice(list[Math.max(0, Math.min(picker.hover, list.length - 1))]);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Escape') { closeVoiceList(); event.preventDefault(); }
+  });
+  els.voiceSearch.addEventListener('blur', function () {
+    // The rows use mousedown, so a click has already chosen by now.
+    setTimeout(function () { if (picker.open) closeVoiceList(); }, 120);
+  });
+  document.addEventListener('mousedown', function (event) {
+    if (!picker.open) return;
+    if (els.voiceList.contains(event.target) || els.voiceSearch === event.target) return;
+    closeVoiceList();
   });
 
   els.onlyLocal.addEventListener('change', function () {
