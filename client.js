@@ -1182,7 +1182,7 @@ window.__ModuleLoader__.load({
 
       return h('input', {
         className: props.className,
-        type: 'text',
+        type: props.type === 'password' ? 'password' : 'text',
         placeholder: props.placeholder,
         spellCheck: false,
         disabled: props.disabled,
@@ -1327,10 +1327,39 @@ window.__ModuleLoader__.load({
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
       const cacheLimit = config.cacheMaxMb || 200
       const cachePct = Math.min(100, Math.round(((config.cache && config.cache.bytes ? config.cache.bytes : 0) / (cacheLimit * 1048576)) * 100))
-      const piper = config.piper || { exe: false, model: false, sampleRate: 0, voices: [] }
+      const piper = config.piper || { exe: false, model: false, modelEn: false, sampleRate: 0, voices: [] }
       const localVoices = Array.isArray(piper.voices) ? piper.voices : []
-      const localEngine = config.engine === 'piper'
-      const piperReady = localEngine && piper.exe === true && piper.model === true
+      const system = config.system || { supported: false, voices: [] }
+      const systemVoices = Array.isArray(system.voices) ? system.voices : []
+      const custom = config.custom || { baseUrl: '', endpoint: '', model: '', voice: '', format: 'wav', keyConfigured: false }
+      const engine = config.engine || 'deepseek'
+      const cloudEngine = engine === 'deepseek'
+      const localEngine = engine === 'piper'
+      const systemEngine = engine === 'system'
+      const customEngine = engine === 'custom'
+      const piperReady = piper.exe === true && piper.model === true
+      const systemReady = system.supported === true && systemVoices.length > 0
+      const customReady = !!custom.baseUrl && custom.keyConfigured === true
+      const engineReady = cloudEngine ? config.keyConfigured === true
+        : localEngine ? piperReady
+          : systemEngine ? systemReady
+            : customReady
+      const engineHint = cloudEngine
+        ? t('DeepSeek 官方 TTS，需要 Key 和网络。', 'The official DeepSeek TTS API; needs a key and network.')
+        : localEngine
+          ? t('你自己装的 Piper，离线、不花钱；再填一个英文模型，纯英文段落会交给它读。',
+            'Your own Piper install, offline and free; set an English model and pure-English parts go to it.')
+          : systemEngine
+            ? t('操作系统自带的语音，离线、零下载；中英混读正常，但音色偏机械。',
+              'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.')
+            : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；Key 只存本机，不回传给页面。',
+              'Any OpenAI-compatible /v1/audio/speech endpoint; the key stays on this machine and is never sent back to the page.')
+      const engineStatus = engineReady
+        ? t('已就绪', 'ready')
+        : cloudEngine ? t('需配置 Key', 'key missing')
+          : localEngine ? t('需要配置', 'needs setup')
+            : systemEngine ? (system.supported ? t('没有语音', 'no voices') : t('系统不支持', 'unsupported'))
+              : t('需要配置', 'needs setup')
 
       // One card head: title, optional right-hand status, one explanatory line.
       const head = (key, title, hint, extra) => h('div', { className: 'dsh-tts-head', key },
@@ -1360,20 +1389,16 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-tts-settings' },
         h('div', { className: 'dsh-tts-card', key: 'engine' },
-          head('head', t('合成引擎', 'Engine'),
-            t('云端走 DeepSeek 的 TTS 接口，需要 Key 和网络；本地走你自己装的 Piper，离线、不花钱。',
-              'Cloud uses the DeepSeek TTS API (key and network required); local uses your own Piper install (offline, no cost).'),
-            badge('status', localEngine ? piperReady : true,
-              localEngine
-                ? (piperReady ? t('已就绪', 'ready') : t('需要配置', 'needs setup'))
-                : t('需联网', 'needs network'))),
+          head('head', t('合成引擎', 'Engine'), engineHint, badge('status', engineReady, engineStatus)),
           row('engine', t('引擎', 'Engine'),
             h('select', {
-              className: 'dsh-tts-select', value: config.engine || 'deepseek', disabled: busy,
+              className: 'dsh-tts-select', value: engine, disabled: busy,
               onChange: (event) => save({ engine: event.target.value }),
               children: [
                 h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
                 h('option', { value: 'piper', key: 'piper' }, t('本地 Piper（离线）', 'Local Piper (offline)')),
+                h('option', { value: 'system', key: 'system' }, t('系统语音（离线）', 'System voices (offline)')),
+                h('option', { value: 'custom', key: 'custom' }, t('自定义 API（在线）', 'Custom API (online)')),
               ],
             }),
           ),
@@ -1408,7 +1433,32 @@ window.__ModuleLoader__.load({
                 }),
             badge('state', piper.model === true, piper.model ? t('已找到', 'found') : t('未找到', 'missing')),
           ]) : null,
-          localEngine ? null : row('voice', t('音色', 'Voice'),
+          localEngine ? row('piper-model-en', t('英文模型', 'English model'), [
+            localVoices.length > 0
+              ? h('select', {
+                  key: 'select',
+                  className: 'dsh-tts-select', value: config.piperModelEn || '', disabled: busy,
+                  onChange: (event) => save({ piperModelEn: event.target.value }),
+                  children: [
+                    h('option', { value: '', key: 'off' }, t('不启用（英文也用中文模型）', 'off (Chinese model reads everything)')),
+                    ...(config.piperModelEn && !localVoices.some((voice) => voice.path === config.piperModelEn)
+                      ? [h('option', { value: config.piperModelEn, key: 'current' }, t('当前（自定义路径）', 'current (custom path)'))]
+                      : []),
+                    ...localVoices.map((voice) => h('option', { value: voice.path, key: voice.path },
+                      voice.name + ' · ' + (voice.sampleRate / 1000).toFixed(2) + ' kHz')),
+                  ],
+                })
+              : h(TextInput, {
+                  key: 'input',
+                  className: 'dsh-tts-input wide', value: config.piperModelEn, disabled: busy,
+                  placeholder: 'C:\\voices\\en_US-lessac-medium.onnx',
+                  onCommit: (value) => void save({ piperModelEn: value }),
+                }),
+            config.piperModelEn
+              ? badge('state', piper.modelEn === true, piper.modelEn ? t('已找到', 'found') : t('未找到', 'missing'))
+              : null,
+          ]) : null,
+          cloudEngine ? row('voice', t('音色', 'Voice'),
             h('select', {
               className: 'dsh-tts-select', value: config.voice, disabled: busy,
               onChange: (event) => save({ voice: event.target.value }),
@@ -1417,12 +1467,75 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'tide', key: 'tide' }, 'tide · ' + t('男声', 'male')),
               ],
             }),
-          ),
-          localEngine ? null : row('key', 'API Key',
+          ) : null,
+          cloudEngine ? row('key', 'API Key',
             badge('state', config.keyConfigured === true, config.keyConfigured
               ? t('已配置（DEEPSEEK_API_KEY）', 'Configured · DEEPSEEK_API_KEY')
               : t('未配置，请到 设置 → 模型 填 Key', 'Not configured — set a key in Settings → Models')),
-          ),
+          ) : null,
+          systemEngine ? row('system-voice', t('语音', 'Voice'), systemVoices.length > 0
+            ? h('select', {
+                className: 'dsh-tts-select', value: config.systemVoice || (systemVoices[0] && systemVoices[0].id) || '', disabled: busy,
+                onChange: (event) => save({ systemVoice: event.target.value }),
+                children: systemVoices.map((voice) => h('option', { value: voice.id, key: voice.id },
+                  voice.name
+                  + (voice.language ? ' · ' + voice.language : '')
+                  + (voice.gender ? ' · ' + voice.gender : ''))),
+              })
+            : badge('state', false, system.supported
+              ? t('没有可用的系统语音', 'no system voices installed')
+              : t('当前系统不支持系统语音', 'not supported on this OS'))) : null,
+          customEngine ? row('custom-url', 'Base URL', [
+            h(TextInput, {
+              key: 'input',
+              className: 'dsh-tts-input wide', value: config.customBaseUrl, disabled: busy,
+              placeholder: 'https://api.openai.com/v1',
+              onCommit: (value) => void save({ customBaseUrl: value }),
+            }),
+            custom.baseUrl
+              ? badge('state', Boolean(custom.endpoint), custom.endpoint ? t('已识别端点', 'endpoint ok') : t('地址无效', 'invalid'))
+              : null,
+          ]) : null,
+          customEngine ? row('custom-model', t('模型', 'Model'),
+            h(TextInput, {
+              className: 'dsh-tts-input wide', value: config.customModel, disabled: busy,
+              placeholder: 'tts-1',
+              onCommit: (value) => void save({ customModel: value }),
+            })) : null,
+          customEngine ? row('custom-voice', t('音色', 'Voice'),
+            h(TextInput, {
+              className: 'dsh-tts-input wide', value: config.customVoice, disabled: busy,
+              placeholder: 'alloy',
+              onCommit: (value) => void save({ customVoice: value }),
+            })) : null,
+          customEngine ? row('custom-format', t('返回格式', 'Format'),
+            h('select', {
+              className: 'dsh-tts-select', value: config.customFormat === 'pcm' ? 'pcm' : 'wav', disabled: busy,
+              onChange: (event) => save({ customFormat: event.target.value }),
+              children: [
+                h('option', { value: 'wav', key: 'wav' }, t('wav（推荐）', 'wav (recommended)')),
+                h('option', { value: 'pcm', key: 'pcm' }, t('pcm（24 kHz 裸流）', 'pcm (24 kHz raw)')),
+              ],
+            })) : null,
+          customEngine ? row('custom-key', 'API Key', [
+            h(TextInput, {
+              key: 'input',
+              type: 'password',
+              className: 'dsh-tts-input wide', value: '', disabled: busy,
+              placeholder: custom.keyConfigured
+                ? t('已配置，留空不改', 'configured — leave empty to keep')
+                : 'sk-...',
+              onCommit: (value) => void save({ customApiKey: value }),
+            }),
+            custom.keyConfigured
+              ? h('button', {
+                  key: 'clear', className: 'dsh-tts-btn', type: 'button', disabled: busy,
+                  onClick: () => void save({ customApiKey: '' }),
+                  children: t('清除', 'Clear'),
+                })
+              : null,
+            badge('state', custom.keyConfigured === true, custom.keyConfigured ? t('已配置', 'configured') : t('未配置', 'missing')),
+          ]) : null,
           localEngine ? row('guide', t('安装帮助', 'Setup'),
             h('button', {
               key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,

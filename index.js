@@ -13,7 +13,7 @@
 // Every route is loopback-only and rejects cross-site browser requests.
 
 import crypto from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -39,11 +39,24 @@ const MIN_SPEED = 0.5
 const MAX_SPEED = 2
 
 const DEFAULTS = {
-  // Which synthesizer produces the audio: the DeepSeek API, or a local Piper
-  // executable the user installed themselves.
+  // Which synthesizer produces the audio: the DeepSeek API, a local Piper
+  // executable, the operating system's own voices, or an OpenAI-compatible
+  // endpoint the user configures.
   engine: 'deepseek',
   piperPath: '',
   piperModel: '',
+  // Optional second Piper model for mostly-Latin paragraphs: a Chinese voice
+  // reads English as nonsense, so English text can be routed to its own voice.
+  piperModelEn: '',
+  // Operating-system voice: a name on Windows/macOS, a language/voice id on
+  // Linux. Empty means the platform default.
+  systemVoice: '',
+  // OpenAI-compatible endpoint: base URL, model, voice, response format. The
+  // key is kept out of this file, in secrets.json.
+  customBaseUrl: '',
+  customModel: '',
+  customVoice: '',
+  customFormat: 'wav',
   voice: 'stella',
   maxChars: 4000,
   cacheMaxMb: 200,
@@ -56,7 +69,8 @@ const DEFAULTS = {
   speakApprovals: true,
 }
 
-const ENGINES = new Set(['deepseek', 'piper'])
+const ENGINES = new Set(['deepseek', 'piper', 'system', 'custom'])
+const CUSTOM_FORMATS = new Set(['wav', 'pcm'])
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME
@@ -66,6 +80,38 @@ function dshHome() {
 
 function storePath() {
   return path.join(dshHome(), 'storages', 'dsh-tts-reader', 'settings.json')
+}
+
+/** Keys never live in settings.json: the settings API hands that file around. */
+function secretsPath() {
+  return path.join(dshHome(), 'storages', 'dsh-tts-reader', 'secrets.json')
+}
+
+function readSecrets() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(secretsPath(), 'utf8'))
+    if (parsed && typeof parsed === 'object') return parsed
+  } catch {}
+  return {}
+}
+
+function writeSecrets(next) {
+  try {
+    const file = secretsPath()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
+    // Windows ignores the mode, so tighten it explicitly where the API exists.
+    try { fs.chmodSync(file, 0o600) } catch {}
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The custom endpoint's key, or '' when the user has not set one. */
+function customApiKey() {
+  const secrets = readSecrets()
+  return typeof secrets.customApiKey === 'string' ? secrets.customApiKey.trim() : ''
 }
 
 function cacheDir() {
@@ -105,6 +151,35 @@ function writeSettings(next) {
   }
 }
 
+/** A base URL as typed, without trailing slashes; '' when it is not http(s). */
+function normalizeBaseUrl(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    return (url.origin + url.pathname).replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+/** The `/v1/audio/speech` URL an OpenAI-compatible base URL resolves to. */
+export function speechEndpoint(baseUrl) {
+  const base = normalizeBaseUrl(baseUrl)
+  if (!base) return ''
+  if (/\/audio\/speech$/i.test(base)) return base
+  if (/\/v\d+$/i.test(base)) return base + '/audio/speech'
+  return base + '/v1/audio/speech'
+}
+
+/** Short identity of an endpoint, so two providers never share cache entries. */
+export function endpointFingerprint(baseUrl) {
+  const base = normalizeBaseUrl(baseUrl).toLowerCase()
+  if (!base) return 'none'
+  return crypto.createHash('sha1').update(base).digest('hex').slice(0, 12)
+}
+
 function normalizeSettings(raw, seed) {
   const merged = { ...DEFAULTS, ...(seed && typeof seed === 'object' ? seed : {}), ...(raw && typeof raw === 'object' ? raw : {}) }
   const voice = VOICES.has(String(merged.voice)) ? String(merged.voice) : DEFAULTS.voice
@@ -125,7 +200,17 @@ function normalizeSettings(raw, seed) {
   const engine = ENGINES.has(String(merged.engine)) ? String(merged.engine) : DEFAULTS.engine
   const piperPath = typeof merged.piperPath === 'string' ? merged.piperPath.trim() : ''
   const piperModel = typeof merged.piperModel === 'string' ? merged.piperModel.trim() : ''
-  return { engine, piperPath, piperModel, voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals }
+  const piperModelEn = typeof merged.piperModelEn === 'string' ? merged.piperModelEn.trim() : ''
+  const systemVoice = typeof merged.systemVoice === 'string' ? merged.systemVoice.trim() : ''
+  const customBaseUrl = normalizeBaseUrl(merged.customBaseUrl)
+  const customModel = typeof merged.customModel === 'string' ? merged.customModel.trim() : ''
+  const customVoice = typeof merged.customVoice === 'string' ? merged.customVoice.trim() : ''
+  const customFormat = CUSTOM_FORMATS.has(String(merged.customFormat)) ? String(merged.customFormat) : DEFAULTS.customFormat
+  return {
+    engine, piperPath, piperModel, piperModelEn, systemVoice,
+    customBaseUrl, customModel, customVoice, customFormat,
+    voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals,
+  }
 }
 
 // ---------------------------------------------------------------- HTTP helpers
@@ -267,14 +352,24 @@ export function voiceFingerprint(modelPath) {
     .slice(0, 12)
 }
 
-function cacheKey(settings, text) {
+function cacheKey(settings, text, modelPath) {
   const engine = settings.engine
   const voice = settings.voice
   const hash = crypto.createHash('sha256')
-  // DeepSeek keeps the bare form, so audio cached before engines existed stays valid.
-  // Local audio depends on the model file, and changed with the pause squasher.
-  if (engine === 'piper') hash.update('piper:v2').update('\u0000').update(voiceFingerprint(settings.piperModel)).update('\u0000')
-  else if (engine !== 'deepseek') hash.update(String(engine)).update('\u0000')
+  // Each engine names its own identity, so two providers can never collide;
+  // DeepSeek keeps the bare form so audio cached before engines existed stays valid.
+  if (engine === 'piper') {
+    // Local audio depends on the model file (and changed with the pause squasher).
+    hash.update('piper:v2').update('\u0000').update(voiceFingerprint(modelPath || settings.piperModel)).update('\u0000')
+  } else if (engine === 'system') {
+    hash.update('system:v1').update('\u0000').update(process.platform).update('\u0000').update(settings.systemVoice || '').update('\u0000')
+  } else if (engine === 'custom') {
+    hash.update('custom:v1').update('\u0000').update(endpointFingerprint(settings.customBaseUrl)).update('\u0000')
+    hash.update(settings.customModel || '').update('\u0000').update(settings.customVoice || '').update('\u0000').update(settings.customFormat)
+    hash.update('\u0000')
+  } else if (engine !== 'deepseek') {
+    hash.update(String(engine)).update('\u0000')
+  }
   return hash.update(voice).update('\u0000').update(text, 'utf8').digest('hex')
 }
 
@@ -567,23 +662,33 @@ function findBreak(text, limit) {
  * One synthesis request per unit. Paragraphs are the unit boundary; a paragraph
  * that is still too long is cut at sentence ends, then hard at the limit.
  */
-export function planUnits(text, limit) {
+export function planUnits(text, limit, splitScript = false) {
   const units = []
   let truncated = false
+  const pushUnit = (piece) => {
+    if (!piece) return
+    // A mixed paragraph becomes one unit per script run, so a Chinese Piper
+    // voice is never asked to read English (and vice versa).
+    if (splitScript) {
+      for (const run of splitByScript(piece)) units.push(run)
+    } else {
+      units.push(piece)
+    }
+  }
   for (const paragraph of toParagraphs(text)) {
     let rest = paragraph
     while (rest.length > limit) {
       const cut = findBreak(rest, limit)
       if (cut <= 0) {
-        units.push(rest.slice(0, limit))
+        pushUnit(rest.slice(0, limit))
         rest = rest.slice(limit).trim()
         truncated = true
         continue
       }
-      units.push(rest.slice(0, cut).trim())
+      pushUnit(rest.slice(0, cut).trim())
       rest = rest.slice(cut).trim()
     }
-    if (rest) units.push(rest)
+    pushUnit(rest)
   }
   return { units: units.filter((unit) => unit.length > 0), truncated }
 }
@@ -762,16 +867,34 @@ export function scanVoices(modelPath) {
   }
 }
 
-/** What the settings page needs to know about the local engine. */
+/** What the settings page needs to know about every engine. */
 export function engineInfo(settings) {
-  const exe = settings && typeof settings.piperPath === 'string' ? settings.piperPath : ''
-  const model = settings && typeof settings.piperModel === 'string' ? settings.piperModel : ''
+  const source = settings && typeof settings === 'object' ? settings : {}
+  const exe = typeof source.piperPath === 'string' ? source.piperPath : ''
+  const model = typeof source.piperModel === 'string' ? source.piperModel : ''
+  const modelEn = typeof source.piperModelEn === 'string' ? source.piperModelEn : ''
+  const voices = model ? scanVoices(model) : []
+  const systemList = systemSupported() ? systemVoices() : []
   return {
+    platform: process.platform,
     piper: {
       exe: exe ? fs.existsSync(exe) : false,
       model: model ? fs.existsSync(model) : false,
+      modelEn: modelEn ? fs.existsSync(modelEn) : false,
       sampleRate: model && fs.existsSync(model) ? piperSampleRate(model) : 0,
-      voices: model ? scanVoices(model) : [],
+      voices,
+    },
+    system: {
+      supported: systemSupported(),
+      voices: systemList,
+    },
+    custom: {
+      baseUrl: typeof source.customBaseUrl === 'string' ? source.customBaseUrl : '',
+      endpoint: speechEndpoint(source.customBaseUrl),
+      model: typeof source.customModel === 'string' ? source.customModel : '',
+      voice: typeof source.customVoice === 'string' ? source.customVoice : '',
+      format: source.customFormat === 'pcm' ? 'pcm' : 'wav',
+      keyConfigured: customApiKey().length > 0,
     },
   }
 }
@@ -838,7 +961,7 @@ function engineError(message, code) {
 const PIPER_FLAGS = ['--output-raw', '--output_raw']
 let piperFlagUsed = ''
 
-async function* startPiper(settings, flag, text, signal) {
+async function* startPiper(settings, flag, text, signal, model) {
   // The Python CLI decodes stdin with the locale codec; force UTF-8 so Chinese
   // text does not arrive as lone surrogates. It also looks for its g2pW resources
   // in `cwd/g2pW`, so the model folder is the working directory. HF_ENDPOINT is
@@ -849,8 +972,8 @@ async function* startPiper(settings, flag, text, signal) {
   // tokenizer; staying offline avoids a 40 s retry storm when that is missing.
   if (!env.HF_HUB_OFFLINE) env.HF_HUB_OFFLINE = '1'
   if (!env.TRANSFORMERS_OFFLINE) env.TRANSFORMERS_OFFLINE = '1'
-  const cwd = settings.piperModel ? path.dirname(settings.piperModel) : undefined
-  const child = spawn(settings.piperPath, ['--model', settings.piperModel, flag], { windowsHide: true, env, cwd })
+  const cwd = model ? path.dirname(model) : undefined
+  const child = spawn(settings.piperPath, ['--model', model, flag], { windowsHide: true, env, cwd })
   let stderr = ''
   let spawnError = null
   const exited = new Promise((resolve) => {
@@ -881,16 +1004,103 @@ async function* startPiper(settings, flag, text, signal) {
   if (code !== 0) throw engineError('piper 退出码 ' + code + (stderr.trim() ? '：' + stderr.trim().slice(0, 300) : ''), 'TTS_FAILED')
 }
 
-async function* piperChunks(settings, text, signal) {
+/**
+ * Which Piper model reads one speech unit. A Chinese voice turns English into
+ * nonsense syllables, but an English voice cannot read Chinese at all, so the
+ * split happens per unit: units without any CJK go to the English model, every
+ * other unit keeps the Chinese one.
+ */
+export function piperModelFor(settings, text) {
+  const zhModel = settings && typeof settings.piperModel === 'string' ? settings.piperModel.trim() : ''
+  const enModel = settings && typeof settings.piperModelEn === 'string' ? settings.piperModelEn.trim() : ''
+  if (!enModel) return zhModel
+  const source = String(text || '')
+  let latin = 0
+  let cjk = 0
+  for (const char of source) {
+    if (/[A-Za-z]/.test(char)) latin += 1
+    else if (/[\u3400-\u9fff]/.test(char)) cjk += 1
+  }
+  if (latin === 0 || cjk > 0) return zhModel
+  return enModel
+}
+
+/** Characters that belong to the Latin half of a mixed paragraph. */
+function isLatinChar(char) {
+  return /[A-Za-z]/.test(char)
+}
+
+/** Characters that belong to the Chinese half of a mixed paragraph. */
+function isCjkChar(char) {
+  return /[\u3400-\u9fff]/.test(char)
+}
+
+/**
+ * Split one paragraph into script runs, so a Chinese voice never has to read
+ * English and the English voice never has to read Chinese. Runs shorter than
+ * two characters (stray punctuation, a single letter) stay with their neighbour:
+ * each run costs one Piper process.
+ */
+export function splitByScript(text) {
+  const source = String(text || '')
+  if (!source) return []
+  const runs = []
+  let current = ''
+  let script = '' // 'latin' | 'cjk' | ''
+  const flush = () => {
+    if (current) runs.push(current)
+    current = ''
+    script = ''
+  }
+  for (const char of source) {
+    const next = isLatinChar(char) ? 'latin' : isCjkChar(char) ? 'cjk' : ''
+    if (!next) {
+      // Digits, spaces and punctuation belong to whatever run is open.
+      current += char
+      continue
+    }
+    if (script && script !== next) flush()
+    current += char
+    script = next
+  }
+  flush()
+
+  const classOf = (run) => {
+    for (const char of run) {
+      if (isCjkChar(char)) return 'cjk'
+      if (isLatinChar(char)) return 'latin'
+    }
+    return 'neutral'
+  }
+  // Fold fragments into a neighbour so short words do not spawn processes...
+  const folded = []
+  for (const run of runs) {
+    const letters = (run.match(/[A-Za-z\u3400-\u9fff]/g) || []).length
+    if (folded.length === 0 || letters >= 2 || classOf(run) === 'neutral') folded.push(run)
+    else folded[folded.length - 1] += run
+  }
+  // ...then merge neighbours of the same class, which folding can create ("用 a "
+  // followed by "标记" is still one Chinese run).
+  const combined = []
+  for (const run of folded) {
+    const last = combined.length - 1
+    if (last >= 0 && classOf(combined[last]) === classOf(run)) combined[last] += run
+    else combined.push(run)
+  }
+  return combined
+}
+
+async function* piperChunks(settings, text, model, signal) {
   if (!settings.piperPath) throw engineError('本地引擎未配置：请先填写 piper 程序路径', 'NO_ENGINE')
   if (!fs.existsSync(settings.piperPath)) throw engineError('找不到 piper 程序：' + settings.piperPath, 'NO_ENGINE')
-  if (!settings.piperModel) throw engineError('本地引擎未配置：请先填写模型路径', 'NO_ENGINE')
+  if (!model) throw engineError('本地引擎未配置：请先填写模型路径', 'NO_ENGINE')
+  if (!fs.existsSync(model)) throw engineError('找不到 piper 模型：' + model, 'NO_ENGINE')
   let failure = null
   const flags = piperFlagUsed ? [piperFlagUsed, ...PIPER_FLAGS.filter((flag) => flag !== piperFlagUsed)] : PIPER_FLAGS
   for (const flag of flags) {
     let produced = false
     try {
-      for await (const chunk of startPiper(settings, flag, text, signal)) {
+      for await (const chunk of startPiper(settings, flag, text, signal, model)) {
         if (chunk.length) produced = true
         yield chunk
       }
@@ -904,12 +1114,297 @@ async function* piperChunks(settings, text, signal) {
   throw failure || engineError('piper 没有输出音频', 'TTS_FAILED')
 }
 
+/** Read a RIFF/WAVE buffer into its format and PCM body; null when it is not WAV. */
+export function parseWav(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 44) return null
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') return null
+  let offset = 12
+  let format = null
+  let pcm = null
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString('ascii', offset, offset + 4)
+    const size = buffer.readUInt32LE(offset + 4)
+    const body = offset + 8
+    if (id === 'fmt ' && body + 16 <= buffer.length) {
+      format = {
+        encoding: buffer.readUInt16LE(body),
+        channels: buffer.readUInt16LE(body + 2),
+        sampleRate: buffer.readUInt32LE(body + 4),
+        bits: buffer.readUInt16LE(body + 14),
+      }
+    } else if (id === 'data') {
+      pcm = buffer.subarray(body, Math.min(body + size, buffer.length))
+    }
+    offset = body + size + (size % 2)
+  }
+  if (!format || !pcm || pcm.length === 0) return null
+  // 1 = PCM, 0xFFFE = WAVE_FORMAT_EXTENSIBLE, which SAPI and Windows voices use.
+  if (format.encoding !== 1 && format.encoding !== 0xFFFE) return null
+  if (format.bits !== 16) return null
+  return { sampleRate: format.sampleRate, channels: format.channels, bits: format.bits, pcm }
+}
+
+/** Down-mix 16-bit PCM to mono by averaging the channels. */
+export function toMono16(pcm, channels) {
+  if (!channels || channels <= 1) return pcm
+  const frames = Math.floor(pcm.length / (2 * channels))
+  const out = Buffer.alloc(frames * 2)
+  for (let frame = 0; frame < frames; frame += 1) {
+    let sum = 0
+    for (let channel = 0; channel < channels; channel += 1) {
+      sum += pcm.readInt16LE((frame * channels + channel) * 2)
+    }
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sum / channels))), frame * 2)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------- OS voices
+
+/** Run a command to completion, collecting its output; resolves, never rejects. */
+function runProcess(file, args, options = {}) {
+  return new Promise((resolve) => {
+    const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 60000
+    const signal = options.signal
+    let stdout = Buffer.alloc(0)
+    let stderr = ''
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      if (signal) signal.removeEventListener('abort', onAbort)
+      resolve(result)
+    }
+    const onAbort = () => {
+      try { child.kill() } catch {}
+      finish({ code: -1, stdout, stderr: 'aborted' })
+    }
+    let child
+    try {
+      child = spawn(file, args, { windowsHide: true, env: options.env || process.env })
+    } catch (error) {
+      finish({ code: -1, stdout: Buffer.alloc(0), stderr: String(error && error.message) })
+      return
+    }
+    const timer = setTimeout(() => { try { child.kill() } catch {} }, timeoutMs)
+    child.stdin.on('error', () => {})
+    child.stdout.on('error', () => {})
+    child.stderr.on('error', () => {})
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      finish({ code: -1, stdout, stderr: stderr || String(error && error.message) })
+    })
+    child.stdout.on('data', (chunk) => { stdout = Buffer.concat([stdout, chunk]) })
+    child.stderr.on('data', (chunk) => { if (stderr.length < 4000) stderr += chunk.toString() })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      finish({ code: code ?? 0, stdout, stderr })
+    })
+    if (signal) {
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
+    try { child.stdin.end(options.input === undefined ? '' : String(options.input), 'utf8') } catch {}
+  })
+}
+
+/** The voice list of the running OS, cached: enumerating it spawns a process. */
+let systemVoiceCache = { at: 0, voices: [] }
+
+export function systemVoices(refresh = false) {
+  if (!refresh && systemVoiceCache.voices.length > 0 && Date.now() - systemVoiceCache.at < 300000) {
+    return systemVoiceCache.voices
+  }
+  const voices = listPlatformVoices()
+  systemVoiceCache = { at: Date.now(), voices }
+  return voices
+}
+
+export function systemSupported() {
+  return process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux'
+}
+
+function listPlatformVoices() {
+  try {
+    if (process.platform === 'win32') return listWindowsVoices()
+    if (process.platform === 'darwin') return listDarwinVoices()
+    if (process.platform === 'linux') return listLinuxVoices()
+  } catch {}
+  return []
+}
+
+function listWindowsVoices() {
+  const script = [
+    'Add-Type -AssemblyName System.Speech',
+    '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    "$s.GetInstalledVoices() | ForEach-Object { $i = $_.VoiceInfo; '{0}|{1}|{2}' -f $i.Name, $i.Culture.Name, $i.Gender }",
+    '$s.Dispose()',
+  ].join('; ')
+  try {
+    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 30000, windowsHide: true })
+    return output.split(/\r?\n/).map((line) => {
+      const [name, language, gender] = line.split('|').map((part) => (part || '').trim())
+      if (!name) return null
+      return { id: name, name, language: language || '', gender: gender || '' }
+    }).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function listDarwinVoices() {
+  const output = syncCommand('say', ['-v', '?'], 20000)
+  return output.split(/\r?\n/).map((line) => {
+    const trimmed = line.split('#')[0].trim()
+    const match = /^(.*?)\s+([a-z]{2,3}[-_][A-Za-z0-9]+)$/.exec(trimmed)
+    if (!match) return null
+    const name = match[1].trim()
+    return { id: name, name, language: match[2].replace('_', '-'), gender: '' }
+  }).filter(Boolean)
+}
+
+function listLinuxVoices() {
+  const output = syncCommand('espeak-ng', ['--voices'], 20000)
+  return output.split(/\r?\n/).slice(1).map((line) => {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 4) return null
+    const language = parts[1]
+    const voiceName = parts[3]
+    return { id: language, name: voiceName + ' (' + language + ')', language, gender: parts[2] || '' }
+  }).filter(Boolean)
+}
+
+function syncCommand(file, args, timeoutMs) {
+  try {
+    return execFileSync(file, args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true })
+  } catch {
+    return ''
+  }
+}
+
+// ------------------------------------------------------------ system engine
+
+const SYSTEM_TEMP_PREFIX = 'dsh-tts-'
+
+function tempPath(suffix) {
+  return path.join(os.tmpdir(), SYSTEM_TEMP_PREFIX + process.pid + '-' + crypto.randomBytes(6).toString('hex') + suffix)
+}
+
+/** 16-bit PCM + rate from the OS voice, via a temp WAV the platform wrote. */
+async function synthesizeSystem(voice, text, signal) {
+  const wavFile = tempPath('.wav')
+  const txtFile = tempPath('.txt')
+  try {
+    let child
+    if (process.platform === 'win32') {
+      fs.writeFileSync(txtFile, text, 'utf8')
+      const script = [
+        'Add-Type -AssemblyName System.Speech',
+        '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+        "$s.SelectVoice('" + String(voice.id).replace(/'/g, "''") + "')",
+        "$s.SetOutputToWaveFile('" + wavFile.replace(/'/g, "''") + "')",
+        "$s.Speak([IO.File]::ReadAllText('" + txtFile.replace(/'/g, "''") + "', [Text.Encoding]::UTF8))",
+        '$s.Dispose()',
+      ].join('; ')
+      child = await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeoutMs: 60000, signal })
+    } else if (process.platform === 'darwin') {
+      child = await runProcess('say', ['-v', voice.id, '--file-format=WAVE', '--data-format=LEI16@22050', '-o', wavFile], { input: text, timeoutMs: 60000, signal })
+    } else {
+      child = await runProcess('espeak-ng', ['-v', voice.id, '--stdin', '-w', wavFile], { input: text, timeoutMs: 60000, signal })
+    }
+    if (signal && signal.aborted) throw engineError('已停止', 'ABORTED')
+    if (child.code !== 0) {
+      throw engineError('系统语音合成失败（退出码 ' + child.code + '）' + (child.stderr ? '：' + child.stderr.slice(0, 300) : ''), 'TTS_FAILED')
+    }
+    let buffer
+    try { buffer = fs.readFileSync(wavFile) } catch { buffer = null }
+    const wav = buffer ? parseWav(buffer) : null
+    if (!wav) throw engineError('系统语音没有返回可用的 WAV（16-bit PCM）', 'EMPTY_AUDIO')
+    return { sampleRate: wav.sampleRate, pcm: toMono16(wav.pcm, wav.channels) }
+  } finally {
+    try { fs.unlinkSync(wavFile) } catch {}
+    try { fs.unlinkSync(txtFile) } catch {}
+  }
+}
+
+async function* systemChunks(settings, text, signal) {
+  if (!systemSupported()) throw engineError('当前系统没有可用的系统语音（仅支持 Windows / macOS / Linux）', 'NO_ENGINE')
+  const voices = systemVoices()
+  if (voices.length === 0) throw engineError('没有找到系统语音：请在系统设置里安装一个语音包', 'NO_ENGINE')
+  const voice = voices.find((item) => item.id === settings.systemVoice) || voices[0]
+  const { sampleRate, pcm } = await synthesizeSystem(voice, text, signal)
+  const resampler = createResampler(sampleRate, SAMPLE_RATE)
+  const converted = resampler.push(pcm)
+  if (converted.length) yield converted
+  const tail = resampler.flush()
+  if (tail.length) yield tail
+}
+
+// ------------------------------------------------------------- custom engine
+
+async function* customChunks(settings, text, signal) {
+  const endpoint = speechEndpoint(settings.customBaseUrl)
+  if (!endpoint) throw engineError('自定义 API 未配置：请填写 Base URL（例如 https://api.openai.com/v1）', 'NO_ENGINE')
+  const key = customApiKey()
+  if (!key) throw engineError('自定义 API 缺少 Key：请在设置里填写并保存', 'NO_KEY')
+  const format = settings.customFormat === 'pcm' ? 'pcm' : 'wav'
+  let response
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: settings.customModel || 'tts-1',
+        input: text,
+        voice: settings.customVoice || 'alloy',
+        response_format: format,
+      }),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
+    })
+  } catch (error) {
+    if (signal && signal.aborted) throw engineError('已停止', 'ABORTED')
+    throw engineError('自定义 API 请求失败：' + (error && error.message ? error.message : String(error)), 'TTS_FAILED')
+  }
+  if (!response.ok) {
+    let detail = ''
+    try { detail = await response.text() } catch {}
+    let message = detail.slice(0, 300)
+    try {
+      const parsed = JSON.parse(detail)
+      message = (parsed && parsed.error && parsed.error.message) || parsed.message || message
+    } catch {}
+    throw engineError('自定义 API 返回 HTTP ' + response.status + (message ? '：' + message : ''), 'TTS_FAILED')
+  }
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (buffer.length === 0) throw engineError('自定义 API 没有返回音频', 'EMPTY_AUDIO')
+  const wav = parseWav(buffer)
+  if (wav) {
+    const pcm = toMono16(wav.pcm, wav.channels)
+    const resampler = createResampler(wav.sampleRate, SAMPLE_RATE)
+    const converted = resampler.push(pcm)
+    if (converted.length) yield converted
+    const tail = resampler.flush()
+    if (tail.length) yield tail
+    return
+  }
+  // mp3/opus and friends cannot be decoded here; say so instead of playing noise.
+  if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
+    throw engineError('自定义 API 返回的是 MP3，请把 response_format 设为 wav 或 pcm', 'UNSUPPORTED_AUDIO')
+  }
+  if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) {
+    throw engineError('自定义 API 返回的是 MP3/ADTS 音频，请把 response_format 设为 wav 或 pcm', 'UNSUPPORTED_AUDIO')
+  }
+  // Raw PCM: OpenAI's `pcm` format is mono 24 kHz 16-bit little-endian already.
+  yield buffer
+}
+
 /** 24 kHz mono PCM for one paragraph, from whichever engine is configured. */
 export async function* engineChunks(scope, settings, text, signal) {
   if (settings.engine === 'piper') {
-    const resampler = createResampler(piperSampleRate(settings.piperModel), SAMPLE_RATE)
+    const model = piperModelFor(settings, text)
+    const resampler = createResampler(piperSampleRate(model), SAMPLE_RATE)
     const squasher = createSilenceSquasher()
-    for await (const chunk of piperChunks(settings, text, signal)) {
+    for await (const chunk of piperChunks(settings, text, model, signal)) {
       const pcm = squasher.push(resampler.push(chunk))
       if (pcm.length) yield pcm
     }
@@ -917,6 +1412,14 @@ export async function* engineChunks(scope, settings, text, signal) {
     if (tail.length) yield tail
     const end = squasher.flush()
     if (end.length) yield end
+    return
+  }
+  if (settings.engine === 'system') {
+    for await (const chunk of systemChunks(settings, text, signal)) yield chunk
+    return
+  }
+  if (settings.engine === 'custom') {
+    for await (const chunk of customChunks(settings, text, signal)) yield chunk
     return
   }
   const upstream = await openTtsStream(scope, text, settings.voice, signal)
@@ -1134,7 +1637,21 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         if (!body || typeof body !== 'object') return writeJson(response, 400, { ok: false, code: 'BAD_BODY', error: '请求体不是 JSON' })
         const current = readSettings()
-        const next = normalizeSettings({ ...current, ...pick(body, ['engine', 'piperPath', 'piperModel', 'voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals']) }, null)
+        // The custom endpoint's key is not a setting: it is written to
+        // secrets.json and never read back out through this API.
+        if (typeof body.customApiKey === 'string') {
+          const secrets = { ...readSecrets() }
+          const nextKey = body.customApiKey.trim()
+          if (nextKey) secrets.customApiKey = nextKey
+          else delete secrets.customApiKey
+          writeSecrets(secrets)
+        }
+        const editable = [
+          'engine', 'piperPath', 'piperModel', 'piperModelEn', 'systemVoice',
+          'customBaseUrl', 'customModel', 'customVoice', 'customFormat',
+          'voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals',
+        ]
+        const next = normalizeSettings({ ...current, ...pick(body, editable) }, null)
         if (body.clearCache === true) clearCache()
         if (!writeSettings(next)) return writeJson(response, 500, { ok: false, code: 'WRITE_FAILED', error: '写入设置失败' })
         pruneCache(next.cacheMaxMb * 1024 * 1024)
@@ -1255,7 +1772,10 @@ export function apply(ctx, config) {
 
         // One synthesis request (and one cache file) per paragraph, so reading a
         // single paragraph later reuses the file the whole message already made.
-        const whole = messageText ? planUnits(messageText, current.maxChars) : { units: [], truncated: false }
+        // With a second Piper model configured, paragraphs that mix Chinese and
+        // English are cut into script runs first.
+        const splitScript = current.engine === 'piper' && !!current.piperModelEn
+        const whole = messageText ? planUnits(messageText, current.maxChars, splitScript) : { units: [], truncated: false }
         let unitTexts = whole.units
         let truncated = whole.truncated
         if (explicitText) {
@@ -1266,7 +1786,7 @@ export function apply(ctx, config) {
           } else {
             // Not part of the message text (a code block, say): synthesize the
             // selection itself, which is the old behaviour.
-            const own = planUnits(explicitText, current.maxChars)
+            const own = planUnits(explicitText, current.maxChars, splitScript)
             unitTexts = own.units
             truncated = own.truncated
           }
@@ -1274,7 +1794,7 @@ export function apply(ctx, config) {
         const units = unitTexts.map((unit) => {
           // Markers are fixed strings: pin their audio so eviction never costs
           // the user a re-synthesis of "here is a table".
-          const file = cacheFile(cacheKey(current, unit), BLOCK_MARKER_TEXTS.has(unit))
+          const file = cacheFile(cacheKey(current, unit, piperModelFor(current, unit)), BLOCK_MARKER_TEXTS.has(unit))
           return { unit, file, cached: hasCachedWav(file) }
         })
         if (units.length === 0) {

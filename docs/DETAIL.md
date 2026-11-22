@@ -14,6 +14,10 @@
 - 打开「中途输出也朗读」后，`final:false` 的消息依次播放；此时来了提问/审批，请求语音按**到达顺序**排队（严格 FIFO，中途输出先于请求），卡片按钮显示「等待上条朗读完成」，点击即切断当前音频并立刻朗读请求。
 - 审批/提问被确认或撤回后（`approval/decided`、`tools/result`，或 `/pending` 变空），该条语音立即停止并出队，不会继续念完。
 - 引擎：`engine` 为 `deepseek` 时走云端流式接口；为 `piper` 时 spawn 用户自备的 `piper.exe`（`--model <模型> --output-raw`，老版本用 `--output_raw`，两个都试、成功哪个记哪个），把 stdin 喂进文本、stdout 收裸 PCM；模型采样率从 `<模型>.json` 读取并流式重采样到 24 kHz。缓存键在非 deepseek 引擎前加引擎前缀，云端与本地互不串。
+- 系统语音（`engine: 'system'`）：Windows 用 `powershell -NoProfile -Command` 调 `System.Speech`（SAPI，`GetInstalledVoices` 列语音，合成写临时 WAV 后读回）；macOS 用 `say --file-format=WAVE --data-format=LEI16@22050`；Linux 用 `espeak-ng --stdin -w`。输出统一经 `parseWav` 解析（只接受 16-bit PCM）、多声道下混单声道、重采样到 24 kHz。语音清单按平台缓存 5 分钟（枚举要起进程）。
+- 自定义 API（`engine: 'custom'`）：`POST {BaseURL}/v1/audio/speech`，`{model, input, voice, response_format}`，`Authorization: Bearer <key>`；`response_format` 支持 `wav` 与 `pcm`（后者按 24 kHz 裸流直接透传），MP3/ADTS 会明确报错。Key 存 `secrets.json`（0600），`/config` 只回 `keyConfigured`。
+- Piper 双模型：配置 `piperModelEn` 后切段时按文字种类拆成若干 unit（`splitByScript`，短于 2 个字母/汉字的片段并入相邻段），纯英文 unit 走英文模型，其余走中文模型；缓存键用该 unit 实际使用的模型指纹。
+- 每个引擎的缓存键都带自己的身份：`piper:v2+模型指纹`、`system:v1+平台+语音`、`custom:v1+端点哈希+模型+音色+格式`；DeepSeek 保持裸键以兼容旧缓存。
 - 先选中文字再点喇叭：页面把选区连同 `sessionId`/`messageId` 一起发给 Host，Host 读正文、按同一套规则切段，再用选区首尾定位它覆盖的连续段，只合成这些整段——所以选区在段内任意位置都能命中整段文件。选区不在正文里（代码块、表格外的东西）时退回按选区原文合成。
 - Agent 提问（`ask_user_question`）走 `tools/execute` 旁听：Host 抽出问题与选项，经 SSE 推给页面；开启时自动念。
 - 审批请求（`approval/asked`）同样旁听：念「需要授权：<工具>，原因…」。
@@ -25,7 +29,7 @@
 浏览器 ──POST /api/dsh-tts/read {sessionId, messageId | text}──▶ Host
                                                         │ 1. 取正文 → markdown 转纯文本
                                                         │ 2. 按空行切段；单段超限再按句切
-                                                        │ 3. 每段 sha256(voice+段落) 查磁盘缓存
+                                                        │ 3. 每段 sha256(引擎身份+段落) 查磁盘缓存
                                                         │ 4. 命中 → 读文件；未命中 → 调上游并 tee 落盘
                                                         │    下一段在当前段播放时预取
 浏览器 ◀──── 裸 PCM：段 + 240ms 静音 + 段 …（x-tts-units / x-tts-cache）┘
