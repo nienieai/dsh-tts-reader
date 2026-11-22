@@ -104,11 +104,26 @@
   <div id="doc" class="doc"></div>
 </main>
 
-<script>window.__BRIDGE__ = __BRIDGE_DATA__;</script>
+<script>/* The Host replaces __BRIDGE_DATA__; opened straight from disk there is none. */
+window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA__;</script>
 <script>
 (function () {
   'use strict';
   var data = window.__BRIDGE__ || {};
+  // ?demo=1 fills the page with a sample so it can be tried without DSH. The
+  // hash works too, because some browsers drop the query on file:// URLs.
+  var demo = /[?&]demo=1/.test(window.location.search || '') || /demo/.test(window.location.hash || '');
+  if (demo && !(Array.isArray(data.units) && data.units.length)) {
+    data = {
+      title: '朗读桥 · 自测文本',
+      speed: 1,
+      units: [
+        { text: '这是朗读桥的自测文本。段落高亮是淡蓝色，读到哪个词，那个词会变成黄色。' },
+        { text: '缓存 缓存 缓存：同一个词在一段里出现多次时，只高亮正在读的那一处，不会来回跳。' },
+        { text: '如果这里提示没有可用音色，说明系统没装语音合成后端（Linux 上是 speech-dispatcher）。' },
+      ],
+    };
+  }
   var units = Array.isArray(data.units) ? data.units.map(function (u, i) {
     return { index: i, text: String((u && u.text) || '') };
   }) : [];
