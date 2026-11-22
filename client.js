@@ -1244,15 +1244,51 @@ window.__ModuleLoader__.load({
         .trim()
     }
 
+    /** Leaf block tags: one rendered paragraph, list item, heading or cell. */
+    const BLOCK_TAGS = new Set(['P', 'LI', 'TD', 'TH', 'DT', 'DD', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'FIGCAPTION'])
+
+    /**
+     * Which leaf block every text node belongs to. A unit of speech starts at a
+     * block start, so this is what tells a real paragraph match from the same
+     * words happening to appear inside another paragraph.
+     */
+    function blockMapOf(root) {
+      const owners = new Map()
+      const hasBlock = new Map()
+      const tagOf = (el) => String((el && el.tagName) || '').toUpperCase()
+      const scan = (el) => {
+        let found = false
+        for (const child of el.children || []) {
+          if (BLOCK_TAGS.has(tagOf(child)) || scan(child)) found = true
+        }
+        hasBlock.set(el, found)
+        return found
+      }
+      scan(root)
+      const assign = (el, owner) => {
+        const own = BLOCK_TAGS.has(tagOf(el)) && !hasBlock.get(el) ? el : owner
+        for (const child of el.childNodes || []) {
+          if (child.nodeType === 3) owners.set(child, own)
+          else if (child.nodeType === 1) assign(child, own)
+        }
+      }
+      assign(root, null)
+      return owners
+    }
+
     /**
      * The message's visible text, collapsed the way the Host collapses it, plus
-     * where every kept character lives in the DOM.
+     * where every kept character lives in the DOM and where each block starts.
      */
     function buildMessageIndex(root) {
       const chars = []
       const nodes = []
       const offsets = []
+      const blockStarts = new Set()
+      const owners = blockMapOf(root)
       let pendingSpace = false
+      let currentOwner = null
+      let first = true
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
           const parent = node.parentElement
@@ -1263,6 +1299,7 @@ window.__ModuleLoader__.load({
         },
       })
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const owner = owners.get(node) || node.parentElement || null
         const value = node.nodeValue || ''
         for (let index = 0; index < value.length; index += 1) {
           const ch = value[index]
@@ -1276,28 +1313,50 @@ window.__ModuleLoader__.load({
             offsets.push(index)
           }
           pendingSpace = false
+          if (owner !== currentOwner) {
+            currentOwner = owner
+            // The leading space belongs to the block break, not to the block:
+            // record the offset of the block's first real character.
+            if (!first) blockStarts.add(chars.length)
+            first = false
+          }
           chars.push(ch)
           nodes.push(node)
           offsets.push(index)
         }
       }
-      return { text: chars.join(''), nodes, offsets }
+      return { text: chars.join(''), nodes, offsets, blockStarts }
     }
 
     /** Where each unit's text sits inside that index; null when it cannot be found. */
     function locateUnits(index, units) {
       const spans = []
-      let cursor = 0
       const text = index.text
+      const starts = index.blockStarts
+      // A unit begins a rendered block, or continues the one before it when a
+      // long paragraph was cut in two. Anything else is a false positive: the
+      // same words can appear inside another paragraph ("这里是代码块" is also a
+      // phrase a reply may quote), and accepting it would push the cursor past
+      // every paragraph in between.
+      let cursor = 0
+      const find = (needle, from, continuation) => {
+        let at = text.indexOf(needle, from)
+        while (at !== -1) {
+          if (!starts || starts.size === 0 || starts.has(at) || at === continuation) return at
+          at = text.indexOf(needle, at + 1)
+        }
+        return -1
+      }
       for (const unit of units) {
         const exact = normalizeProbe(unit && unit.text)
-        let at = exact ? text.indexOf(exact, cursor) : -1
+        const continuation = cursor
+        let at = exact ? find(exact, cursor, continuation) : -1
         let size = exact.length
         if (at === -1 && exact.length > 40) {
           // Markdown may rewrite the middle of a paragraph (code fences, table
           // cells), so anchor on the head and grow while the text still matches.
           size = 40
-          at = text.indexOf(exact.slice(0, size), cursor)
+          at = find(exact.slice(0, size), cursor, continuation)
           if (at !== -1) {
             while (size < exact.length && text[at + size] === exact[size]) size += 1
           }
@@ -1330,11 +1389,16 @@ window.__ModuleLoader__.load({
       const probes = [normalizeProbe(last && last.text).slice(0, 24), normalizeProbe(first && first.text).slice(0, 24)]
         .filter((probe) => probe.length >= 4)
       if (probes.length === 0) return null
+      // A message that ends with a code block or a table ends with a placeholder
+      // ("这里是代码块") that no rendered text contains, so the last probe alone
+      // would never match: fall back to "holds most of the reply's text".
+      const total = units.reduce((sum, unit) => sum + normalizeProbe(unit && unit.text).length, 0)
       let node = button
       for (let depth = 0; node && depth < 16; depth += 1, node = node.parentElement) {
         if (node === document.body || node === document.documentElement) break
         const text = normalizeProbe(node.textContent)
         if (probes.every((probe) => text.indexOf(probe) !== -1)) return node
+        if (total > 0 && text.length >= total * 0.6 && probes.some((probe) => text.indexOf(probe) !== -1)) return node
       }
       return null
     }
