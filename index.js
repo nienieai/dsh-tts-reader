@@ -889,9 +889,34 @@ export function stripMarkdown(markdown) {
   return text
 }
 
+/**
+ * Blank lines separate markdown blocks, but a list or heading block holds
+ * several visual blocks on consecutive lines. Each of those is its own block on
+ * screen, so each becomes its own speech unit: the reading position then maps to
+ * exactly one rendered paragraph instead of a whole bullet list.
+ */
+export function separateBlocks(markdown) {
+  const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n')
+  const out = []
+  let fence = ''
+  for (const line of lines) {
+    const fenceMatch = /^[ \t]*(```|~~~)/.exec(line)
+    if (fenceMatch) {
+      fence = fence ? '' : fenceMatch[1]
+      out.push(line)
+      continue
+    }
+    // A table row is not a block of its own: the whole table is one marker.
+    const startsBlock = !fence && /^[ \t]*(?:[-*+][ \t]+|\d{1,3}[.)][ \t]+|#{1,6}[ \t]|>)/.test(line)
+    if (startsBlock && out.length > 0 && out[out.length - 1].trim() !== '') out.push('')
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
 /** Split text into speakable paragraphs; blank lines are the paragraph breaks. */
 export function toParagraphs(text) {
-  return stripMarkdown(text)
+  return stripMarkdown(separateBlocks(text))
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
     .filter((paragraph) => paragraph.length > 0)

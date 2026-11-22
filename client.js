@@ -73,6 +73,9 @@ window.__ModuleLoader__.load({
     // Messages that have been read at least once: the speaker button uses this
     // only to know it can offer "play again (cached)".
     const playedMessages = new Set()
+    // The rendered read button per message: the only handle on the message DOM,
+    // and auto-read has no click to carry one, so it is kept for later lookups.
+    const actionAnchors = new Map()
     let current = null // { key, controller, context }
     let playback = { key: null, phase: 'idle', error: '', queued: null }
     const listeners = new Set()
@@ -806,6 +809,7 @@ window.__ModuleLoader__.load({
         if (session.timer) clearTimeout(session.timer)
         if (session.watchdog) clearTimeout(session.watchdog)
         try { const synth = speechSynth(); if (synth) synth.cancel() } catch {}
+        highlightStop()
         current = null
         updatePlayerWindow()
         return
@@ -817,6 +821,7 @@ window.__ModuleLoader__.load({
         try { session.controller.abort() } catch {}
         playerStopSources(session)
         try { session.context.close() } catch {}
+        highlightStop()
       }
       current = null
       updatePlayerWindow()
@@ -885,7 +890,7 @@ window.__ModuleLoader__.load({
         // paragraph from the last word boundary to make the change audible now.
         session.speed = next
         playerView({ speed: next })
-        if (!session.desiredPaused) speakSpeechUnit(session, session.unit, session.boundary || 0)
+        if (!session.desiredPaused) speakSpeechQueue(session, session.unit, session.skip || 0)
       } else if (session) {
         playerRerender(session, next)
         playerView({ speed: next })
@@ -954,7 +959,7 @@ window.__ModuleLoader__.load({
       if (!session) return
       const target = session.unit + delta
       if (target < 0 || target >= session.units.length) return
-      if (session.kind === 'speech') speakSpeechUnit(session, target, 0)
+      if (session.kind === 'speech') speakSpeechQueue(session, target, 0)
       else void playerPlayUnit(session, target)
     }
 
@@ -1100,6 +1105,7 @@ window.__ModuleLoader__.load({
       if (session.desiredPaused) {
         try { void session.context.suspend().catch(() => {}) } catch {}
       }
+      highlightParagraph(session, target)
 
       try {
         if (prefetched) {
@@ -1189,7 +1195,365 @@ window.__ModuleLoader__.load({
       if (session.watchdog) { clearTimeout(session.watchdog); session.watchdog = 0 }
     }
 
-    function speakSpeechUnit(session, index, fromChar) {
+    // ------------------------------------------------------ reading highlight
+    // Two layers painted over the message itself: the paragraph being read and
+    // the word inside it. The CSS Custom Highlight API paints live Ranges, so
+    // nothing is inserted into a React-rendered message where the next render
+    // would wipe it.
+    const HIGHLIGHT_STYLE_ID = 'dsh-tts-reader-highlight-style'
+    const PARA_HIGHLIGHT = 'dsh-tts-para'
+    const WORD_HIGHLIGHT = 'dsh-tts-word'
+    const PARA_FALLBACK_CLASS = 'dsh-tts-reading'
+    let highlightState = null
+    let lastUserScroll = 0
+    let scrollWatchInstalled = false
+
+    function installScrollWatch() {
+      if (scrollWatchInstalled || typeof window === 'undefined') return
+      scrollWatchInstalled = true
+      // Only a real gesture counts: our own scrollIntoView must not look like
+      // the reader taking the scroll position over.
+      const mark = () => { lastUserScroll = performance.now() }
+      for (const name of ['wheel', 'touchmove', 'keydown', 'pointerdown']) {
+        try { window.addEventListener(name, mark, { passive: true }) } catch {}
+      }
+    }
+
+    function ensureHighlightStyle() {
+      if (typeof document === 'undefined' || !document.head) return false
+      if (!document.getElementById(HIGHLIGHT_STYLE_ID)) {
+        const style = document.createElement('style')
+        style.id = HIGHLIGHT_STYLE_ID
+        style.textContent = [
+          '::highlight(' + PARA_HIGHLIGHT + '){background-color:rgba(88,140,255,.15)}',
+          // Yellow, the way a highlighter pen works: the word has to stand out
+          // from the blue paragraph wash, on both light and dark surfaces.
+          '::highlight(' + WORD_HIGHLIGHT + '){background-color:#f5c542;color:#241a00}',
+          '.' + PARA_FALLBACK_CLASS + '{background-color:rgba(88,140,255,.15);border-radius:4px}',
+        ].join('')
+        document.head.appendChild(style)
+      }
+      installScrollWatch()
+      return true
+    }
+
+    /** The Host's whitespace collapsing (index.js normalizeForMatch), client copy. */
+    function normalizeProbe(value) {
+      return String(value || '')
+        .replace(/[\u2022\u25e6\u25cf\u00b7]\s*/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    /** Leaf block tags: one rendered paragraph, list item, heading or cell. */
+    const BLOCK_TAGS = new Set(['P', 'LI', 'TD', 'TH', 'DT', 'DD', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'FIGCAPTION'])
+
+    /**
+     * Which leaf block every text node belongs to. A unit of speech starts at a
+     * block start, so this is what tells a real paragraph match from the same
+     * words happening to appear inside another paragraph.
+     */
+    function blockMapOf(root) {
+      const owners = new Map()
+      const hasBlock = new Map()
+      const tagOf = (el) => String((el && el.tagName) || '').toUpperCase()
+      const scan = (el) => {
+        let found = false
+        for (const child of el.children || []) {
+          if (BLOCK_TAGS.has(tagOf(child)) || scan(child)) found = true
+        }
+        hasBlock.set(el, found)
+        return found
+      }
+      scan(root)
+      const assign = (el, owner) => {
+        const own = BLOCK_TAGS.has(tagOf(el)) && !hasBlock.get(el) ? el : owner
+        for (const child of el.childNodes || []) {
+          if (child.nodeType === 3) owners.set(child, own)
+          else if (child.nodeType === 1) assign(child, own)
+        }
+      }
+      assign(root, null)
+      return owners
+    }
+
+    /**
+     * The message's visible text, collapsed the way the Host collapses it, plus
+     * where every kept character lives in the DOM and where each block starts.
+     */
+    function buildMessageIndex(root) {
+      const chars = []
+      const nodes = []
+      const offsets = []
+      const blockStarts = new Set()
+      const owners = blockMapOf(root)
+      let pendingSpace = false
+      let currentOwner = null
+      let first = true
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const parent = node.parentElement
+          if (!parent) return NodeFilter.FILTER_REJECT
+          const tag = String(parent.tagName || '').toUpperCase()
+          if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'SVG') return NodeFilter.FILTER_REJECT
+          return NodeFilter.FILTER_ACCEPT
+        },
+      })
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const owner = owners.get(node) || node.parentElement || null
+        const value = node.nodeValue || ''
+        for (let index = 0; index < value.length; index += 1) {
+          const ch = value[index]
+          if (ch === '\u2022' || ch === '\u25e6' || ch === '\u25cf' || ch === '\u00b7' || /\s/.test(ch)) {
+            pendingSpace = true
+            continue
+          }
+          if (pendingSpace && chars.length > 0) {
+            chars.push(' ')
+            nodes.push(node)
+            offsets.push(index)
+          }
+          pendingSpace = false
+          if (owner !== currentOwner) {
+            currentOwner = owner
+            // The leading space belongs to the block break, not to the block:
+            // record the offset of the block's first real character.
+            if (!first) blockStarts.add(chars.length)
+            first = false
+          }
+          chars.push(ch)
+          nodes.push(node)
+          offsets.push(index)
+        }
+      }
+      return { text: chars.join(''), nodes, offsets, blockStarts }
+    }
+
+    /** Where each unit's text sits inside that index; null when it cannot be found. */
+    function locateUnits(index, units) {
+      const spans = []
+      const text = index.text
+      const starts = index.blockStarts
+      // A unit begins a rendered block, or continues the one before it when a
+      // long paragraph was cut in two. Anything else is a false positive: the
+      // same words can appear inside another paragraph ("这里是代码块" is also a
+      // phrase a reply may quote), and accepting it would push the cursor past
+      // every paragraph in between.
+      let cursor = 0
+      const find = (needle, from, continuation) => {
+        let at = text.indexOf(needle, from)
+        while (at !== -1) {
+          if (!starts || starts.size === 0 || starts.has(at) || at === continuation) return at
+          at = text.indexOf(needle, at + 1)
+        }
+        return -1
+      }
+      for (const unit of units) {
+        const exact = normalizeProbe(unit && unit.text)
+        const continuation = cursor
+        let at = exact ? find(exact, cursor, continuation) : -1
+        let size = exact.length
+        if (at === -1 && exact.length > 40) {
+          // Markdown may rewrite the middle of a paragraph (code fences, table
+          // cells), so anchor on the head and grow while the text still matches.
+          size = 40
+          at = find(exact.slice(0, size), cursor, continuation)
+          if (at !== -1) {
+            while (size < exact.length && text[at + size] === exact[size]) size += 1
+          }
+        }
+        if (at === -1) { spans.push(null); continue }
+        cursor = at + size
+        spans.push({ start: at, end: at + size })
+      }
+      return spans
+    }
+
+    function domRangeOf(index, span) {
+      if (!span || span.end <= span.start) return null
+      const first = index.nodes[span.start]
+      const last = index.nodes[span.end - 1]
+      if (!first || !last) return null
+      try {
+        const range = document.createRange()
+        range.setStart(first, index.offsets[span.start])
+        range.setEnd(last, index.offsets[span.end - 1] + 1)
+        return range
+      } catch { return null }
+    }
+
+    /** The smallest ancestor that holds the reply, not just the action row. */
+    function messageRootOf(button, units) {
+      if (!button || typeof document === 'undefined') return null
+      const last = units[units.length - 1]
+      const first = units[0]
+      const probes = [normalizeProbe(last && last.text).slice(0, 24), normalizeProbe(first && first.text).slice(0, 24)]
+        .filter((probe) => probe.length >= 4)
+      if (probes.length === 0) return null
+      // A message that ends with a code block or a table ends with a placeholder
+      // ("这里是代码块") that no rendered text contains, so the last probe alone
+      // would never match: fall back to "holds most of the reply's text".
+      const total = units.reduce((sum, unit) => sum + normalizeProbe(unit && unit.text).length, 0)
+      let node = button
+      for (let depth = 0; node && depth < 16; depth += 1, node = node.parentElement) {
+        if (node === document.body || node === document.documentElement) break
+        const text = normalizeProbe(node.textContent)
+        if (probes.every((probe) => text.indexOf(probe) !== -1)) return node
+        if (total > 0 && text.length >= total * 0.6 && probes.some((probe) => text.indexOf(probe) !== -1)) return node
+      }
+      return null
+    }
+
+    function highlightDetach() {
+      const state = highlightState
+      highlightState = null
+      try {
+        if (window.CSS && window.CSS.highlights) {
+          window.CSS.highlights.delete(PARA_HIGHLIGHT)
+          window.CSS.highlights.delete(WORD_HIGHLIGHT)
+        }
+      } catch {}
+      if (state && state.marker) { try { state.marker.classList.remove(PARA_FALLBACK_CLASS) } catch {} }
+    }
+
+    function highlightStop() {
+      highlightDetach()
+    }
+
+    function highlightAttach(session, anchor, units) {
+      highlightDetach()
+      if (!anchor || typeof document === 'undefined' || !units || units.length === 0) return
+      if (!ensureHighlightStyle()) return
+      const root = messageRootOf(anchor, units)
+      if (!root) return
+      const index = buildMessageIndex(root)
+      if (!index.text) return
+      const spans = locateUnits(index, units)
+      if (spans.every((span) => !span)) return
+      const supported = !!(window.CSS && window.CSS.highlights && typeof window.Highlight === 'function')
+      highlightState = {
+        session, index, spans,
+        domRanges: spans.map((span) => domRangeOf(index, span)),
+        raw: units.map((unit) => String((unit && unit.text) || '')),
+        supported, marker: null, paintedUnit: -1,
+      }
+    }
+
+    function followParagraph(state, unit) {
+      const range = state.domRanges && state.domRanges[unit]
+      if (!range) return
+      if (typeof performance !== 'undefined' && performance.now() - lastUserScroll < 3000) return
+      const node = range.startContainer && range.startContainer.parentElement
+      if (!node || typeof node.getBoundingClientRect !== 'function') return
+      const rect = node.getBoundingClientRect()
+      const height = window.innerHeight || 0
+      if (rect.top >= 0 && rect.bottom <= height) return
+      try { node.scrollIntoView({ block: 'center', behavior: 'smooth' }) } catch {
+        try { node.scrollIntoView() } catch {}
+      }
+    }
+
+    function highlightParagraph(session, unit) {
+      const state = highlightState
+      if (!state || state.session !== session) return
+      if (state.paintedUnit === unit) return
+      state.paintedUnit = unit
+      // The word layer belongs to the paragraph that just ended.
+      clearWordHighlight()
+      if (state.supported) {
+        const range = state.domRanges[unit]
+        try {
+          if (range) window.CSS.highlights.set(PARA_HIGHLIGHT, new window.Highlight(range))
+          else window.CSS.highlights.delete(PARA_HIGHLIGHT)
+        } catch {}
+      } else {
+        // No Highlight API: a class on the block element that starts the paragraph.
+        const span = state.spans[unit]
+        const node = span ? state.index.nodes[span.start] : null
+        const parent = node && node.parentElement
+        const block = parent ? parent.closest('p,li,td,th,pre,blockquote,h1,h2,h3,h4,h5,h6,div') : null
+        if (state.marker && state.marker !== block) { try { state.marker.classList.remove(PARA_FALLBACK_CLASS) } catch {} }
+        state.marker = block || null
+        if (block) { try { block.classList.add(PARA_FALLBACK_CLASS) } catch {} }
+      }
+      followParagraph(state, unit)
+    }
+
+    function paintWord(state, unit, at, size) {
+      const span = state.spans[unit]
+      if (!span) return
+      const start = Math.max(span.start, Math.min(at, span.end - 1))
+      const end = Math.max(start + 1, Math.min(span.end, start + Math.max(1, size || 1)))
+      const range = domRangeOf(state.index, { start, end })
+      try {
+        if (range) window.CSS.highlights.set(WORD_HIGHLIGHT, new window.Highlight(range))
+        else window.CSS.highlights.delete(WORD_HIGHLIGHT)
+      } catch {}
+    }
+
+    /**
+     * The word inside the current paragraph, fed by a boundary event. Only a
+     * voice that reports word boundaries ever calls this: without them the
+     * paragraph layer is the whole story, and a guessed word position would be
+     * a lie rather than a reading aid.
+     */
+    function highlightWord(session, unit, inUnit, length) {
+      const state = highlightState
+      if (!state || state.session !== session || !state.supported) return
+      const raw = state.raw[unit] || ''
+      const span = state.spans[unit]
+      if (!raw || !span) return
+      const from = Math.max(0, Math.min(Number(inUnit) || 0, raw.length - 1))
+      const width = Math.max(1, Math.min(24, Number(length) || 8))
+      const needle = normalizeProbe(raw.slice(from, from + width))
+      if (!needle) return
+      // The same word can appear several times in one paragraph. Picking the
+      // first copy makes the mark jump back to it on every repeat, so the copy
+      // nearest the engine's own character offset wins; on a tie the later one
+      // does, because the reading only moves forward.
+      const target = span.start + Math.max(0, Math.min(span.end - span.start - 1, from))
+      let at = -1
+      let gap = Infinity
+      let found = state.index.text.indexOf(needle, span.start)
+      while (found !== -1 && found + needle.length <= span.end) {
+        const distance = Math.abs(found - target)
+        if (distance < gap || (distance === gap && found > at)) {
+          at = found
+          gap = distance
+        }
+        found = state.index.text.indexOf(needle, found + 1)
+      }
+      if (at === -1) at = Math.min(target, span.end - 1)
+      paintWord(state, unit, at, needle.length)
+    }
+
+    /** Drop the word layer when the paragraph changes or the read stops. */
+    function clearWordHighlight() {
+      try {
+        if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete(WORD_HIGHLIGHT)
+      } catch {}
+    }
+
+    /** Short "which voice · which signals" label for the floating window. */
+    function speechLabel(session) {
+      const name = String(session.voiceName || '')
+      const short = name
+        .replace(/^Microsoft\s+/i, '')
+        .replace(/\s+Online$/i, ' ' + t('在线', 'online'))
+        .replace(/\s+Desktop$/i, '')
+      const bits = []
+      if (short) bits.push((session.voiceCloud ? '☁ ' : '⌂ ') + short)
+      if (session.boundarySeen) bits.push(t('逐词', 'words'))
+      return bits.join(' · ')
+    }
+
+    /**
+     * Queue one utterance per paragraph in a single call: the engine plays them
+     * back to back, so nothing waits on us between paragraphs, and each
+     * `onstart` says exactly which paragraph is being read — no word timings
+     * needed (network voices never send them).
+     */
+    function speakSpeechQueue(session, startUnit, startSkip) {
       if (player !== session) return
       const synth = speechSynth()
       if (!synth) {
@@ -1197,68 +1561,35 @@ window.__ModuleLoader__.load({
         return
       }
       if (session.units.length === 0) return
-      const target = Math.max(0, Math.min(index, session.units.length - 1))
-      const unit = session.units[target] || {}
-      const text = String(unit.text || '')
-      const base = Math.max(0, Math.min(fromChar || 0, Math.max(0, text.length - 1)))
-      session.unit = target
-      session.boundary = base
+      const from = Math.max(0, Math.min(Number(startUnit) || 0, session.units.length - 1))
+      const firstText = String((session.units[from] && session.units[from].text) || '')
+      const skip = Math.max(0, Math.min(Number(startSkip) || 0, Math.max(0, firstText.length - 1)))
       session.gen += 1
       const gen = session.gen
       speechTimersOff(session)
       try { synth.cancel() } catch {}
       session.phase = session.desiredPaused ? 'paused' : 'loading'
-      playerView({ unit: target, phase: session.phase, speed: session.speed, preview: previewOf(unit) })
+      session.unit = from
+      session.skip = skip
+      session.boundary = skip
+      playerView({ unit: from, phase: session.phase, speed: session.speed, preview: previewOf(session.units[from]) })
       setPlayback({ key: session.key, phase: session.phase })
-      if (session.desiredPaused) {
-        try { synth.pause() } catch {}
-      }
+      highlightParagraph(session, from)
 
-      const utter = new window.SpeechSynthesisUtterance(text.slice(base))
       const voice = pickSpeechVoice()
-      if (voice) { utter.voice = voice; utter.lang = voice.lang }
-      utter.rate = Math.min(2, Math.max(0.5, Number(session.speed) || 1))
-      utter.pitch = 1
-      utter.volume = 1
+      session.voiceName = voice ? String(voice.name || '') : ''
+      session.voiceCloud = isCloudVoice(voice)
+      session.boundarySeen = false
       let started = false
+      const items = []
+      for (let index = from; index < session.units.length; index += 1) {
+        const text = String((session.units[index] && session.units[index].text) || '')
+        const begin = index === from ? skip : 0
+        const rest = text.slice(begin)
+        if (!rest) continue
+        items.push({ index, begin, rest })
+      }
 
-      utter.onstart = () => {
-        if (player !== session || session.gen !== gen) return
-        started = true
-        if (session.watchdog) { clearTimeout(session.watchdog); session.watchdog = 0 }
-        if (session.desiredPaused) return
-        session.phase = 'playing'
-        playerView({ phase: 'playing' })
-        setPlayback({ phase: 'playing' })
-      }
-      utter.onboundary = (event) => {
-        if (player !== session || session.gen !== gen) return
-        if (event && typeof event.charIndex === 'number') session.boundary = base + event.charIndex
-      }
-      utter.onend = () => {
-        if (player !== session || session.gen !== gen) return
-        speechTimersOff(session)
-        session.boundary = 0
-        if (session.unit + 1 >= session.units.length) { playerFinish(); return }
-        session.timer = setTimeout(() => {
-          session.timer = 0
-          if (player === session) speakSpeechUnit(session, session.unit + 1, 0)
-        }, PLAYER_UNIT_GAP_MS)
-      }
-      utter.onerror = (event) => {
-        if (player !== session || session.gen !== gen) return
-        const reason = (event && event.error) || 'unknown'
-        if (reason === 'interrupted' || reason === 'canceled') return
-        speechTimersOff(session)
-        // Autoplay policy: speech driven by an event (auto-read) may be blocked
-        // until the page sees a click. Say so instead of "failed".
-        if (reason === 'not-allowed') {
-          fail(session.key, new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
-            'the browser needs one click on this page before it may speak; press read')))
-          return
-        }
-        fail(session.key, new Error(t('浏览器朗读失败：', 'browser speech failed: ') + reason))
-      }
       // A cloud voice that cannot reach its vendor never fires onstart and never
       // fires onerror, so silence is the only signal.
       session.watchdog = setTimeout(() => {
@@ -1278,15 +1609,69 @@ window.__ModuleLoader__.load({
               'no sound in 8 s; the browser may be blocking autoplay — press read again')))
       }, SPEECH_FIRST_TIMEOUT_MS)
 
-      // Chrome drops a speak() issued in the same tick as cancel(); yield first.
+      // Chrome drops speak() calls issued in the same tick as cancel(): yield,
+      // then hand the whole reply to the engine at once.
       session.timer = setTimeout(() => {
         session.timer = 0
         if (player !== session || session.gen !== gen) return
-        try { synth.speak(utter) } catch (error) { fail(session.key, error) }
+        for (const item of items) {
+          const utter = new window.SpeechSynthesisUtterance(item.rest)
+          if (voice) { utter.voice = voice; utter.lang = voice.lang }
+          utter.rate = Math.min(2, Math.max(0.5, Number(session.speed) || 1))
+          utter.pitch = 1
+          utter.volume = 1
+          utter.onstart = () => {
+            if (player !== session || session.gen !== gen) return
+            started = true
+            if (session.watchdog) { clearTimeout(session.watchdog); session.watchdog = 0 }
+            session.unit = item.index
+            session.skip = item.begin
+            session.boundary = item.begin
+            session.phase = session.desiredPaused ? 'paused' : 'playing'
+            playerView({ unit: item.index, phase: session.phase, preview: previewOf(session.units[item.index]) })
+            setPlayback({ phase: session.phase })
+            highlightParagraph(session, item.index)
+          }
+          utter.onboundary = (event) => {
+            if (player !== session || session.gen !== gen) return
+            if (!event || typeof event.charIndex !== 'number') return
+            // Relative to this paragraph's utterance, which starts at `begin`.
+            const at = item.begin + event.charIndex
+            session.skip = at
+            session.boundary = at
+            highlightWord(session, item.index, at, event.charLength || 1)
+            if (!session.boundarySeen) {
+              // Only the first one repaints the window: this flips a label once.
+              session.boundarySeen = true
+              playerView({})
+            }
+          }
+          utter.onend = () => {
+            if (player !== session || session.gen !== gen) return
+            if (item.index + 1 < session.units.length) return
+            speechTimersOff(session)
+            playerFinish()
+          }
+          utter.onerror = (event) => {
+            if (player !== session || session.gen !== gen) return
+            const reason = (event && event.error) || 'unknown'
+            if (reason === 'interrupted' || reason === 'canceled') return
+            speechTimersOff(session)
+            // Autoplay policy: speech driven by an event (auto-read) may be
+            // blocked until the page sees a click. Say so instead of "failed".
+            if (reason === 'not-allowed') {
+              fail(session.key, new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
+                'the browser needs one click on this page before it may speak; press read')))
+              return
+            }
+            fail(session.key, new Error(t('浏览器朗读失败：', 'browser speech failed: ') + reason))
+          }
+          try { synth.speak(utter) } catch (error) { fail(session.key, error); return }
+        }
       }, 30)
     }
 
-    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection) {      refreshSpeechVoices()
+    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection, root) {      refreshSpeechVoices()
       if (!speechCapable()) {
         fail(stateKey, new Error(t('这台环境没有浏览器语音', 'no browser voices here')))
         return
@@ -1297,6 +1682,7 @@ window.__ModuleLoader__.load({
         key: stateKey, sessionId, messageId, selection: selection || '',
         units: [], unit: 0, total: 0, phase: 'loading', desiredPaused: false,
         speed, boundary: 0, gen: 0, watchdog: 0, timer: 0,
+        skip: 0, root: root || null,
         view: { open: true, unit: 0, total: 0, phase: 'loading', speed, preview: '' },
       }
       player = session
@@ -1325,7 +1711,8 @@ window.__ModuleLoader__.load({
         session.view.total = units.length
         session.view.preview = previewOf(units[0])
         updatePlayerWindow()
-        speakSpeechUnit(session, 0, 0)
+        highlightAttach(session, session.root, units)
+        speakSpeechQueue(session, 0, 0)
       } catch (error) {
         if (player !== session) return
         fail(stateKey, error)
@@ -1334,6 +1721,9 @@ window.__ModuleLoader__.load({
 
     async function startReadAloud(sessionId, messageId, stateKey, options) {
       const selection = options && options.text ? String(options.text) : ''
+      // A click carries its own button; auto-read falls back to the one the
+      // action registered for that message.
+      const root = (options && options.root) || actionAnchors.get(stateKey) || null
       if (engineMode === 'browser') {
         refreshSpeechVoices()
         // Desktop: the bridge is the default and needs no voice list at all.
@@ -1347,7 +1737,7 @@ window.__ModuleLoader__.load({
           fail(stateKey, new Error(t('这个环境没有浏览器语音', 'no browser voices here')))
           return
         }
-        await startSpeechReadAloud(sessionId, messageId, stateKey, selection)
+        await startSpeechReadAloud(sessionId, messageId, stateKey, selection, root)
         return
       }
       // Only the audible item is replaced: the waiting queue must survive, or
@@ -1362,7 +1752,7 @@ window.__ModuleLoader__.load({
       const controller = new AbortController()
       const session = {
         key: stateKey, sessionId, messageId, selection,
-        context, controller,
+        context, controller, root,
         units: [], unit: 0, total: 0, standalone: false,
         phase: 'loading', desiredPaused: false, gen: 0,
         chunks: [], totalSamples: 0, sources: [], last: null,
@@ -1399,6 +1789,7 @@ window.__ModuleLoader__.load({
         session.view.total = units.length
         session.view.preview = previewOf(units[0])
         updatePlayerWindow()
+        highlightAttach(session, session.root, units)
         await playerPlayUnit(session, 0)
       } catch (error) {
         if (player !== session) return
@@ -1551,7 +1942,11 @@ window.__ModuleLoader__.load({
       try {
         if (typeof wrap.showPopover === 'function' && !wrap.matches(':popover-open')) wrap.showPopover()
       } catch {}
-      parts.title.textContent = view.phase === 'paused' ? t('已暂停', 'Paused') : t('语音朗读', 'Read aloud')
+      const title = view.phase === 'paused' ? t('已暂停', 'Paused') : t('语音朗读', 'Read aloud')
+      // Which voice is actually speaking, and whether it reports word positions:
+      // the two things a wrong highlight has to be blamed on.
+      const talker = player.kind === 'speech' ? speechLabel(player) : ''
+      parts.title.textContent = talker ? title + ' · ' + talker : title
       const progress = view.total > 1 ? (Math.min(view.unit + 1, view.total) + '/' + view.total + ' · ') : ''
       parts.meta.textContent = progress + (view.preview || '')
       parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
@@ -2061,10 +2456,15 @@ window.__ModuleLoader__.load({
       const key = String(sessionId) + ':' + String(messageId)
       const state = usePlayback()
       const selectionRef = React.useRef('')
+      const anchorRef = React.useRef(null)
       useLocaleTick()
       React.useEffect(() => {
         if (sessionId) activeSessionId = String(sessionId)
       }, [sessionId])
+      React.useEffect(() => {
+        if (anchorRef.current) actionAnchors.set(key, anchorRef.current)
+        return () => { actionAnchors.delete(key) }
+      }, [key])
       const mine = state.key === key
       const phase = mine ? state.phase : 'idle'
       const error = mine ? state.error : ''
@@ -2084,18 +2484,22 @@ window.__ModuleLoader__.load({
 
       return h('button', {
         type: 'button',
+        ref: anchorRef,
         title,
         'aria-label': title,
         // Capture the selection before mousedown clears it.
         onMouseDown: () => {
           try { selectionRef.current = String(window.getSelection() || '').trim() } catch { selectionRef.current = '' }
         },
-        onClick: () => {
+        onClick: (event) => {
           if (phase === 'loading' || phase === 'playing' || phase === 'paused') { stopPlayback(); return }
           const selected = selectionRef.current.slice(0, 4000)
+          // The button is the only handle on the rendered message; the highlight
+          // walks up from it once the plan has the paragraph texts.
+          const root = event && event.currentTarget ? event.currentTarget : null
           // A manual read is a deliberate override: it drops the queue.
           speakNow(key, () => {
-            void startReadAloud(sessionId, messageId, key, selected ? { text: selected } : undefined)
+            void startReadAloud(sessionId, messageId, key, Object.assign({ root }, selected ? { text: selected } : {}))
           })
         },
         style: {
