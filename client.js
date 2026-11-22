@@ -1322,6 +1322,40 @@ window.__ModuleLoader__.load({
       })
     }
 
+    // Multi-line companion to TextInput for JSON headers/bodies. It commits on
+    // blur only: Enter has to stay available for newlines.
+    function TextAreaInput(props) {
+      const value = typeof props.value === 'string' ? props.value : ''
+      const onCommit = props.onCommit
+      const [draft, setDraft] = React.useState(null)
+
+      const commit = () => {
+        const raw = draft
+        setDraft(null)
+        if (raw === null) return
+        const next = String(raw).trim()
+        if (next === value || typeof onCommit !== 'function') return
+        onCommit(next)
+      }
+
+      return h('textarea', {
+        className: props.className,
+        rows: props.rows || 3,
+        placeholder: props.placeholder,
+        spellCheck: false,
+        disabled: props.disabled,
+        value: draft === null ? value : draft,
+        onChange: (event) => setDraft(event.target.value),
+        onBlur: commit,
+        onKeyDown: (event) => {
+          if (event.key === 'Escape') {
+            setDraft(null)
+            try { event.currentTarget.blur() } catch {}
+          }
+        },
+      })
+    }
+
     // Offline installation guide. A native <dialog> keeps it in the browser top
     // layer, so the settings pane's own scroll box cannot clip it, and Escape or
     // a backdrop click close it without extra listeners.
@@ -1458,7 +1492,13 @@ window.__ModuleLoader__.load({
       const localVoices = Array.isArray(piper.voices) ? piper.voices : []
       const system = config.system || { supported: false, voices: [] }
       const systemVoices = Array.isArray(system.voices) ? system.voices : []
-      const custom = config.custom || { baseUrl: '', endpoint: '', model: '', voice: '', format: 'wav', keyConfigured: false }
+      const custom = config.custom || {
+        protocol: 'openai', baseUrl: '', endpoint: '', effectiveUrl: '', requiresKey: true,
+        model: '', voice: '', format: 'wav', keyConfigured: false, ready: false,
+      }
+      const protocol = custom.protocol === 'gpt-sovits' || custom.protocol === 'fish' || custom.protocol === 'template'
+        ? custom.protocol
+        : 'openai'
       const engine = config.engine || 'deepseek'
       const cloudEngine = engine === 'deepseek'
       const localEngine = engine === 'piper'
@@ -1466,7 +1506,7 @@ window.__ModuleLoader__.load({
       const customEngine = engine === 'custom'
       const piperReady = piper.exe === true && piper.model === true
       const systemReady = system.supported === true && systemVoices.length > 0
-      const customReady = !!custom.baseUrl && custom.keyConfigured === true
+      const customReady = custom.ready === true
       const engineReady = cloudEngine ? config.keyConfigured === true
         : localEngine ? piperReady
           : systemEngine ? systemReady
@@ -1504,6 +1544,16 @@ window.__ModuleLoader__.load({
       )
 
       const badge = (key, ok, text) => h('span', { className: 'dsh-tts-badge ' + (ok ? 'ok' : 'warn'), key }, text)
+
+      // GPT-SoVITS accepts the same language set for text and prompt.
+      const langOptions = () => [
+        h('option', { value: 'zh', key: 'zh' }, t('中文', 'Chinese')),
+        h('option', { value: 'en', key: 'en' }, 'English'),
+        h('option', { value: 'ja', key: 'ja' }, t('日语', 'Japanese')),
+        h('option', { value: 'ko', key: 'ko' }, t('韩语', 'Korean')),
+        h('option', { value: 'yue', key: 'yue' }, t('粤语', 'Cantonese')),
+        h('option', { value: 'auto', key: 'auto' }, t('自动', 'Auto')),
+      ]
 
       const check = (key, field, text, hint, checked) => h('label', { className: 'dsh-tts-check', key },
         h('input', {
@@ -1612,30 +1662,75 @@ window.__ModuleLoader__.load({
             : badge('state', false, system.supported
               ? t('没有可用的系统语音', 'no system voices installed')
               : t('当前系统不支持系统语音', 'not supported on this OS'))) : null,
+          customEngine ? row('custom-protocol', t('协议', 'Protocol'),
+            h('select', {
+              className: 'dsh-tts-select', value: protocol, disabled: busy,
+              onChange: (event) => save({ customProtocol: event.target.value }),
+              children: [
+                h('option', { value: 'openai', key: 'openai' }, t('OpenAI 兼容 /v1/audio/speech', 'OpenAI-compatible /v1/audio/speech')),
+                h('option', { value: 'gpt-sovits', key: 'gpt-sovits' }, t('GPT-SoVITS（api_v2 /tts）', 'GPT-SoVITS (api_v2 /tts)')),
+                h('option', { value: 'fish', key: 'fish' }, t('Fish Audio（/v1/tts）', 'Fish Audio (/v1/tts)')),
+                h('option', { value: 'template', key: 'template' }, t('自定义请求模板', 'Custom request template')),
+              ],
+            })) : null,
           customEngine ? row('custom-url', 'Base URL', [
             h(TextInput, {
               key: 'input',
               className: 'dsh-tts-input wide', value: config.customBaseUrl, disabled: busy,
-              placeholder: 'https://api.openai.com/v1',
+              placeholder: protocol === 'gpt-sovits' ? 'http://127.0.0.1:9880'
+                : protocol === 'fish' ? 'https://api.fish.audio'
+                  : protocol === 'template' ? 'http://127.0.0.1:8080'
+                    : 'https://api.openai.com/v1',
               onCommit: (value) => void save({ customBaseUrl: value }),
             }),
-            custom.baseUrl
-              ? badge('state', Boolean(custom.endpoint), custom.endpoint ? t('已识别端点', 'endpoint ok') : t('地址无效', 'invalid'))
-              : null,
+            custom.effectiveUrl
+              ? badge('state', true, custom.requiresKey
+                ? t('需要 Key', 'key required')
+                : t('本机服务，免 Key', 'local, no key'))
+              : (config.customBaseUrl
+                ? badge('state', false, t('地址无效', 'invalid URL'))
+                : null),
           ]) : null,
-          customEngine ? row('custom-model', t('模型', 'Model'),
+          customEngine && protocol === 'gpt-sovits' ? row('sovits-ref', t('参考音频', 'Reference audio'), [
+            h(TextInput, {
+              key: 'input',
+              className: 'dsh-tts-input wide', value: config.sovitsRefAudio, disabled: busy,
+              placeholder: 'C:\\voices\\ref.wav（服务端本机路径）',
+              onCommit: (value) => void save({ sovitsRefAudio: value }),
+            }),
+            config.sovitsRefAudio ? null : badge('state', false, t('必填', 'required')),
+          ]) : null,
+          customEngine && protocol === 'gpt-sovits' ? row('sovits-prompt', t('参考文本', 'Reference text'),
+            h(TextInput, {
+              className: 'dsh-tts-input wide', value: config.sovitsPromptText, disabled: busy,
+              placeholder: t('参考音频里说的话（可留空）', 'what the reference audio says (optional)'),
+              onCommit: (value) => void save({ sovitsPromptText: value }),
+            })) : null,
+          customEngine && protocol === 'gpt-sovits' ? row('sovits-text-lang', t('文本语言', 'Text language'),
+            h('select', {
+              className: 'dsh-tts-select', value: custom.lang || 'zh', disabled: busy,
+              onChange: (event) => save({ sovitsTextLang: event.target.value }),
+              children: langOptions(),
+            })) : null,
+          customEngine && protocol === 'gpt-sovits' ? row('sovits-prompt-lang', t('参考语言', 'Prompt language'),
+            h('select', {
+              className: 'dsh-tts-select', value: custom.promptLang || 'zh', disabled: busy,
+              onChange: (event) => save({ sovitsPromptLang: event.target.value }),
+              children: langOptions(),
+            })) : null,
+          customEngine && protocol === 'openai' ? row('custom-model', t('模型', 'Model'),
             h(TextInput, {
               className: 'dsh-tts-input wide', value: config.customModel, disabled: busy,
               placeholder: 'tts-1',
               onCommit: (value) => void save({ customModel: value }),
             })) : null,
-          customEngine ? row('custom-voice', t('音色', 'Voice'),
+          customEngine && protocol === 'openai' ? row('custom-voice', t('音色', 'Voice'),
             h(TextInput, {
               className: 'dsh-tts-input wide', value: config.customVoice, disabled: busy,
               placeholder: 'alloy',
               onCommit: (value) => void save({ customVoice: value }),
             })) : null,
-          customEngine ? row('custom-format', t('返回格式', 'Format'),
+          customEngine && protocol === 'openai' ? row('custom-format', t('返回格式', 'Format'),
             h('select', {
               className: 'dsh-tts-select', value: config.customFormat === 'pcm' ? 'pcm' : 'wav', disabled: busy,
               onChange: (event) => save({ customFormat: event.target.value }),
@@ -1644,7 +1739,56 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'pcm', key: 'pcm' }, t('pcm（24 kHz 裸流）', 'pcm (24 kHz raw)')),
               ],
             })) : null,
-          customEngine ? row('custom-key', 'API Key', [
+          customEngine && protocol === 'fish' ? row('fish-model', t('模型', 'Model'),
+            h(TextInput, {
+              className: 'dsh-tts-input wide', value: config.customModel, disabled: busy,
+              placeholder: 's2-pro',
+              onCommit: (value) => void save({ customModel: value }),
+            })) : null,
+          customEngine && protocol === 'fish' ? row('fish-voice', t('参考音色 ID', 'Reference voice id'),
+            h(TextInput, {
+              className: 'dsh-tts-input wide', value: config.customVoice, disabled: busy,
+              placeholder: 'reference_id',
+              onCommit: (value) => void save({ customVoice: value }),
+            })) : null,
+          customEngine && protocol === 'template' ? row('tpl-method', t('方法', 'Method'),
+            h('select', {
+              className: 'dsh-tts-select', value: config.customMethod === 'GET' ? 'GET' : 'POST', disabled: busy,
+              onChange: (event) => save({ customMethod: event.target.value }),
+              children: [
+                h('option', { value: 'POST', key: 'POST' }, 'POST'),
+                h('option', { value: 'GET', key: 'GET' }, 'GET'),
+              ],
+            })) : null,
+          customEngine && protocol === 'template' ? row('tpl-path', t('路径', 'Path'),
+            h(TextInput, {
+              className: 'dsh-tts-input wide', value: config.customPath, disabled: busy,
+              placeholder: '/tts',
+              onCommit: (value) => void save({ customPath: value }),
+            })) : null,
+          customEngine && protocol === 'template' ? row('tpl-headers', t('请求头', 'Headers'),
+            h(TextAreaInput, {
+              className: 'dsh-tts-area', rows: 2, value: config.customHeaders, disabled: busy,
+              placeholder: '{"x-api-key": "..."}',
+              onCommit: (value) => void save({ customHeaders: value }),
+            })) : null,
+          customEngine && protocol === 'template' ? row('tpl-body', t('请求体模板', 'Body template'),
+            h(TextAreaInput, {
+              className: 'dsh-tts-area', rows: 3, value: config.customBody, disabled: busy,
+              placeholder: '{"text": "{{text}}", "voice": "{{voice}}"}',
+              onCommit: (value) => void save({ customBody: value }),
+            })) : null,
+          customEngine && protocol === 'template' ? row('tpl-audio', t('音频类型', 'Audio type'),
+            h('select', {
+              className: 'dsh-tts-select', value: config.customAudioType || 'auto', disabled: busy,
+              onChange: (event) => save({ customAudioType: event.target.value }),
+              children: [
+                h('option', { value: 'auto', key: 'auto' }, t('自动识别（先嗅探 WAV）', 'auto (sniff WAV)')),
+                h('option', { value: 'wav', key: 'wav' }, 'WAV'),
+                h('option', { value: 'pcm', key: 'pcm' }, t('PCM（24 kHz 裸流）', 'PCM (24 kHz raw)')),
+              ],
+            })) : null,
+          customEngine && (custom.requiresKey !== false || custom.keyConfigured) ? row('custom-key', 'API Key', [
             h(TextInput, {
               key: 'input',
               type: 'password',
@@ -1790,6 +1934,8 @@ window.__ModuleLoader__.load({
       '.dsh-tts-input:focus,.dsh-tts-select:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input.num{flex:0 0 auto;width:96px;text-align:right;font-variant-numeric:tabular-nums}',
       '.dsh-tts-input.wide{flex:1 1 auto;width:auto;min-width:0;text-align:left}',
+      '.dsh-tts-area{box-sizing:border-box;flex:1 1 auto;width:100%;min-height:56px;max-height:180px;margin:0;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5;font-family:inherit;resize:vertical;outline:none}',
+      '.dsh-tts-area:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input[type=number]::-webkit-inner-spin-button,.dsh-tts-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}',
       '.dsh-tts-select{flex:1 1 auto;width:auto;min-width:0;max-width:100%;cursor:pointer}',
       '.dsh-tts-range{flex:1 1 auto;min-width:80px;height:4px;margin:0;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',

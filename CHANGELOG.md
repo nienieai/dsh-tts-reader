@@ -15,6 +15,12 @@
 - **跳过的块改成念一句提示音**：代码块「这里是代码块」、表格「这里是表格」、块级公式「这里是公式」、图片「这里是图片」；mermaid 按图类型细分为「这里是时序图 / 流程图 / 类图 / 状态图 / ER 图 / 甘特图 / 饼图 / 思维导图 / 时间线 / Git 分支图」，其余为「这里是 Mermaid 图表」。提示语是固定字符串、各自独立成段，因此每个音色只合成一次；一条消息里出现两次同样的提示也只花一次合成。
 - **系统语音引擎（跨平台、离线）**：设置里新增「系统语音」。Windows 走 `System.Speech`（SAPI，实测 Huihui 中英混读正常、每段合成 0.22 s、进程往返约 1 s），macOS 走 `say`，Linux 走 `espeak-ng`；语音清单按平台枚举并缓存，没有可用语音时设置页直接标「没有可用的系统语音」。输出 WAV 由统一的 `parseWav` 解析（16-bit PCM）、下混单声道、重采样到 24 kHz。
 - **自定义 API 引擎**：支持任何 OpenAI 兼容的 `/v1/audio/speech`（OpenAI / Azure OpenAI / SiliconFlow / Groq / Fish 等），可填 Base URL、模型、音色、返回格式（wav 或 pcm）。Key 单独存 `~/.dsh/storages/dsh-tts-reader/secrets.json`（0600），接口只回「已配置 / 未配置」，不回传明文、不写日志；返回 MP3 会明确报错而不是放出噪声。
+- **自定义 API 增加协议预设**：设置里先选协议，再填该协议自己的字段——
+  - `OpenAI 兼容`：`{base}/v1/audio/speech`，`{model,input,voice,response_format}`；
+  - `GPT-SoVITS`（api_v2）：`{base}/tts`，`{text,text_lang,ref_audio_path,prompt_text,prompt_lang,media_type}`，参考音频填服务端路径；
+  - `Fish Audio`：`{base}/v1/tts`，`{text,model,reference_id,format}`；
+  - `自定义模板`：自己填方法 / 路径 / 请求头 / 请求体，占位符 `{{text}} {{voice}} {{model}} {{format}} {{lang}}`，JSON 模板先解析再替换（引号安全），GET 自动转 URL 编码查询串，音频类型可选自动识别 / WAV / PCM。
+  **回环地址（127.0.0.1 / localhost / ::1）不再要求 Key**，其余地址缺 Key 会直接报错且不发请求；缓存键升级为 `custom:v2 + 协议身份`。
 - **Piper 中英分派**：新增可选的「英文模型」。配置后中文与英文混排的段落会按文字种类拆成若干 unit，纯英文部分交给英文模型，含中文部分仍用中文模型，各自独立缓存（键里带各自模型指纹）；不配置时行为和以前完全一致。
 - **设置页试听**：引擎卡新增一行「试听」，用当前引擎/音色念一句固定的中英混读样本（`你好，这是一段语音试听，用来确认音色。Hello, this is a preview.`）——播放中按钮变「停止试听」，再点即停。样本走同一条 `/read` 路由并照常缓存，第二次点不产生合成开销；保存任何设置时会自动停掉正在播的样本。
 

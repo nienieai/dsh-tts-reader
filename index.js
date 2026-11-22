@@ -57,6 +57,20 @@ const DEFAULTS = {
   customModel: '',
   customVoice: '',
   customFormat: 'wav',
+  // Which wire protocol the custom endpoint speaks. Each preset decides the URL,
+  // headers and body; the response is sniffed so wav and raw pcm both work.
+  customProtocol: 'openai',
+  // GPT-SoVITS api_v2 needs a reference clip plus its transcript.
+  sovitsRefAudio: '',
+  sovitsPromptText: '',
+  sovitsTextLang: 'zh',
+  sovitsPromptLang: 'zh',
+  // Fully custom request: method, path, headers and body with {{placeholders}}.
+  customMethod: 'POST',
+  customPath: '',
+  customHeaders: '',
+  customBody: '',
+  customAudioType: 'auto',
   voice: 'stella',
   maxChars: 4000,
   cacheMaxMb: 200,
@@ -71,6 +85,13 @@ const DEFAULTS = {
 
 const ENGINES = new Set(['deepseek', 'piper', 'system', 'custom'])
 const CUSTOM_FORMATS = new Set(['wav', 'pcm'])
+const CUSTOM_PROTOCOLS = new Set(['openai', 'gpt-sovits', 'fish', 'template'])
+const CUSTOM_AUDIO_TYPES = new Set(['auto', 'wav', 'pcm'])
+const CUSTOM_METHODS = new Set(['POST', 'GET'])
+const SOVITS_LANGS = new Set(['auto', 'zh', 'en', 'ja', 'ko', 'yue'])
+
+/** Languages GPT-SoVITS accepts for the text and the prompt transcript. */
+export const SPEECH_LANGS = [...SOVITS_LANGS]
 
 function dshHome() {
   const fromEnv = process.env.DSH_HOME
@@ -180,6 +201,176 @@ export function endpointFingerprint(baseUrl) {
   return crypto.createHash('sha1').update(base).digest('hex').slice(0, 12)
 }
 
+/** True when an endpoint sits on this machine, where no key is expected. */
+export function isLoopbackUrl(value) {
+  try {
+    const url = new URL(String(value))
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    return host === '127.0.0.1' || host === '::1' || host === 'localhost'
+  } catch {
+    return false
+  }
+}
+
+function fillTemplate(value, vars) {
+  return String(value).replace(/\{\{\s*(text|voice|format|model|lang)\s*\}\}/g, (_match, name) => (vars[name] ?? ''))
+}
+
+/** Same as fillTemplate but URL-safe, for GET query strings. */
+function fillTemplateEncoded(value, vars) {
+  return String(value).replace(/\{\{\s*(text|voice|format|model|lang)\s*\}\}/g, (_match, name) => encodeURIComponent(vars[name] ?? ''))
+}
+
+/** A GET template becomes a query string: JSON values or a raw query line. */
+export function buildTemplateQuery(raw, vars) {
+  const source = String(raw || '')
+  if (!source.trim()) return ''
+  if (source.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(source)
+      const params = new URLSearchParams()
+      for (const [name, value] of Object.entries(parsed)) {
+        if (typeof value === 'string') params.set(name, fillTemplate(value, vars))
+        else if (typeof value === 'number' || typeof value === 'boolean') params.set(name, String(value))
+      }
+      return params.toString()
+    } catch {}
+  }
+  return fillTemplateEncoded(source, vars)
+}
+
+/**
+ * Fill a custom request-body template. When the template is JSON, the values are
+ * walked and replaced *after* parsing, so a quote in the spoken text cannot
+ * break the request; anything else is plain text substitution.
+ */
+export function buildTemplateBody(raw, vars) {
+  const source = String(raw || '')
+  if (!source.trim()) return ''
+  try {
+    const parsed = JSON.parse(source)
+    const walk = (node) => {
+      if (typeof node === 'string') return fillTemplate(node, vars)
+      if (Array.isArray(node)) return node.map(walk)
+      if (node && typeof node === 'object') {
+        const out = {}
+        for (const [key, value] of Object.entries(node)) out[key] = walk(value)
+        return out
+      }
+      return node
+    }
+    return JSON.stringify(walk(parsed))
+  } catch {
+    return fillTemplate(source, vars)
+  }
+}
+
+/** URL, headers and body for the configured custom protocol. */
+export function buildCustomRequest(settings, text, key) {
+  const source = settings && typeof settings === 'object' ? settings : {}
+  const protocol = CUSTOM_PROTOCOLS.has(String(source.customProtocol)) ? String(source.customProtocol) : 'openai'
+  const base = normalizeBaseUrl(source.customBaseUrl)
+  const auth = key ? { authorization: 'Bearer ' + key } : {}
+  if (protocol === 'gpt-sovits') {
+    return {
+      protocol,
+      url: (base || 'http://127.0.0.1:9880') + '/tts',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({
+        text,
+        text_lang: source.sovitsTextLang || 'zh',
+        ref_audio_path: source.sovitsRefAudio || '',
+        prompt_text: source.sovitsPromptText || '',
+        prompt_lang: source.sovitsPromptLang || 'zh',
+        media_type: 'wav',
+        streaming_mode: false,
+      }),
+      audioType: 'wav',
+    }
+  }
+  if (protocol === 'fish') {
+    return {
+      protocol,
+      url: (base || 'https://api.fish.audio') + '/v1/tts',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({
+        text,
+        ...(source.customModel ? { model: source.customModel } : {}),
+        ...(source.customVoice ? { reference_id: source.customVoice } : {}),
+        format: 'wav',
+      }),
+      audioType: 'wav',
+    }
+  }
+  if (protocol === 'template') {
+    const pathPart = String(source.customPath || '').trim()
+    let url = base
+    if (pathPart) {
+      if (/^https?:\/\//i.test(pathPart)) url = pathPart
+      else url = base + (pathPart.startsWith('/') ? pathPart : '/' + pathPart)
+    }
+    const vars = {
+      text,
+      voice: source.customVoice || '',
+      format: source.customFormat || 'wav',
+      model: source.customModel || '',
+      lang: source.sovitsTextLang || 'zh',
+    }
+    let headers = { 'content-type': 'application/json' }
+    try {
+      const parsed = JSON.parse(source.customHeaders || '{}')
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) headers = { ...headers, ...parsed }
+    } catch {}
+    if (key && !Object.keys(headers).some((name) => name.toLowerCase() === 'authorization')) {
+      headers.authorization = 'Bearer ' + key
+    }
+    const method = source.customMethod === 'GET' ? 'GET' : 'POST'
+    const body = buildTemplateBody(source.customBody || '{"text":"{{text}}"}', vars)
+    const audioType = CUSTOM_AUDIO_TYPES.has(String(source.customAudioType)) ? String(source.customAudioType) : 'auto'
+    if (method === 'GET') {
+      // For GET the template is a query string, or JSON whose string values
+      // become encoded query parameters.
+      const query = buildTemplateQuery(source.customBody || 'text={{text}}', vars)
+      const full = query ? url + (url.includes('?') ? '&' : '?') + query : url
+      return { protocol, url: full, method, headers, body: undefined, audioType }
+    }
+    return { protocol, url, method, headers, body, audioType }
+  }
+  const endpoint = speechEndpoint(base || source.customBaseUrl)
+  return {
+    protocol: 'openai',
+    url: endpoint,
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...auth },
+    body: JSON.stringify({
+      model: source.customModel || 'tts-1',
+      input: text,
+      voice: source.customVoice || 'alloy',
+      response_format: source.customFormat === 'pcm' ? 'pcm' : 'wav',
+    }),
+    audioType: 'auto',
+  }
+}
+
+/** Everything that changes the audio of a custom endpoint, for the cache key. */
+function customIdentity(settings) {
+  const source = settings && typeof settings === 'object' ? settings : {}
+  const protocol = CUSTOM_PROTOCOLS.has(String(source.customProtocol)) ? String(source.customProtocol) : 'openai'
+  const parts = [protocol]
+  if (protocol === 'gpt-sovits') {
+    parts.push(source.sovitsRefAudio || '', source.sovitsPromptText || '', source.sovitsTextLang || '', source.sovitsPromptLang || '')
+  } else if (protocol === 'fish') {
+    parts.push(source.customModel || '', source.customVoice || '')
+  } else if (protocol === 'template') {
+    parts.push(source.customMethod || 'POST', source.customPath || '', source.customHeaders || '', source.customBody || '')
+  } else {
+    parts.push(source.customModel || '', source.customVoice || '', source.customFormat || 'wav')
+  }
+  return parts.join('\u0000')
+}
+
 function normalizeSettings(raw, seed) {
   const merged = { ...DEFAULTS, ...(seed && typeof seed === 'object' ? seed : {}), ...(raw && typeof raw === 'object' ? raw : {}) }
   const voice = VOICES.has(String(merged.voice)) ? String(merged.voice) : DEFAULTS.voice
@@ -206,9 +397,21 @@ function normalizeSettings(raw, seed) {
   const customModel = typeof merged.customModel === 'string' ? merged.customModel.trim() : ''
   const customVoice = typeof merged.customVoice === 'string' ? merged.customVoice.trim() : ''
   const customFormat = CUSTOM_FORMATS.has(String(merged.customFormat)) ? String(merged.customFormat) : DEFAULTS.customFormat
+  const customProtocol = CUSTOM_PROTOCOLS.has(String(merged.customProtocol)) ? String(merged.customProtocol) : DEFAULTS.customProtocol
+  const sovitsRefAudio = typeof merged.sovitsRefAudio === 'string' ? merged.sovitsRefAudio.trim() : ''
+  const sovitsPromptText = typeof merged.sovitsPromptText === 'string' ? merged.sovitsPromptText.trim() : ''
+  const sovitsTextLang = SOVITS_LANGS.has(String(merged.sovitsTextLang)) ? String(merged.sovitsTextLang) : DEFAULTS.sovitsTextLang
+  const sovitsPromptLang = SOVITS_LANGS.has(String(merged.sovitsPromptLang)) ? String(merged.sovitsPromptLang) : DEFAULTS.sovitsPromptLang
+  const customMethod = CUSTOM_METHODS.has(String(merged.customMethod)) ? String(merged.customMethod) : DEFAULTS.customMethod
+  const customPath = typeof merged.customPath === 'string' ? merged.customPath.trim() : ''
+  const customHeaders = typeof merged.customHeaders === 'string' ? merged.customHeaders : ''
+  const customBody = typeof merged.customBody === 'string' ? merged.customBody : ''
+  const customAudioType = CUSTOM_AUDIO_TYPES.has(String(merged.customAudioType)) ? String(merged.customAudioType) : DEFAULTS.customAudioType
   return {
     engine, piperPath, piperModel, piperModelEn, systemVoice,
-    customBaseUrl, customModel, customVoice, customFormat,
+    customBaseUrl, customModel, customVoice, customFormat, customProtocol,
+    sovitsRefAudio, sovitsPromptText, sovitsTextLang, sovitsPromptLang,
+    customMethod, customPath, customHeaders, customBody, customAudioType,
     voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals,
   }
 }
@@ -364,9 +567,8 @@ function cacheKey(settings, text, modelPath) {
   } else if (engine === 'system') {
     hash.update('system:v1').update('\u0000').update(process.platform).update('\u0000').update(settings.systemVoice || '').update('\u0000')
   } else if (engine === 'custom') {
-    hash.update('custom:v1').update('\u0000').update(endpointFingerprint(settings.customBaseUrl)).update('\u0000')
-    hash.update(settings.customModel || '').update('\u0000').update(settings.customVoice || '').update('\u0000').update(settings.customFormat)
-    hash.update('\u0000')
+    hash.update('custom:v2').update('\u0000').update(endpointFingerprint(settings.customBaseUrl)).update('\u0000')
+    hash.update(customIdentity(settings)).update('\u0000')
   } else if (engine !== 'deepseek') {
     hash.update(String(engine)).update('\u0000')
   }
@@ -889,12 +1091,26 @@ export function engineInfo(settings) {
       voices: systemList,
     },
     custom: {
+      protocol: CUSTOM_PROTOCOLS.has(String(source.customProtocol)) ? String(source.customProtocol) : 'openai',
       baseUrl: typeof source.customBaseUrl === 'string' ? source.customBaseUrl : '',
       endpoint: speechEndpoint(source.customBaseUrl),
+      effectiveUrl: buildCustomRequest(source, 'x', '').url,
+      requiresKey: !isLoopbackUrl(buildCustomRequest(source, 'x', '').url),
       model: typeof source.customModel === 'string' ? source.customModel : '',
       voice: typeof source.customVoice === 'string' ? source.customVoice : '',
       format: source.customFormat === 'pcm' ? 'pcm' : 'wav',
       keyConfigured: customApiKey().length > 0,
+      lang: SOVITS_LANGS.has(String(source.sovitsTextLang)) ? String(source.sovitsTextLang) : 'zh',
+      promptLang: SOVITS_LANGS.has(String(source.sovitsPromptLang)) ? String(source.sovitsPromptLang) : 'zh',
+      refAudio: typeof source.sovitsRefAudio === 'string' ? source.sovitsRefAudio : '',
+      ready: (() => {
+        const url = buildCustomRequest(source, 'x', '').url
+        const protocol = CUSTOM_PROTOCOLS.has(String(source.customProtocol)) ? String(source.customProtocol) : 'openai'
+        const needsKey = !isLoopbackUrl(url)
+        const keyOk = !needsKey || customApiKey().length > 0
+        const refOk = protocol !== 'gpt-sovits' || Boolean(String(source.sovitsRefAudio || '').trim())
+        return Boolean(url) && keyOk && refOk
+      })(),
     },
   }
 }
@@ -1343,24 +1559,24 @@ async function* systemChunks(settings, text, signal) {
 // ------------------------------------------------------------- custom engine
 
 async function* customChunks(settings, text, signal) {
-  const endpoint = speechEndpoint(settings.customBaseUrl)
-  if (!endpoint) throw engineError('自定义 API 未配置：请填写 Base URL（例如 https://api.openai.com/v1）', 'NO_ENGINE')
   const key = customApiKey()
-  if (!key) throw engineError('自定义 API 缺少 Key：请在设置里填写并保存', 'NO_KEY')
-  const format = settings.customFormat === 'pcm' ? 'pcm' : 'wav'
+  const request = buildCustomRequest(settings, text, key)
+  if (!request.url) {
+    throw engineError('自定义 API 未配置：请填写 Base URL（例如 https://api.openai.com/v1）', 'NO_ENGINE')
+  }
+  // A service on this machine is trusted without a key; anything else is not.
+  if (!key && !isLoopbackUrl(request.url)) {
+    throw engineError('自定义 API 缺少 Key：请在设置里填写并保存', 'NO_KEY')
+  }
+  const options = {
+    method: request.method,
+    headers: request.headers,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
+  }
+  if (request.body !== undefined) options.body = request.body
   let response
   try {
-    response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: settings.customModel || 'tts-1',
-        input: text,
-        voice: settings.customVoice || 'alloy',
-        response_format: format,
-      }),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
-    })
+    response = await fetch(request.url, options)
   } catch (error) {
     if (signal && signal.aborted) throw engineError('已停止', 'ABORTED')
     throw engineError('自定义 API 请求失败：' + (error && error.message ? error.message : String(error)), 'TTS_FAILED')
@@ -1377,7 +1593,11 @@ async function* customChunks(settings, text, signal) {
   }
   const buffer = Buffer.from(await response.arrayBuffer())
   if (buffer.length === 0) throw engineError('自定义 API 没有返回音频', 'EMPTY_AUDIO')
-  const wav = parseWav(buffer)
+  const audioType = CUSTOM_AUDIO_TYPES.has(String(request.audioType)) ? String(request.audioType) : 'auto'
+  const wav = audioType === 'pcm' ? null : parseWav(buffer)
+  if (audioType === 'wav' && !wav) {
+    throw engineError('该协议约定返回 WAV，但响应不是 16-bit PCM WAV', 'UNSUPPORTED_AUDIO')
+  }
   if (wav) {
     const pcm = toMono16(wav.pcm, wav.channels)
     const resampler = createResampler(wav.sampleRate, SAMPLE_RATE)
@@ -1389,10 +1609,10 @@ async function* customChunks(settings, text, signal) {
   }
   // mp3/opus and friends cannot be decoded here; say so instead of playing noise.
   if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
-    throw engineError('自定义 API 返回的是 MP3，请把 response_format 设为 wav 或 pcm', 'UNSUPPORTED_AUDIO')
+    throw engineError('自定义 API 返回的是 MP3，请让服务端返回 wav 或 pcm', 'UNSUPPORTED_AUDIO')
   }
   if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) {
-    throw engineError('自定义 API 返回的是 MP3/ADTS 音频，请把 response_format 设为 wav 或 pcm', 'UNSUPPORTED_AUDIO')
+    throw engineError('自定义 API 返回的是 MP3/ADTS 音频，请让服务端返回 wav 或 pcm', 'UNSUPPORTED_AUDIO')
   }
   // Raw PCM: OpenAI's `pcm` format is mono 24 kHz 16-bit little-endian already.
   yield buffer
@@ -1648,7 +1868,9 @@ export function apply(ctx, config) {
         }
         const editable = [
           'engine', 'piperPath', 'piperModel', 'piperModelEn', 'systemVoice',
-          'customBaseUrl', 'customModel', 'customVoice', 'customFormat',
+          'customBaseUrl', 'customModel', 'customVoice', 'customFormat', 'customProtocol',
+          'sovitsRefAudio', 'sovitsPromptText', 'sovitsTextLang', 'sovitsPromptLang',
+          'customMethod', 'customPath', 'customHeaders', 'customBody', 'customAudioType',
           'voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals',
         ]
         const next = normalizeSettings({ ...current, ...pick(body, editable) }, null)

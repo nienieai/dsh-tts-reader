@@ -30,7 +30,16 @@
 
 系统语音按平台调用：Windows 用 `System.Speech`（SAPI，语音来自系统安装的语言包，例如中文的 `Microsoft Huihui`）、macOS 用 `say`、Linux 用 `espeak-ng`；某一平台没有可用语音时设置页会直接标「没有可用的系统语音」，不会假装就绪。
 
-自定义 API 走 `POST {BaseURL}/v1/audio/speech`（OpenAI 兼容），请求体 `{model, input, voice, response_format}`，`response_format` 可选 `wav` 或 `pcm`（24 kHz 裸流）；返回 MP3 会明确报错而不是放出噪声。**Key 存在 `~/.dsh/storages/dsh-tts-reader/secrets.json`（仅本用户可读），设置接口只回「已配置 / 未配置」，不回传明文、不写日志。**
+自定义 API 支持四种协议（设置里先选「协议」）：
+
+| 协议 | 请求 | 说明 |
+|---|---|---|
+| **OpenAI 兼容** | `POST {base}/v1/audio/speech`，`{model,input,voice,response_format}` | OpenAI / Azure OpenAI / SiliconFlow / Groq 等 |
+| **GPT-SoVITS** | `POST {base}/tts`（api_v2），`{text,text_lang,ref_audio_path,prompt_text,prompt_lang,media_type}` | 本地自部署；参考音频填的是**服务端**上的路径 |
+| **Fish Audio** | `POST {base}/v1/tts`，`{text,model,reference_id,format}` | 远程服务，需要 Key |
+| **自定义模板** | 自己填方法 / 路径 / 请求头 / 请求体 | 占位符 `{{text}} {{voice}} {{model}} {{format}} {{lang}}`；GET 时请求体变成查询串（自动编码） |
+
+**回环地址**（`127.0.0.1`、`localhost`、`::1`）不需要 Key，其它地址必须填。Key 存在 `~/.dsh/storages/dsh-tts-reader/secrets.json`（仅本用户可读），设置接口只回「已配置 / 未配置」，不回传明文、不写日志。返回 MP3/ADTS 会明确报错而不是放出噪声；模板协议可以指定「自动识别 / WAV / PCM（24 kHz 裸流）」。
 
 Piper 还可以再填一个「英文模型」：一个中文声学模型读英文会读成无意义音节，所以配置后会按语言把段落切成若干段分别合成——纯英文的部分交给英文模型，含中文的部分仍用中文模型，各自独立缓存。
 
