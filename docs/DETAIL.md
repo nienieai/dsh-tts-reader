@@ -26,20 +26,26 @@
 ## 怎么工作
 
 ```
-浏览器 ──POST /api/dsh-tts/read {sessionId, messageId | text}──▶ Host
+浏览器 ──POST /api/dsh-tts/plan {sessionId, messageId | text}──▶ Host
                                                         │ 1. 取正文 → markdown 转纯文本
-                                                        │ 2. 按空行切段；单段超限再按句切
-                                                        │ 3. 每段 sha256(引擎身份+段落) 查磁盘缓存
-                                                        │ 4. 命中 → 读文件；未命中 → 调上游并 tee 落盘
-                                                        │    下一段在当前段播放时预取
-浏览器 ◀──── 裸 PCM：段 + 240ms 静音 + 段 …（x-tts-units / x-tts-cache）┘
+                                                        │ 2. 按空行切段（piper 双模型时再按文字种类切）
+                                                        │ 3. 返回 [{index, text, chars}] + total
+浏览器 ──POST /api/dsh-tts/read {…, unit: i}──▶ Host
+                                                        │ 4. 只流这一段的 PCM（缓存命中就直接读文件）
+                                                        │    下一段在页面侧预取（第二路请求，命中缓存时几乎瞬时）
+浏览器 ◀──── 裸 PCM（单段；x-tts-units 是总段数，x-tts-unit-index 是本次段号）┘
         │
-        └─ Web Audio：Int16→Float32 → AudioBuffer 排程播放
+        └─ Web Audio：Int16→Float32 → AudioBuffer 排程；悬浮窗控制暂停/前后段/变速
 ```
 
-`x-tts-cache` 在发头前就能定：先 stat 一遍所有段文件，全命中 `hit`、全未命中 `miss`、否则 `mixed`。
+`x-tts-cache` 在发头前就能定：先 stat 一遍这一段（或整段集合）的文件，全命中 `hit`、全未命中 `miss`、否则 `mixed`。
 
-页面按块排程（首块留 0.1 秒缓冲），网络落后于播放时从“现在”续上，不补播过去的时间。
+**播放器按段**：页面保留当前段的全部 Float32 样本；`/plan` 拿段清单，`/read?unit=i` 流式播放第 i 段，播放中预取第 i+1 段。段落之间留 180 ms。
+
+- **暂停/继续**：`AudioContext.suspend()/resume()`，时间轴冻结，恢复后从原处继续。
+- **变速立即生效**：把「已播输出时长 × 旧速度」换算成源样本偏移，停掉尚未播完的已排程 buffer，用新比例重建 WSOLA 并从该偏移重新排程（衔接点最多一个调度窗口）。速度同时写回设置（350 ms 防抖），供以后朗读使用。
+- **上一段/下一段**：只在本条回复内，越界按钮置灰；切换会中断当前段请求并播放目标段（预取命中时无等待）。
+- 悬浮窗是可拖动的顶层 `popover`，位置存 `localStorage`；× 停止并清空自动朗读队列。
 
 自动朗读的消息来源有两条通道：`GET /api/dsh-tts/events`（SSE，低延迟）和 `GET /api/dsh-tts/recent?after=<seq>`（页面每 2.5 秒增量拉取）。页面把两者喂给同一个 `handleAssistant()`，用 `autoPlayed` 去重；SSE 断了也不会漏读。`/config` 里的 `sse` 字段（opened / closed / rejected / clients / recentSeq）用来判断页面是否真连上了事件流。
 
@@ -53,7 +59,8 @@ Key 只在 Host 进程里，从 DSH 凭据 `DEEPSEEK_API_KEY` 解析；接口基
 - 朗读的 PCM 响应带 `cache-control: no-store, no-transform`，宿主的 gzip 中间件会跳过它：音频压缩没有收益，流式响应被包一层 Transform 反而会把背压监听堆在 Gzip 上。
 - 客户端随时可能停止播放：预取 promise 带 catch、流式写入同时等待 `drain`/`close`/`error`、每个路由有兜底 catch，任何一条路径的失败都不会变成宿主的未处理拒绝（那会被当成致命加载错误并直接退出进程）。
 - 每段上限 4000 字（单段超限按句切分，切不动才硬截断）。
-- 段落之间固定 240 ms 静音（`PARAGRAPH_GAP_MS`），不写进缓存文件。
+- 段落之间固定 180 ms 间隔，不写进缓存文件。
+- 悬浮窗只在网页前台可用：页面被隐藏时浏览器会节流计时器，跨段的 180 ms 间隔可能被拉长；音频本身已排程，不受影响。
 - 本地引擎的 piper 与语音模型由用户自行安装，插件不下载、不分发。
 - 只有 `stella` / `tide` 两个官方音色。
 

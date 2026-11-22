@@ -25,6 +25,7 @@ export const inject = []
 const PREFIX = '/api/dsh-tts'
 const CONFIG_PATH = PREFIX + '/config'
 const READ_PATH = PREFIX + '/read'
+const PLAN_PATH = PREFIX + '/plan'
 const CLEAR_PATH = PREFIX + '/cache/clear'
 const EVENTS_PATH = PREFIX + '/events'
 const PENDING_PATH = PREFIX + '/pending'
@@ -1618,6 +1619,74 @@ async function* customChunks(settings, text, signal) {
   yield buffer
 }
 
+/** Indices of the located units, in order; duplicate paragraphs match forward. */
+function indicesOf(units, wanted) {
+  const indices = []
+  let cursor = 0
+  for (const text of wanted) {
+    for (let index = cursor; index < units.length; index += 1) {
+      if (units[index] === text) {
+        indices.push(index)
+        cursor = index + 1
+        break
+      }
+    }
+  }
+  return indices
+}
+
+/**
+ * The paragraphs that make up one read: the message's own units, or the ones a
+ * selection covers. Both /plan and /read go through this, so the `unit` index a
+ * client sends always addresses the same list on both sides.
+ */
+async function resolveUnits(scope, settings, sessionId, messageId, explicitText) {
+  let messageText = ''
+  let sessionError = null
+  if (sessionId && messageId) {
+    try {
+      messageText = await readMessageText(scope.sessionQuery, sessionId, messageId)
+    } catch (error) {
+      sessionError = error
+    }
+  }
+  if (!messageText && !explicitText) {
+    if (sessionError) {
+      const error = new Error('读取会话失败：' + (sessionError?.message ?? String(sessionError)))
+      error.code = 'SESSION_READ_FAILED'
+      error.status = 500
+      throw error
+    }
+    const error = new Error('这条消息没有可朗读的文字（代码块、表格、公式会被跳过）')
+    error.code = 'NO_TEXT'
+    error.status = 404
+    throw error
+  }
+  const splitScript = settings.engine === 'piper' && !!settings.piperModelEn
+  const whole = messageText ? planUnits(messageText, settings.maxChars, splitScript) : { units: [], truncated: false }
+  let items = whole.units.map((text, index) => ({ index, text, chars: text.length }))
+  let truncated = whole.truncated
+  let standalone = false
+  if (explicitText) {
+    const covering = locateParagraphs(whole.units, explicitText)
+    if (covering && covering.length > 0) {
+      items = indicesOf(whole.units, covering).map((index) => ({
+        index,
+        text: whole.units[index],
+        chars: whole.units[index].length,
+      }))
+      truncated = false
+    } else {
+      // Not part of the message text (a code block, say): the selection itself.
+      const own = planUnits(explicitText, settings.maxChars, splitScript)
+      items = own.units.map((text, index) => ({ index, text, chars: text.length }))
+      truncated = own.truncated
+      standalone = true
+    }
+  }
+  return { items, truncated, standalone }
+}
+
 /** 24 kHz mono PCM for one paragraph, from whichever engine is configured. */
 export async function* engineChunks(scope, settings, text, signal) {
   if (settings.engine === 'piper') {
@@ -1955,6 +2024,44 @@ export function apply(ctx, config) {
       }),
     }), 'dsh-tts-reader: pending')
 
+    // The floating player asks for the paragraph list first: it needs the count
+    // and each paragraph's opening words, and `unit` on /read addresses this list.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: PLAN_PATH,
+      handler: routeHandler(log, async (request, response) => {
+        if (!guard(request, response)) return
+        if ((request.method ?? '') !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(request)
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+        const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
+        const explicitText = typeof body?.text === 'string' ? body.text.trim() : ''
+        if (!explicitText && (!sessionId || !messageId)) {
+          return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '需要 sessionId 与 messageId（或直接给 text）' })
+        }
+        const current = readSettings()
+        let plan
+        try {
+          plan = await resolveUnits(scope, current, sessionId, messageId, explicitText)
+        } catch (error) {
+          return writeJson(response, error.status || 500, { ok: false, code: error.code || 'FAILED', error: error.message })
+        }
+        if (plan.items.length === 0) {
+          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
+        }
+        return writeJson(response, 200, {
+          ok: true,
+          value: {
+            units: plan.items,
+            total: plan.items.length,
+            truncated: plan.truncated,
+            standalone: plan.standalone,
+            engine: current.engine,
+          },
+        })
+      }),
+    }), 'dsh-tts-reader: plan')
+
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: READ_PATH,
@@ -1976,52 +2083,29 @@ export function apply(ctx, config) {
         // The message is always re-read, even when the page sends a selection:
         // the cache key is a whole paragraph, so a selection has to be widened to
         // the paragraphs it sits in, or it would never match a full read.
-        let messageText = ''
-        let sessionError = null
-        if (sessionId && messageId) {
-          try {
-            messageText = await readMessageText(scope.sessionQuery, sessionId, messageId)
-          } catch (error) {
-            sessionError = error
-          }
+        let plan
+        try {
+          plan = await resolveUnits(scope, current, sessionId, messageId, explicitText)
+        } catch (error) {
+          return writeJson(response, error.status || 500, { ok: false, code: error.code || 'FAILED', error: error.message })
         }
-        if (!messageText && !explicitText) {
-          if (sessionError) {
-            return writeJson(response, 500, { ok: false, code: 'SESSION_READ_FAILED', error: '读取会话失败：' + (sessionError?.message ?? String(sessionError)) })
-          }
+        if (plan.items.length === 0) {
           return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
         }
-
-        // One synthesis request (and one cache file) per paragraph, so reading a
-        // single paragraph later reuses the file the whole message already made.
-        // With a second Piper model configured, paragraphs that mix Chinese and
-        // English are cut into script runs first.
-        const splitScript = current.engine === 'piper' && !!current.piperModelEn
-        const whole = messageText ? planUnits(messageText, current.maxChars, splitScript) : { units: [], truncated: false }
-        let unitTexts = whole.units
-        let truncated = whole.truncated
-        if (explicitText) {
-          const covering = locateParagraphs(whole.units, explicitText)
-          if (covering) {
-            unitTexts = covering
-            truncated = false
-          } else {
-            // Not part of the message text (a code block, say): synthesize the
-            // selection itself, which is the old behaviour.
-            const own = planUnits(explicitText, current.maxChars, splitScript)
-            unitTexts = own.units
-            truncated = own.truncated
-          }
-        }
-        const units = unitTexts.map((unit) => {
+        // `unit` addresses one paragraph of the plan, so the floating player can
+        // step forward and back without re-streaming the whole reply.
+        const requestedUnit = Number(body?.unit)
+        const unitIndex = Number.isFinite(requestedUnit) && requestedUnit >= 0
+          ? Math.min(Math.floor(requestedUnit), plan.items.length - 1)
+          : -1
+        const served = unitIndex >= 0 ? [plan.items[unitIndex]] : plan.items
+        const truncated = plan.truncated
+        const units = served.map((item) => {
           // Markers are fixed strings: pin their audio so eviction never costs
           // the user a re-synthesis of "here is a table".
-          const file = cacheFile(cacheKey(current, unit, piperModelFor(current, unit)), BLOCK_MARKER_TEXTS.has(unit))
-          return { unit, file, cached: hasCachedWav(file) }
+          const file = cacheFile(cacheKey(current, item.text, piperModelFor(current, item.text)), BLOCK_MARKER_TEXTS.has(item.text))
+          return { unit: item.text, file, cached: hasCachedWav(file) }
         })
-        if (units.length === 0) {
-          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
-        }
         const hits = units.filter((item) => item.cached).length
         const cacheState = hits === units.length ? 'hit' : hits === 0 ? 'miss' : 'mixed'
 
@@ -2175,9 +2259,11 @@ export function apply(ctx, config) {
         response.writeHead(200, pcmHeaders({
           'x-tts-voice': current.voice,
           'x-tts-truncated': truncated ? '1' : '0',
-          'x-tts-units': String(units.length),
+          // The plan's total, so a unit request still reports how many there are.
+          'x-tts-units': String(plan.items.length),
           'x-tts-cache': cacheState,
           'x-tts-engine': current.engine,
+          ...(unitIndex >= 0 ? { 'x-tts-unit-index': String(unitIndex) } : {}),
         }))
 
         // The next paragraph is synthesized one ahead, so the join does not stall.

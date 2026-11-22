@@ -21,13 +21,13 @@ window.__ModuleLoader__.load({
 
     const CONFIG_PATH = '/api/dsh-tts/config'
     const READ_PATH = '/api/dsh-tts/read'
+    const PLAN_PATH = '/api/dsh-tts/plan'
     const CLEAR_PATH = '/api/dsh-tts/cache/clear'
     const EVENTS_PATH = '/api/dsh-tts/events'
     const RECENT_PATH = '/api/dsh-tts/recent'
 
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
-    const MAX_CACHED_MESSAGES = 8
 
     // Locale follows the Host's active language (what DSH itself shows), not the
     // browser's: the plugin's copy must switch with the app. `ctx.locale` is
@@ -70,8 +70,9 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
-    // messageKey -> Float32Array[] (decoded PCM). LRU-ish by insertion order.
-    const audioCache = new Map()
+    // Messages that have been read at least once: the speaker button uses this
+    // only to know it can offer "play again (cached)".
+    const playedMessages = new Set()
     let current = null // { key, controller, context }
     let playback = { key: null, phase: 'idle', error: '', queued: null }
     const listeners = new Set()
@@ -102,7 +103,14 @@ window.__ModuleLoader__.load({
       speakQuestions = value.speakQuestions !== false
       speakApprovals = value.speakApprovals !== false
       const nextSpeed = Number(value.speed)
-      speed = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
+      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
+      if (resolved === speed) return
+      speed = resolved
+      // A speed change from settings applies to the audio in flight right away.
+      if (player) {
+        playerRerender(player, speed)
+        playerView({ speed })
+      }
     }
 
     let configLoaded = false
@@ -217,25 +225,11 @@ window.__ModuleLoader__.load({
       return value
     }
 
-    function rememberAudio(key, chunks) {
-      audioCache.set(key, chunks)
-      while (audioCache.size > MAX_CACHED_MESSAGES) {
-        const oldest = audioCache.keys().next().value
-        audioCache.delete(oldest)
-      }
-    }
-
     // Abort only what is audible; the waiting queue is untouched. Starting the
     // next queued item uses this, so draining never discards the rest.
     function stopCurrentOnly() {
-      if (!current) {
-        setPlayback({ key: null, phase: 'idle', error: '' })
-        return
-      }
-      const { controller, context } = current
+      playerStop()
       current = null
-      try { controller.abort() } catch {}
-      try { context.close() } catch {}
       setPlayback({ key: null, phase: 'idle', error: '' })
     }
 
@@ -307,15 +301,6 @@ window.__ModuleLoader__.load({
       clearQueue()
       stopCurrentOnly()
       speak()
-    }
-
-    function finish(key) {
-      if (!current || current.key !== key) return
-      const context = current.context
-      current = null
-      try { context.close() } catch {}
-      setPlayback({ key: null, phase: 'idle', error: '' })
-      drainQueue()
     }
 
     function toFloat32(bytes) {
@@ -461,50 +446,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // One scheduler for both the cache path and the streaming path, applying
-    // the speed stretch and chaining Web Audio buffers gaplessly.
-    function createScheduler(context, stateKey) {
-      const durationRatio = speed > 0 ? 1 / speed : 1
-      const stretcher = Math.abs(durationRatio - 1) > 0.01 ? new Stretcher(durationRatio) : null
-      let nextTime = 0
-      let last = null
-      const emit = (samples) => {
-        if (!samples || samples.length === 0) return
-        const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
-        const scheduled = schedule(context, samples, startAt)
-        nextTime = scheduled.end
-        last = scheduled.source
-        if (playback.phase === 'loading') setPlayback({ phase: 'playing' })
-      }
-      return {
-        feed(samples) {
-          if (stretcher) emit(stretcher.push(samples))
-          else emit(samples)
-        },
-        done() {
-          if (stretcher) {
-            const tail = stretcher.flush()
-            if (tail.length > 0) emit(tail)
-          }
-          if (!last) { finish(stateKey); return }
-          last.onended = () => finish(stateKey)
-        },
-      }
-    }
-
-    function playFromMemory(context, stateKey, chunks) {
-      setPlayback({ key: stateKey, phase: 'playing', error: '' })
-      const scheduler = createScheduler(context, stateKey)
-      for (const chunk of chunks) scheduler.feed(chunk)
-      scheduler.done()
-    }
-
-    function hashString(value) {
-      let hash = 5381
-      for (let i = 0; i < value.length; i += 1) hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0
-      return (hash >>> 0).toString(36)
-    }
-
     // Settings preview: one fixed sentence through the current engine and voice,
     // using the same Host route as a normal read so the sample is cached and the
     // second click is instant. It keeps its own AudioContext, so the read-aloud
@@ -625,9 +566,350 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ------------------------------------------------------------- unit player
+    // Playback is per paragraph: /plan lists the paragraphs, /read with a unit
+    // index streams one of them. The floating window navigates them and a speed
+    // change only re-renders the part that has not been heard yet.
+    let player = null
+    let playerWindowEl = null
+    let speedSaveTimer = 0
+    const PLAYER_UNIT_GAP_MS = 180
+
+    const previewOf = (unit) => {
+      const text = unit && typeof unit.text === 'string' ? unit.text : ''
+      const trimmed = text.replace(/\s+/g, ' ').trim()
+      return trimmed.length > 28 ? trimmed.slice(0, 28) + '…' : trimmed
+    }
+
+    function concatFloat(chunks) {
+      let length = 0
+      for (const chunk of chunks) length += chunk.length
+      const out = new Float32Array(length)
+      let offset = 0
+      for (const chunk of chunks) {
+        out.set(chunk, offset)
+        offset += chunk.length
+      }
+      return out
+    }
+
+    function playerClampSpeed(value) {
+      const number = Number(value)
+      return Number.isFinite(number) ? Math.min(2, Math.max(0.5, Math.round(number * 100) / 100)) : 1
+    }
+
+    function playerStopSources(session) {
+      for (const source of session.sources) {
+        try { source.onended = null } catch {}
+        try { source.stop() } catch {}
+        try { source.disconnect() } catch {}
+      }
+      session.sources = []
+      session.last = null
+      session.nextTime = 0
+      session.startTime = 0
+    }
+
+    function playerStop() {
+      const session = player
+      player = null
+      if (session) {
+        if (session.pendingNext) clearTimeout(session.pendingNext)
+        if (session.prefetch) { try { session.prefetch.controller.abort() } catch {} }
+        if (session.req) { try { session.req.abort() } catch {} }
+        try { session.controller.abort() } catch {}
+        playerStopSources(session)
+        try { session.context.close() } catch {}
+      }
+      current = null
+      updatePlayerWindow()
+    }
+
+    function playerEnsureStretcher(session) {
+      const ratio = session.renderSpeed > 0 ? 1 / session.renderSpeed : 1
+      session.stretcher = Math.abs(ratio - 1) > 0.01 ? new Stretcher(ratio) : null
+    }
+
+    function playerSchedule(session, samples, gen) {
+      if (!samples || samples.length === 0) return
+      const context = session.context
+      if (!context) return
+      const now = context.currentTime
+      const startAt = session.last ? Math.max(session.nextTime, now) : now + START_DELAY
+      if (!session.last) session.startTime = startAt
+      const scheduled = schedule(context, samples, startAt)
+      session.sources.push(scheduled.source)
+      session.nextTime = scheduled.end
+      session.last = scheduled.source
+      session.gen = gen
+    }
+
+    function playerFeedSamples(session, samples, gen) {
+      if (!samples || samples.length === 0) return
+      session.chunks.push(samples)
+      session.totalSamples += samples.length
+      if (session.stretcher) playerSchedule(session, session.stretcher.push(samples), gen)
+      else playerSchedule(session, samples, gen)
+    }
+
+    /** Re-render everything after a speed change, starting where the ear is. */
+    function playerRerender(session, nextSpeed) {
+      const context = session.context
+      if (!context) return
+      const now = context.currentTime
+      const flat = concatFloat(session.chunks)
+      const elapsed = session.last ? Math.max(0, now - session.startTime) : 0
+      const played = Math.min(flat.length, Math.round(elapsed * session.renderSpeed * SAMPLE_RATE))
+      const gen = session.gen
+      playerStopSources(session)
+      session.speed = nextSpeed
+      session.renderSpeed = nextSpeed
+      playerEnsureStretcher(session)
+      session.startTime = now - (played / SAMPLE_RATE) / Math.max(0.01, nextSpeed)
+      const remainder = flat.subarray(played)
+      const fed = session.stretcher ? session.stretcher.push(remainder) : remainder
+      if (fed.length) playerSchedule(session, fed, gen)
+      // The unit already finished streaming: flush the stretcher now, or the
+      // re-render would leave its buffered tail unscheduled.
+      if (session.ended && session.stretcher) {
+        const tail = session.stretcher.flush()
+        if (tail.length) playerSchedule(session, tail, gen)
+      }
+      if (session.ended && session.last) {
+        session.last.onended = () => { if (player === session && session.gen === gen) playerAdvance(session, gen) }
+      }
+    }
+
+    function playerApplySpeed(nextSpeed) {
+      const next = playerClampSpeed(nextSpeed)
+      const session = player
+      if (session) {
+        playerRerender(session, next)
+        playerView({ speed: next })
+      }
+      if (next === speed) return
+      speed = next
+      // Persist for later reads, but never twice per drag.
+      if (speedSaveTimer) clearTimeout(speedSaveTimer)
+      speedSaveTimer = setTimeout(() => {
+        speedSaveTimer = 0
+        void fetch(CONFIG_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ speed: next }),
+        }).catch(() => {})
+      }, 350)
+    }
+
+    function playerTogglePause() {
+      const session = player
+      if (!session) return
+      if (session.phase === 'paused') playerResume()
+      else playerPause()
+    }
+
+    function playerPause() {
+      const session = player
+      if (!session || !session.context) return
+      session.desiredPaused = true
+      session.phase = 'paused'
+      try { void session.context.suspend().catch(() => {}) } catch {}
+      setPlayback({ phase: 'paused' })
+      playerView({ phase: 'paused' })
+    }
+
+    function playerResume() {
+      const session = player
+      if (!session || !session.context) return
+      session.desiredPaused = false
+      session.phase = 'playing'
+      try { void session.context.resume().catch(() => {}) } catch {}
+      setPlayback({ phase: 'playing' })
+      playerView({ phase: 'playing' })
+    }
+
+    function playerStep(delta) {
+      const session = player
+      if (!session) return
+      const target = session.unit + delta
+      if (target < 0 || target >= session.units.length) return
+      void playerPlayUnit(session, target)
+    }
+
+    function playerAdvance(session, gen) {
+      if (player !== session || session.gen !== gen) return
+      if (session.unit + 1 >= session.units.length) {
+        playerFinish()
+        return
+      }
+      session.pendingNext = setTimeout(() => {
+        session.pendingNext = 0
+        if (player === session) void playerPlayUnit(session, session.unit + 1)
+      }, PLAYER_UNIT_GAP_MS)
+    }
+
+    function playerFinish() {
+      playerStop()
+      setPlayback({ key: null, phase: 'idle', error: '' })
+      drainQueue()
+    }
+
+    function playerEndUnit(session, gen) {
+      if (player !== session || session.gen !== gen) return
+      session.ended = true
+      if (!session.last) { playerAdvance(session, gen); return }
+      // Synthesis may have finished before the audio did; then advance right away.
+      if (session.nextTime <= session.context.currentTime + 0.02) { playerAdvance(session, gen); return }
+      session.last.onended = () => { if (player === session && session.gen === gen) playerAdvance(session, gen) }
+    }
+
+    function playerUnitRequest(session, index, signal) {
+      const body = { unit: index }
+      if (session.sessionId && session.messageId) {
+        body.sessionId = session.sessionId
+        body.messageId = session.messageId
+      }
+      // A selection re-resolves to the same plan on the Host, so `unit` keeps
+      // addressing the list the /plan call returned.
+      if (session.selection) body.text = session.selection
+      return fetch(READ_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      })
+    }
+
+    async function playerReadAll(session, index, signal) {
+      const response = await playerUnitRequest(session, index, signal)
+      const type = String(response.headers.get('content-type') || '')
+      if (type.indexOf('application/json') !== -1) {
+        let payload = null
+        try { payload = await response.json() } catch {}
+        throw new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
+      }
+      if (!response.ok || !response.body) {
+        throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
+      }
+      const reader = response.body.getReader()
+      signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
+      const chunks = []
+      let rest = new Uint8Array(0)
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const merged = concatBytes(rest, value)
+        const samples = toFloat32(merged)
+        rest = merged.slice(samples.length * 2)
+        if (samples.length > 0) chunks.push(samples)
+      }
+      return concatFloat(chunks)
+    }
+
+    function playerPrefetch(session, index) {
+      if (!session || index < 0 || index >= session.units.length) return
+      if (session.prefetch && session.prefetch.index === index) return
+      if (session.prefetch) { try { session.prefetch.controller.abort() } catch {} }
+      const controller = new AbortController()
+      const record = { index, controller, samples: null, done: false }
+      session.prefetch = record
+      playerReadAll(session, index, controller.signal)
+        .then((samples) => { record.samples = samples; record.done = true })
+        .catch(() => { record.done = true })
+    }
+
+    async function playerPlayUnit(session, index) {
+      if (player !== session) return
+      const target = Math.max(0, Math.min(index, session.units.length - 1))
+      session.unit = target
+      session.gen += 1
+      const gen = session.gen
+      session.ended = false
+      session.chunks = []
+      session.totalSamples = 0
+      session.stretcher = null
+      session.speed = speed
+      session.renderSpeed = speed
+      playerStopSources(session)
+      if (session.req) { try { session.req.abort() } catch {} }
+      if (session.pendingNext) { clearTimeout(session.pendingNext); session.pendingNext = 0 }
+      const controller = new AbortController()
+      session.req = controller
+      session.phase = session.desiredPaused ? 'paused' : 'loading'
+      playerView({ unit: target, phase: session.phase, speed: session.speed, preview: previewOf(session.units[target]) })
+      setPlayback({ key: session.key, phase: session.phase })
+      if (session.desiredPaused) {
+        try { void session.context.suspend().catch(() => {}) } catch {}
+      }
+
+      const buffered = session.prefetch && session.prefetch.index === target && session.prefetch.done && session.prefetch.samples
+      if (buffered) {
+        const samples = session.prefetch.samples
+        session.prefetch = null
+        playerEnsureStretcher(session)
+        playerFeedSamples(session, samples, gen)
+        if (session.stretcher) {
+          const tail = session.stretcher.flush()
+          if (tail.length) playerSchedule(session, tail, gen)
+        }
+        if (!session.desiredPaused) {
+          session.phase = 'playing'
+          playerView({ phase: 'playing' })
+          setPlayback({ phase: 'playing' })
+        }
+        playerEndUnit(session, gen)
+        playerPrefetch(session, target + 1)
+        return
+      }
+
+      try {
+        const response = await playerUnitRequest(session, target, controller.signal)
+        const type = String(response.headers.get('content-type') || '')
+        if (type.indexOf('application/json') !== -1) {
+          let payload = null
+          try { payload = await response.json() } catch {}
+          throw new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
+        }
+        if (!response.ok || !response.body) {
+          throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
+        }
+        if (player !== session || session.gen !== gen) return
+        // The next paragraph is fetched while this one plays.
+        playerPrefetch(session, target + 1)
+        const reader = response.body.getReader()
+        controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
+        playerEnsureStretcher(session)
+        let rest = new Uint8Array(0)
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (player !== session || session.gen !== gen) return
+          const merged = concatBytes(rest, value)
+          const samples = toFloat32(merged)
+          rest = merged.slice(samples.length * 2)
+          if (samples.length === 0) continue
+          if (session.phase === 'loading') {
+            session.phase = 'playing'
+            playerView({ phase: 'playing' })
+            setPlayback({ phase: 'playing' })
+          }
+          playerFeedSamples(session, samples, gen)
+        }
+        if (player !== session || session.gen !== gen) return
+        if (session.stretcher) {
+          const tail = session.stretcher.flush()
+          if (tail.length) playerSchedule(session, tail, gen)
+        }
+        playerEndUnit(session, gen)
+      } catch (error) {
+        if (player !== session || session.gen !== gen) return
+        if (controller.signal.aborted) return
+        fail(session.key, error)
+      }
+    }
+
     async function startReadAloud(sessionId, messageId, stateKey, options) {
-      const text = options && options.text ? options.text : ''
-      const cacheKey = text ? stateKey + '|s:' + hashString(text) : stateKey
+      const selection = options && options.text ? String(options.text) : ''
       // Only the audible item is replaced: the waiting queue must survive, or
       // draining one entry would throw away the rest.
       stopCurrentOnly()
@@ -638,73 +920,214 @@ window.__ModuleLoader__.load({
       // resume is a no-op once the page is allowed to play.
       void context.resume().catch(() => {})
       const controller = new AbortController()
-      current = { key: stateKey, cacheKey, controller, context }
-      setPlayback({ key: stateKey, phase: 'loading', error: '' })
-
-      const cached = audioCache.get(cacheKey)
-      if (cached && cached.length) {
-        try { playFromMemory(context, stateKey, cached) } catch (error) { fail(stateKey, error) }
-        return
+      const session = {
+        key: stateKey, sessionId, messageId, selection,
+        context, controller,
+        units: [], unit: 0, total: 0, standalone: false,
+        phase: 'loading', desiredPaused: false, gen: 0,
+        chunks: [], totalSamples: 0, sources: [], last: null,
+        nextTime: 0, startTime: 0, stretcher: null,
+        speed, renderSpeed: speed, ended: false, pendingNext: 0, prefetch: null, req: null,
+        view: { open: true, unit: 0, total: 0, phase: 'loading', speed, preview: '' },
       }
-
+      player = session
+      current = { key: stateKey, controller, context }
+      playedMessages.add(stateKey)
+      setPlayback({ key: stateKey, phase: 'loading', error: '' })
+      updatePlayerWindow()
       try {
-        const payload = {}
-        // Both ids travel even with an explicit text: the Host widens the
-        // selection to the whole paragraph(s) it sits in, and needs the message.
-        if (sessionId && messageId) { payload.sessionId = sessionId; payload.messageId = messageId }
-        if (text) payload.text = text
-        const response = await fetch(READ_PATH, {
+        const response = await fetch(PLAN_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            ...(sessionId && messageId ? { sessionId, messageId } : {}),
+            ...(selection ? { text: selection } : {}),
+          }),
           signal: controller.signal,
         })
-        const type = String(response.headers.get('content-type') || '')
-        if (type.indexOf('application/json') !== -1) {
-          let payload = null
-          try { payload = await response.json() } catch {}
-          const failure = new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
-          failure.code = payload && payload.code
-          throw failure
+        const payload = await response.json().catch(() => null)
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error((payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
         }
-        if (!response.ok || !response.body) throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
-
-        const reader = response.body.getReader()
-        controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
-
-        let rest = new Uint8Array(0)
-        const collected = []
-        const scheduler = createScheduler(context, stateKey)
-
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          if (controller.signal.aborted) return
-          const merged = concatBytes(rest, value)
-          const samples = toFloat32(merged)
-          rest = merged.slice(samples.length * 2)
-          if (samples.length === 0) continue
-          // The cache keeps the original recording, so changing the speed later
-          // replays from disk without synthesizing again.
-          collected.push(samples)
-          scheduler.feed(samples)
-        }
-
-        if (controller.signal.aborted) return
-        rememberAudio(cacheKey, collected)
-        scheduler.done()
+        if (player !== session) return
+        const value = payload.value || {}
+        const units = Array.isArray(value.units) ? value.units : []
+        if (units.length === 0) throw new Error(t('这条消息没有可朗读的文字', 'nothing to read here'))
+        session.units = units
+        session.total = units.length
+        session.standalone = value.standalone === true
+        session.view.total = units.length
+        session.view.preview = previewOf(units[0])
+        updatePlayerWindow()
+        await playerPlayUnit(session, 0)
       } catch (error) {
+        if (player !== session) return
         if (controller.signal.aborted) return
         fail(stateKey, error)
       }
     }
 
+    // ------------------------------------------------------- floating window
+    function playerView(patch) {
+      if (!player) return
+      Object.assign(player.view, patch)
+      updatePlayerWindow()
+    }
+
+    const PLAYER_POS_KEY = 'dsh-tts-reader:player-pos'
+
+    function storedPlayerPos() {
+      try {
+        const raw = window.localStorage.getItem(PLAYER_POS_KEY)
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        if (parsed && Number.isFinite(parsed.left) && Number.isFinite(parsed.top)) return parsed
+      } catch {}
+      return null
+    }
+
+    function savePlayerPos(left, top) {
+      try { window.localStorage.setItem(PLAYER_POS_KEY, JSON.stringify({ left, top })) } catch {}
+    }
+
+    function makePlayerButton(text, title) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = text
+      button.title = title
+      button.style.cssText = 'box-sizing:border-box;height:26px;min-width:30px;padding:0 6px;'
+        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);border-radius:8px;background:transparent;'
+        + 'color:inherit;font-size:13px;line-height:1;font-family:inherit;cursor:pointer'
+      return button
+    }
+
+    function buildPlayerWindow() {
+      if (playerWindowEl) return playerWindowEl
+      if (typeof document === 'undefined' || !document.body) return null
+      const wrap = document.createElement('div')
+      try { wrap.setAttribute('popover', 'manual') } catch {}
+      wrap.style.cssText = 'position:fixed;inset:auto 20px 20px auto;margin:0;padding:0;z-index:2147483645;display:none;'
+        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#1c1c1c);'
+        + 'color:var(--dsw-alias-label-primary,#eee);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:12px;'
+        + 'font-family:inherit;min-width:288px;max-width:360px;user-select:none'
+      const head = document.createElement('div')
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:move;'
+        + 'border-bottom:1px solid var(--dsw-alias-border-l2,#3a3a3a);touch-action:none'
+      const title = document.createElement('span')
+      title.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600'
+      title.textContent = t('语音朗读', 'Read aloud')
+      const close = document.createElement('button')
+      close.type = 'button'
+      close.textContent = '×'
+      close.title = t('停止朗读', 'Stop reading')
+      close.style.cssText = 'padding:2px 6px;border:0;background:transparent;color:inherit;font-size:16px;line-height:1;cursor:pointer;opacity:.7'
+      close.onclick = () => stopPlayback()
+      head.append(title, close)
+
+      const meta = document.createElement('div')
+      meta.style.cssText = 'padding:6px 10px 0;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+      const controls = document.createElement('div')
+      controls.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 10px'
+      const prev = makePlayerButton('⏮', t('上一段', 'Previous paragraph'))
+      const play = makePlayerButton('⏸', t('暂停 / 继续', 'Pause / resume'))
+      const next = makePlayerButton('⏭', t('下一段', 'Next paragraph'))
+      prev.onclick = () => playerStep(-1)
+      next.onclick = () => playerStep(1)
+      play.onclick = () => playerTogglePause()
+
+      const speedBox = document.createElement('div')
+      speedBox.style.cssText = 'display:flex;align-items:center;gap:4px;margin-left:auto'
+      const speedInput = document.createElement('input')
+      speedInput.type = 'range'
+      speedInput.min = '0.5'
+      speedInput.max = '2'
+      speedInput.step = '0.05'
+      speedInput.title = t('播放速度', 'Playback speed')
+      speedInput.style.cssText = 'width:88px;margin:0;accent-color:var(--dsw-alias-state-business-primary,#3b82f6)'
+      const speedValue = document.createElement('span')
+      speedValue.style.cssText = 'width:38px;text-align:right;font-variant-numeric:tabular-nums'
+      speedInput.oninput = () => {
+        const value = playerClampSpeed(speedInput.value)
+        speedValue.textContent = value.toFixed(2) + '×'
+        playerApplySpeed(value)
+      }
+      speedBox.append(speedInput, speedValue)
+      controls.append(prev, play, next, speedBox)
+
+      // Drag by the header; the position survives reloads.
+      let drag = null
+      head.addEventListener('pointerdown', (event) => {
+        if (event.target === close) return
+        const rect = wrap.getBoundingClientRect()
+        drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }
+        try { head.setPointerCapture(event.pointerId) } catch {}
+        event.preventDefault()
+      })
+      head.addEventListener('pointermove', (event) => {
+        if (!drag) return
+        const left = Math.max(8, Math.min(Math.max(8, window.innerWidth - 120), drag.left + event.clientX - drag.x))
+        const top = Math.max(8, Math.min(Math.max(8, window.innerHeight - 80), drag.top + event.clientY - drag.y))
+        wrap.style.left = left + 'px'
+        wrap.style.top = top + 'px'
+        wrap.style.right = 'auto'
+        wrap.style.bottom = 'auto'
+      })
+      const endDrag = () => {
+        if (!drag) return
+        drag = null
+        const rect = wrap.getBoundingClientRect()
+        savePlayerPos(rect.left, rect.top)
+      }
+      head.addEventListener('pointerup', endDrag)
+      head.addEventListener('pointercancel', endDrag)
+
+      wrap.append(head, meta, controls)
+      document.body.appendChild(wrap)
+      try { if (typeof wrap.showPopover === 'function') wrap.showPopover() } catch {
+        try { wrap.removeAttribute('popover') } catch {}
+      }
+      playerWindowEl = wrap
+      wrap.__parts = { wrap, title, meta, prev, play, next, speedInput, speedValue }
+      const saved = storedPlayerPos()
+      if (saved) {
+        wrap.style.left = saved.left + 'px'
+        wrap.style.top = saved.top + 'px'
+        wrap.style.right = 'auto'
+        wrap.style.bottom = 'auto'
+      }
+      return wrap
+    }
+
+    function updatePlayerWindow() {
+      const wrap = buildPlayerWindow()
+      if (!wrap) return
+      if (!player) {
+        wrap.style.display = 'none'
+        return
+      }
+      const parts = wrap.__parts
+      const view = player.view
+      wrap.style.display = 'block'
+      try {
+        if (typeof wrap.showPopover === 'function' && !wrap.matches(':popover-open')) wrap.showPopover()
+      } catch {}
+      parts.title.textContent = view.phase === 'paused' ? t('已暂停', 'Paused') : t('语音朗读', 'Read aloud')
+      const progress = view.total > 1 ? (Math.min(view.unit + 1, view.total) + '/' + view.total + ' · ') : ''
+      parts.meta.textContent = progress + (view.preview || '')
+      parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
+      parts.play.title = view.phase === 'paused' ? t('继续', 'Resume') : t('暂停', 'Pause')
+      parts.play.disabled = view.phase === 'loading'
+      parts.prev.disabled = view.unit <= 0
+      parts.next.disabled = view.unit >= view.total - 1
+      const speedText = (Number(view.speed) || 1)
+      parts.speedInput.value = String(speedText)
+      parts.speedValue.textContent = speedText.toFixed(2) + '×'
+    }
+
     function fail(key, error) {
-      if (!current || current.key !== key) return
-      const context = current.context
-      current = null
-      try { context.close() } catch {}
+      if (!player || player.key !== key) return
       const message = (error && error.message) || String(error)
+      playerStop()
       setPlayback({ key, phase: 'idle', error: message })
       // The button only keeps the text in a tooltip, which is gone as soon as
       // the pointer moves; put the failure where it can be read and copied.
@@ -780,7 +1203,9 @@ window.__ModuleLoader__.load({
 
     function ReadingBars({ mode }) {
       return h('span', {
-        className: 'dsh-tts-bars' + (mode === 'loading' ? ' is-loading' : ''),
+        className: 'dsh-tts-bars'
+          + (mode === 'loading' ? ' is-loading' : '')
+          + (mode === 'paused' ? ' is-paused' : ''),
         'aria-hidden': true,
         children: [0, 1, 2, 3].map((index) => h('i', { key: index, style: { animationDelay: (index * 0.12) + 's' } })),
       })
@@ -1202,17 +1627,19 @@ window.__ModuleLoader__.load({
       const mine = state.key === key
       const phase = mine ? state.phase : 'idle'
       const error = mine ? state.error : ''
-      const cached = audioCache.has(key)
+      const cached = playedMessages.has(key)
 
       const title = error
         ? error
         : phase === 'loading'
           ? t('正在合成…', 'Synthesizing…')
           : phase === 'playing'
-            ? t('点击停止', 'Click to stop')
-            : cached
-              ? t('再次播放（本地缓存）', 'Play again (cached)')
-              : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+            ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
+            : phase === 'paused'
+              ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
+              : cached
+                ? t('再次播放（本地缓存）', 'Play again (cached)')
+                : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
 
       return h('button', {
         type: 'button',
@@ -1223,7 +1650,7 @@ window.__ModuleLoader__.load({
           try { selectionRef.current = String(window.getSelection() || '').trim() } catch { selectionRef.current = '' }
         },
         onClick: () => {
-          if (phase === 'loading' || phase === 'playing') { stopPlayback(); return }
+          if (phase === 'loading' || phase === 'playing' || phase === 'paused') { stopPlayback(); return }
           const selected = selectionRef.current.slice(0, 4000)
           // A manual read is a deliberate override: it drops the queue.
           speakNow(key, () => {
@@ -1458,7 +1885,7 @@ window.__ModuleLoader__.load({
           if (!body || body.ok !== true) throw new Error((body && body.error) || t('保存失败', 'Save failed'))
           setConfig(body.value)
           applyRemoteConfig(body.value)
-          audioCache.clear()
+          playedMessages.clear()
           setNotice(t('已保存', 'Saved'))
           // The sample was rendered by the previous settings; do not keep playing.
           stopPreview()
@@ -1894,7 +2321,7 @@ window.__ModuleLoader__.load({
                 try {
                   const response = await fetch(CLEAR_PATH, { method: 'POST' })
                   const body = await response.json()
-                  if (body && body.ok) { audioCache.clear(); load(); setNotice(t('缓存已清空', 'Cache cleared')) }
+                  if (body && body.ok) { playedMessages.clear(); load(); setNotice(t('缓存已清空', 'Cache cleared')) }
                 } catch (error) {
                   setFailure(error && error.message ? error.message : String(error))
                 }
@@ -1914,6 +2341,7 @@ window.__ModuleLoader__.load({
       '.dsh-tts-bars{display:inline-flex;align-items:center;gap:2px;height:16px;width:16px;justify-content:center}',
       '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:30%;animation:dsh-tts-bar .9s ease-in-out infinite}',
       '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
+      '.dsh-tts-bars.is-paused i{animation-play-state:paused;opacity:.55}',
       '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
       // ---- settings page ----
       // One rhythm: card head (title + status + one hint) over rows built from a
