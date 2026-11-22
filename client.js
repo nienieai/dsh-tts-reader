@@ -573,7 +573,7 @@ window.__ModuleLoader__.load({
     let player = null
     let playerWindowEl = null
     let speedSaveTimer = 0
-    const PLAYER_UNIT_GAP_MS = 180
+    const PLAYER_UNIT_GAP_MS = 60
 
     const previewOf = (unit) => {
       const text = unit && typeof unit.text === 'string' ? unit.text : ''
@@ -780,42 +780,67 @@ window.__ModuleLoader__.load({
       })
     }
 
-    async function playerReadAll(session, index, signal) {
-      const response = await playerUnitRequest(session, index, signal)
-      const type = String(response.headers.get('content-type') || '')
-      if (type.indexOf('application/json') !== -1) {
-        let payload = null
-        try { payload = await response.json() } catch {}
-        throw new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
-      }
-      if (!response.ok || !response.body) {
-        throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
-      }
-      const reader = response.body.getReader()
-      signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
-      const chunks = []
-      let rest = new Uint8Array(0)
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const merged = concatBytes(rest, value)
-        const samples = toFloat32(merged)
-        rest = merged.slice(samples.length * 2)
-        if (samples.length > 0) chunks.push(samples)
-      }
-      return concatFloat(chunks)
-    }
-
+    /**
+     * Synthesize the next paragraph in the background while this one plays. Its
+     * audio is buffered, or handed to the player once it becomes current, so a
+     * paragraph boundary no longer waits for the whole next paragraph: a long
+     * one starts from whatever is buffered and keeps streaming as it plays.
+     */
     function playerPrefetch(session, index) {
       if (!session || index < 0 || index >= session.units.length) return
       if (session.prefetch && session.prefetch.index === index) return
       if (session.prefetch) { try { session.prefetch.controller.abort() } catch {} }
       const controller = new AbortController()
-      const record = { index, controller, samples: null, done: false }
+      let finish = () => {}
+      let failPrefetch = () => {}
+      const record = {
+        index,
+        controller,
+        chunks: [],
+        consumer: null,
+        done: false,
+        error: null,
+        finished: new Promise((resolve) => { finish = resolve }),
+        failed: new Promise((_resolve, reject) => { failPrefetch = reject }),
+      }
+      record.failed.catch(() => {})
       session.prefetch = record
-      playerReadAll(session, index, controller.signal)
-        .then((samples) => { record.samples = samples; record.done = true })
-        .catch(() => { record.done = true })
+      void (async () => {
+        try {
+          const response = await playerUnitRequest(session, index, controller.signal)
+          const type = String(response.headers.get('content-type') || '')
+          if (type.indexOf('application/json') !== -1) {
+            let payload = null
+            try { payload = await response.json() } catch {}
+            throw new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
+          }
+          if (!response.ok || !response.body) {
+            throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
+          }
+          const reader = response.body.getReader()
+          controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
+          let rest = new Uint8Array(0)
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const merged = concatBytes(rest, value)
+            const samples = toFloat32(merged)
+            rest = merged.slice(samples.length * 2)
+            if (samples.length === 0) continue
+            if (record.consumer) record.consumer(samples)
+            else record.chunks.push(samples)
+            if (record.chunks.length > 512) record.chunks.splice(0, record.chunks.length - 512)
+          }
+          record.done = true
+          finish()
+        } catch (error) {
+          record.done = true
+          if (controller.signal.aborted) { finish(); return }
+          record.error = error
+          failPrefetch(error)
+          finish()
+        }
+      })()
     }
 
     async function playerPlayUnit(session, index) {
@@ -833,7 +858,11 @@ window.__ModuleLoader__.load({
       playerStopSources(session)
       if (session.req) { try { session.req.abort() } catch {} }
       if (session.pendingNext) { clearTimeout(session.pendingNext); session.pendingNext = 0 }
-      const controller = new AbortController()
+      // A prefetched paragraph is already being synthesized, so its buffered
+      // audio plays at once and the rest is handed over as it arrives.
+      const prefetched = session.prefetch && session.prefetch.index === target ? session.prefetch : null
+      if (prefetched) session.prefetch = null
+      const controller = prefetched ? prefetched.controller : new AbortController()
       session.req = controller
       session.phase = session.desiredPaused ? 'paused' : 'loading'
       playerView({ unit: target, phase: session.phase, speed: session.speed, preview: previewOf(session.units[target]) })
@@ -842,27 +871,40 @@ window.__ModuleLoader__.load({
         try { void session.context.suspend().catch(() => {}) } catch {}
       }
 
-      const buffered = session.prefetch && session.prefetch.index === target && session.prefetch.done && session.prefetch.samples
-      if (buffered) {
-        const samples = session.prefetch.samples
-        session.prefetch = null
-        playerEnsureStretcher(session)
-        playerFeedSamples(session, samples, gen)
-        if (session.stretcher) {
-          const tail = session.stretcher.flush()
-          if (tail.length) playerSchedule(session, tail, gen)
-        }
-        if (!session.desiredPaused) {
-          session.phase = 'playing'
-          playerView({ phase: 'playing' })
-          setPlayback({ phase: 'playing' })
-        }
-        playerEndUnit(session, gen)
-        playerPrefetch(session, target + 1)
-        return
-      }
-
       try {
+        if (prefetched) {
+          const record = prefetched
+          playerEnsureStretcher(session)
+          for (const chunk of record.chunks) playerFeedSamples(session, chunk, gen)
+          record.chunks = []
+          if (session.chunks.length > 0 && !session.desiredPaused) {
+            session.phase = 'playing'
+            playerView({ phase: 'playing' })
+            setPlayback({ phase: 'playing' })
+          }
+          record.consumer = (samples) => {
+            if (player !== session || session.gen !== gen) return
+            if (session.phase === 'loading') {
+              session.phase = 'playing'
+              playerView({ phase: 'playing' })
+              setPlayback({ phase: 'playing' })
+            }
+            playerFeedSamples(session, samples, gen)
+          }
+          playerPrefetch(session, target + 1)
+          await record.finished
+          if (player !== session || session.gen !== gen) return
+          record.consumer = null
+          if (controller.signal.aborted) return
+          if (record.error) { fail(session.key, record.error); return }
+          if (session.stretcher) {
+            const tail = session.stretcher.flush()
+            if (tail.length) playerSchedule(session, tail, gen)
+          }
+          playerEndUnit(session, gen)
+          return
+        }
+
         const response = await playerUnitRequest(session, target, controller.signal)
         const type = String(response.headers.get('content-type') || '')
         if (type.indexOf('application/json') !== -1) {
@@ -874,7 +916,7 @@ window.__ModuleLoader__.load({
           throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
         }
         if (player !== session || session.gen !== gen) return
-        // The next paragraph is fetched while this one plays.
+        // The next paragraph is opened while this one plays.
         playerPrefetch(session, target + 1)
         const reader = response.body.getReader()
         controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
