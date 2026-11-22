@@ -68,7 +68,7 @@
   .doc p.mark{background:rgba(96,165,250,.14);border-radius:4px}
   .doc p.empty{color:var(--dim);font-size:15px}
   ::highlight(bridge-para){background-color:rgba(96,165,250,.14)}
-  ::highlight(bridge-word){background-color:rgba(96,165,250,.45)}
+  ::highlight(bridge-word){background-color:#f5c542;color:#241a00}
   @media (max-width: 600px) {
     .brand{display:none}
     .bar-inner{gap:6px;padding:0 12px}
@@ -180,6 +180,8 @@
       if (i === index) p.classList.add('on');
       else p.classList.remove('on');
     });
+    // The word layer belongs to the paragraph that just ended.
+    paintWordClear();
     if (supportsHighlight()) {
       var range = paragraphRange(index);
       try {
@@ -190,6 +192,12 @@
       // No Highlight API: the block background carries the paragraph layer.
       st.paragraphs.forEach(function (p, i) { p.classList.toggle('mark', i === index); });
     }
+  }
+
+  function paintWordClear() {
+    try {
+      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-word');
+    } catch (e) {}
   }
 
   function paintWord(index, from, length) {
@@ -340,7 +348,6 @@
     clearWatchdog();
     try { synth.cancel(); } catch (e) {}
     paintPara(start);
-    paintWord(start, base, 1);
     follow(start);
     paint();
 
@@ -379,7 +386,6 @@
           st.idx = item.index;
           st.boundary = item.begin;
           paintPara(item.index);
-          paintWord(item.index, item.begin, 1);
           follow(item.index);
           paint();
           try { if (synth.paused && !st.paused) synth.resume(); } catch (e) {}

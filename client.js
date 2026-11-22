@@ -809,7 +809,7 @@ window.__ModuleLoader__.load({
         if (session.timer) clearTimeout(session.timer)
         if (session.watchdog) clearTimeout(session.watchdog)
         try { const synth = speechSynth(); if (synth) synth.cancel() } catch {}
-        highlightStop(session)
+        highlightStop()
         current = null
         updatePlayerWindow()
         return
@@ -821,7 +821,7 @@ window.__ModuleLoader__.load({
         try { session.controller.abort() } catch {}
         playerStopSources(session)
         try { session.context.close() } catch {}
-        highlightStop(session)
+        highlightStop()
       }
       current = null
       updatePlayerWindow()
@@ -1106,7 +1106,6 @@ window.__ModuleLoader__.load({
         try { void session.context.suspend().catch(() => {}) } catch {}
       }
       highlightParagraph(session, target)
-      startHighlightTicker(session)
 
       try {
         if (prefetched) {
@@ -1227,7 +1226,9 @@ window.__ModuleLoader__.load({
         style.id = HIGHLIGHT_STYLE_ID
         style.textContent = [
           '::highlight(' + PARA_HIGHLIGHT + '){background-color:rgba(88,140,255,.15)}',
-          '::highlight(' + WORD_HIGHLIGHT + '){background-color:rgba(88,140,255,.42)}',
+          // Yellow, the way a highlighter pen works: the word has to stand out
+          // from the blue paragraph wash, on both light and dark surfaces.
+          '::highlight(' + WORD_HIGHLIGHT + '){background-color:#f5c542;color:#241a00}',
           '.' + PARA_FALLBACK_CLASS + '{background-color:rgba(88,140,255,.15);border-radius:4px}',
         ].join('')
         document.head.appendChild(style)
@@ -1415,11 +1416,7 @@ window.__ModuleLoader__.load({
       if (state && state.marker) { try { state.marker.classList.remove(PARA_FALLBACK_CLASS) } catch {} }
     }
 
-    function highlightStop(session) {
-      if (session && session.highlightTimer) {
-        clearInterval(session.highlightTimer)
-        session.highlightTimer = 0
-      }
+    function highlightStop() {
       highlightDetach()
     }
 
@@ -1438,7 +1435,7 @@ window.__ModuleLoader__.load({
         session, index, spans,
         domRanges: spans.map((span) => domRangeOf(index, span)),
         raw: units.map((unit) => String((unit && unit.text) || '')),
-        supported, marker: null, paintedUnit: -1, ratio: -1,
+        supported, marker: null, paintedUnit: -1,
       }
     }
 
@@ -1461,7 +1458,8 @@ window.__ModuleLoader__.load({
       if (!state || state.session !== session) return
       if (state.paintedUnit === unit) return
       state.paintedUnit = unit
-      state.ratio = -1
+      // The word layer belongs to the paragraph that just ended.
+      clearWordHighlight()
       if (state.supported) {
         const range = state.domRanges[unit]
         try {
@@ -1493,7 +1491,12 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
-    /** The word at `inUnit` (raw unit offset), fed by a boundary event. */
+    /**
+     * The word inside the current paragraph, fed by a boundary event. Only a
+     * voice that reports word boundaries ever calls this: without them the
+     * paragraph layer is the whole story, and a guessed word position would be
+     * a lie rather than a reading aid.
+     */
     function highlightWord(session, unit, inUnit, length) {
       const state = highlightState
       if (!state || state.session !== session || !state.supported) return
@@ -1512,38 +1515,11 @@ window.__ModuleLoader__.load({
       paintWord(state, unit, at, needle.length)
     }
 
-    /**
-     * The same position for engines that hand back audio only: the share of the
-     * paragraph already played, mapped onto its characters.
-     */
-    function highlightRatio(session, unit, ratio) {
-      const state = highlightState
-      if (!state || state.session !== session || !state.supported) return
-      const span = state.spans[unit]
-      const raw = state.raw[unit] || ''
-      if (!span || !raw) return
-      const clamped = Math.max(0, Math.min(1, Number(ratio) || 0))
-      // Going backwards would read as a glitch; hold the furthest point.
-      if (state.ratio >= 0 && clamped <= state.ratio) return
-      state.ratio = clamped
-      const at = span.start + Math.round(clamped * Math.max(0, span.end - span.start - 1))
-      const tail = state.index.text.slice(at, at + 6)
-      const space = tail.indexOf(' ')
-      paintWord(state, unit, at, space > 0 ? space : Math.max(1, Math.min(6, span.end - at)))
-    }
-
-    function startHighlightTicker(session) {
-      if (session.highlightTimer) { clearInterval(session.highlightTimer); session.highlightTimer = 0 }
-      session.highlightTimer = setInterval(() => {
-        if (player !== session || session.kind === 'speech') return
-        if (session.phase !== 'playing' || !session.context || !session.startTime) return
-        const total = session.totalSamples
-        if (!total) return
-        const elapsed = (session.context.currentTime - session.startTime) * (session.renderSpeed || 1)
-        const ratio = (elapsed * SAMPLE_RATE) / total
-        highlightParagraph(session, session.unit)
-        highlightRatio(session, session.unit, ratio)
-      }, 150)
+    /** Drop the word layer when the paragraph changes or the read stops. */
+    function clearWordHighlight() {
+      try {
+        if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete(WORD_HIGHLIGHT)
+      } catch {}
     }
 
     /** Short "which voice · which signals" label for the floating window. */
@@ -1587,7 +1563,6 @@ window.__ModuleLoader__.load({
       playerView({ unit: from, phase: session.phase, speed: session.speed, preview: previewOf(session.units[from]) })
       setPlayback({ key: session.key, phase: session.phase })
       highlightParagraph(session, from)
-      highlightWord(session, from, skip, 1)
 
       const voice = pickSpeechVoice()
       session.voiceName = voice ? String(voice.name || '') : ''
@@ -1644,7 +1619,6 @@ window.__ModuleLoader__.load({
             playerView({ unit: item.index, phase: session.phase, preview: previewOf(session.units[item.index]) })
             setPlayback({ phase: session.phase })
             highlightParagraph(session, item.index)
-            highlightWord(session, item.index, item.begin, 1)
           }
           utter.onboundary = (event) => {
             if (player !== session || session.gen !== gen) return
