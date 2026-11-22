@@ -574,6 +574,7 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     st.paused = false;
     clearWatchdog();
     st.idx = units.length;
+    paintWordClear();
     el.fill.style.width = '100%';
     if (st.startedAt) setStatus('已读完 ' + units.length + ' 段 · 用时 ' + fmt(performance.now() - st.startedAt));
     paint();
@@ -596,6 +597,12 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     try { synth.cancel(); } catch (e) {}
     el.fill.style.width = '0%';
     setStatus('已停止');
+    // Nothing is being read, so nothing should stay marked.
+    paintWordClear();
+    try {
+      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
+    } catch (e) {}
+    st.paragraphs.forEach(function (p) { p.classList.remove('on'); p.classList.remove('mark'); });
     paint();
   }
 
