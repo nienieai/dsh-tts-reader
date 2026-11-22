@@ -27,16 +27,18 @@
 
 ```
 浏览器 ──POST /api/dsh-tts/plan {sessionId, messageId | text}──▶ Host
-                                                        │ 1. 取正文 → markdown 转纯文本
+                                                        │ 1. 取正文 → markdown 转纯文本（读会话，最慢的一步，按消息缓存）
                                                         │ 2. 按空行切段（piper 双模型时再按文字种类切）
                                                         │ 3. 返回 [{index, text, chars}] + total
-浏览器 ──POST /api/dsh-tts/read {…, unit: i}──▶ Host
-                                                        │ 4. 只流这一段的 PCM（缓存命中就直接读文件）
-                                                        │    下一段在页面侧预取（第二路请求，命中缓存时几乎瞬时）
+浏览器 ──POST /api/dsh-tts/read {unit: i, unitText, unitTotal}──▶ Host
+                                                        │ 4. 直接合成这段文本：**不再读会话**
+                                                        │    下一段在页面侧后台预取（同样带 unitText）
 浏览器 ◀──── 裸 PCM（单段；x-tts-units 是总段数，x-tts-unit-index 是本次段号）┘
         │
         └─ Web Audio：Int16→Float32 → AudioBuffer 排程；悬浮窗控制暂停/前后段/变速
 ```
+
+带 `sessionId/messageId` 的请求才会读会话；**读完的正文按消息缓存 5 分钟**，该消息再有 `assistant/message` 事件（内容变化）时立刻失效。`/read` 收到 `unitText` 时直接用它合成，所以每段的请求耗时只剩合成本身。
 
 `x-tts-cache` 在发头前就能定：先 stat 一遍这一段（或整段集合）的文件，全命中 `hit`、全未命中 `miss`、否则 `mixed`。
 

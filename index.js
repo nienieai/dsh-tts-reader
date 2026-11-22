@@ -1636,6 +1636,32 @@ function indicesOf(units, wanted) {
 }
 
 /**
+ * Reading a session is by far the most expensive local step (a long session can
+ * take seconds), and every paragraph request used to pay it again. The resolved
+ * message text is cached until the message changes.
+ */
+const messageTextCache = new Map()
+const MESSAGE_TEXT_TTL_MS = 300000
+const MESSAGE_TEXT_MAX = 64
+
+async function readMessageTextCached(sessionQuery, sessionId, messageId) {
+  const key = String(sessionId) + '\u0000' + String(messageId)
+  const cached = messageTextCache.get(key)
+  if (cached && Date.now() - cached.at < MESSAGE_TEXT_TTL_MS) return cached.text
+  const text = await readMessageText(sessionQuery, sessionId, messageId)
+  messageTextCache.set(key, { text, at: Date.now() })
+  while (messageTextCache.size > MESSAGE_TEXT_MAX) {
+    const oldest = messageTextCache.keys().next().value
+    messageTextCache.delete(oldest)
+  }
+  return text
+}
+
+function forgetMessageText(sessionId, messageId) {
+  messageTextCache.delete(String(sessionId) + '\u0000' + String(messageId))
+}
+
+/**
  * The paragraphs that make up one read: the message's own units, or the ones a
  * selection covers. Both /plan and /read go through this, so the `unit` index a
  * client sends always addresses the same list on both sides.
@@ -1645,7 +1671,7 @@ async function resolveUnits(scope, settings, sessionId, messageId, explicitText)
   let sessionError = null
   if (sessionId && messageId) {
     try {
-      messageText = await readMessageText(scope.sessionQuery, sessionId, messageId)
+      messageText = await readMessageTextCached(scope.sessionQuery, sessionId, messageId)
     } catch (error) {
       sessionError = error
     }
@@ -1825,6 +1851,8 @@ export function apply(ctx, config) {
       // ...and the turn's last output is remembered for the closing broadcast:
       // that is the one the official action row (and the replay button) hosts.
       lastAssistant.set(sessionId, messageId)
+      // This message just changed, so the cached text for it is stale.
+      forgetMessageText(sessionId, messageId)
       noteAssistant(sessionId, messageId, false)
     } catch {}
   }), 'dsh-tts-reader: session feed')
@@ -2074,32 +2102,56 @@ export function apply(ctx, config) {
         // An explicit text wins: it carries a selected paragraph the page already
         // has, so the Host does not have to re-read the whole message.
         const explicitText = typeof body?.text === 'string' ? body.text.trim() : ''
-        if (!explicitText && (!sessionId || !messageId)) {
+        // The floating player sends the paragraph itself, which needs no session
+        // read at all.
+        const incomingUnitText = typeof body?.unitText === 'string' ? body.unitText.trim() : ''
+        if (!explicitText && !incomingUnitText && (!sessionId || !messageId)) {
           return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '需要 sessionId 与 messageId（或直接给 text）' })
         }
 
         const current = readSettings()
 
-        // The message is always re-read, even when the page sends a selection:
-        // the cache key is a whole paragraph, so a selection has to be widened to
-        // the paragraphs it sits in, or it would never match a full read.
-        let plan
-        try {
-          plan = await resolveUnits(scope, current, sessionId, messageId, explicitText)
-        } catch (error) {
-          return writeJson(response, error.status || 500, { ok: false, code: error.code || 'FAILED', error: error.message })
+        // A unit request from the floating player carries the paragraph text it
+        // already has, so no session read is needed before synthesizing it.
+        const unitText = typeof body?.unitText === 'string' ? body.unitText.trim() : ''
+        let served
+        let unitIndex = -1
+        let totalUnits = 0
+        let truncated = false
+        if (unitText) {
+          if (unitText.length > HARD_MAX_CHARS * 2) {
+            return writeJson(response, 400, { ok: false, code: 'TOO_LONG', error: '段落文本过长' })
+          }
+          const requestedUnit = Number(body?.unit)
+          unitIndex = Number.isFinite(requestedUnit) && requestedUnit >= 0 ? Math.floor(requestedUnit) : 0
+          const requestedTotal = Number(body?.unitTotal)
+          totalUnits = Number.isFinite(requestedTotal) && requestedTotal > 0
+            ? Math.min(1000, Math.floor(requestedTotal))
+            : unitIndex + 1
+          served = [{ index: unitIndex, text: unitText, chars: unitText.length }]
+        } else {
+          // The message is always re-read, even when the page sends a selection:
+          // the cache key is a whole paragraph, so a selection has to be widened
+          // to the paragraphs it sits in, or it would never match a full read.
+          let plan
+          try {
+            plan = await resolveUnits(scope, current, sessionId, messageId, explicitText)
+          } catch (error) {
+            return writeJson(response, error.status || 500, { ok: false, code: error.code || 'FAILED', error: error.message })
+          }
+          if (plan.items.length === 0) {
+            return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
+          }
+          // `unit` addresses one paragraph of the plan, so the floating player can
+          // step forward and back without re-streaming the whole reply.
+          const requestedUnit = Number(body?.unit)
+          unitIndex = Number.isFinite(requestedUnit) && requestedUnit >= 0
+            ? Math.min(Math.floor(requestedUnit), plan.items.length - 1)
+            : -1
+          totalUnits = plan.items.length
+          truncated = plan.truncated
+          served = unitIndex >= 0 ? [plan.items[unitIndex]] : plan.items
         }
-        if (plan.items.length === 0) {
-          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
-        }
-        // `unit` addresses one paragraph of the plan, so the floating player can
-        // step forward and back without re-streaming the whole reply.
-        const requestedUnit = Number(body?.unit)
-        const unitIndex = Number.isFinite(requestedUnit) && requestedUnit >= 0
-          ? Math.min(Math.floor(requestedUnit), plan.items.length - 1)
-          : -1
-        const served = unitIndex >= 0 ? [plan.items[unitIndex]] : plan.items
-        const truncated = plan.truncated
         const units = served.map((item) => {
           // Markers are fixed strings: pin their audio so eviction never costs
           // the user a re-synthesis of "here is a table".
@@ -2260,7 +2312,7 @@ export function apply(ctx, config) {
           'x-tts-voice': current.voice,
           'x-tts-truncated': truncated ? '1' : '0',
           // The plan's total, so a unit request still reports how many there are.
-          'x-tts-units': String(plan.items.length),
+          'x-tts-units': String(totalUnits),
           'x-tts-cache': cacheState,
           'x-tts-engine': current.engine,
           ...(unitIndex >= 0 ? { 'x-tts-unit-index': String(unitIndex) } : {}),

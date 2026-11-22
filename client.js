@@ -764,13 +764,21 @@ window.__ModuleLoader__.load({
     }
 
     function playerUnitRequest(session, index, signal) {
-      const body = { unit: index }
+      const unit = session.units[index]
+      const body = {
+        unit: index,
+        unitTotal: session.units.length,
+        // The plan already has this paragraph, so the Host can synthesize it
+        // without reading the session again — that read is the slowest local step.
+        unitText: unit && typeof unit.text === 'string' ? unit.text : '',
+      }
+      if (!body.unitText) delete body.unitText
       if (session.sessionId && session.messageId) {
         body.sessionId = session.sessionId
         body.messageId = session.messageId
       }
-      // A selection re-resolves to the same plan on the Host, so `unit` keeps
-      // addressing the list the /plan call returned.
+      // Fallback for a Host that does not understand unitText: a selection
+      // re-resolves to the same plan, so `unit` still addresses it.
       if (session.selection) body.text = session.selection
       return fetch(READ_PATH, {
         method: 'POST',
