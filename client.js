@@ -505,6 +505,126 @@ window.__ModuleLoader__.load({
       return (hash >>> 0).toString(36)
     }
 
+    // Settings preview: one fixed sentence through the current engine and voice,
+    // using the same Host route as a normal read so the sample is cached and the
+    // second click is instant. It keeps its own AudioContext, so the read-aloud
+    // button state stays untouched.
+    const PREVIEW_TEXT = '你好，这是一段语音试听，用来确认音色。Hello, this is a preview.'
+    const previewListeners = new Set()
+    let previewPhase = 'idle'
+    let preview = null
+
+    function setPreviewPhase(phase) {
+      if (previewPhase === phase) return
+      previewPhase = phase
+      for (const listener of previewListeners) {
+        try { listener(phase) } catch {}
+      }
+    }
+
+    function subscribePreview(listener) {
+      previewListeners.add(listener)
+      return () => { previewListeners.delete(listener) }
+    }
+
+    function stopPreview() {
+      const active = preview
+      preview = null
+      if (active) {
+        active.cancelled = true
+        try { active.controller.abort() } catch {}
+        if (active.timer) clearTimeout(active.timer)
+        try { if (active.context) active.context.close() } catch {}
+      }
+      setPreviewPhase('idle')
+    }
+
+    function createPreviewScheduler(context, active) {
+      const durationRatio = speed > 0 ? 1 / speed : 1
+      const stretcher = Math.abs(durationRatio - 1) > 0.01 ? new Stretcher(durationRatio) : null
+      let nextTime = 0
+      let last = null
+      const emit = (samples) => {
+        if (!samples || samples.length === 0) return
+        const startAt = last ? Math.max(nextTime, context.currentTime) : context.currentTime + START_DELAY
+        const scheduled = schedule(context, samples, startAt)
+        active.sources.push(scheduled.source)
+        nextTime = scheduled.end
+        last = scheduled.source
+      }
+      return {
+        feed(samples) {
+          if (stretcher) emit(stretcher.push(samples))
+          else emit(samples)
+        },
+        finish() {
+          if (stretcher) emit(stretcher.flush())
+          return { last, end: nextTime }
+        },
+      }
+    }
+
+    async function playPreview() {
+      if (preview) { stopPreview(); return }
+      const active = { context: null, controller: new AbortController(), sources: [], timer: 0, cancelled: false }
+      preview = active
+      setPreviewPhase('loading')
+      try {
+        // Created inside the click: browsers only allow sound from a gesture.
+        const context = new AudioContext({ sampleRate: SAMPLE_RATE })
+        active.context = context
+        void context.resume().catch(() => {})
+        const response = await fetch(READ_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: PREVIEW_TEXT }),
+          signal: active.controller.signal,
+        })
+        const type = String(response.headers.get('content-type') || '')
+        if (type.indexOf('application/json') !== -1) {
+          let payload = null
+          try { payload = await response.json() } catch {}
+          throw new Error((payload && payload.error) || t('语音合成失败', 'Speech synthesis failed'))
+        }
+        if (!response.ok || !response.body) {
+          throw new Error(t('语音合成失败', 'Speech synthesis failed') + ' (HTTP ' + response.status + ')')
+        }
+        if (preview === active) setPreviewPhase('playing')
+        const reader = response.body.getReader()
+        active.controller.signal.addEventListener('abort', () => { void reader.cancel().catch(() => {}) })
+        const scheduler = createPreviewScheduler(context, active)
+        let rest = new Uint8Array(0)
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (active.cancelled) return
+          const merged = concatBytes(rest, value)
+          const samples = toFloat32(merged)
+          rest = merged.slice(samples.length * 2)
+          if (samples.length === 0) continue
+          scheduler.feed(samples)
+        }
+        if (active.cancelled) return
+        const { last, end } = scheduler.finish()
+        const reset = () => {
+          if (preview !== active) return
+          preview = null
+          try { context.close() } catch {}
+          setPreviewPhase('idle')
+        }
+        if (!last) { reset(); return }
+        // Web Audio keeps playing after the stream ends; release it when the
+        // scheduled tail is over.
+        active.timer = setTimeout(reset, Math.max(0, (end - context.currentTime) * 1000) + 200)
+      } catch (error) {
+        if (active.cancelled) return
+        if (preview === active) preview = null
+        try { if (active.context) active.context.close() } catch {}
+        setPreviewPhase('idle')
+        showFailureToast((error && error.message) || String(error))
+      }
+    }
+
     async function startReadAloud(sessionId, messageId, stateKey, options) {
       const text = options && options.text ? options.text : ''
       const cacheKey = text ? stateKey + '|s:' + hashString(text) : stateKey
@@ -1276,6 +1396,7 @@ window.__ModuleLoader__.load({
       // one drag is one write instead of dozens.
       const [speedDraft, setSpeedDraft] = React.useState(null)
       const [guideOpen, setGuideOpen] = React.useState(false)
+      const [previewState, setPreviewState] = React.useState(previewPhase)
       useLocaleTick()
 
       const load = React.useCallback(() => {
@@ -1286,6 +1407,10 @@ window.__ModuleLoader__.load({
       }, [])
 
       React.useEffect(() => { load() }, [load])
+      // The preview button follows the module-level player, and leaving the page
+      // stops a sample that is still playing.
+      React.useEffect(() => subscribePreview(setPreviewState), [])
+      React.useEffect(() => () => { stopPreview() }, [])
 
       const save = async (patch) => {
         setBusy(true); setNotice(''); setFailure('')
@@ -1301,6 +1426,8 @@ window.__ModuleLoader__.load({
           applyRemoteConfig(body.value)
           audioCache.clear()
           setNotice(t('已保存', 'Saved'))
+          // The sample was rendered by the previous settings; do not keep playing.
+          stopPreview()
         } catch (error) {
           setFailure(error && error.message ? error.message : String(error))
         } finally {
@@ -1543,6 +1670,18 @@ window.__ModuleLoader__.load({
               children: t('离线安装说明', 'Offline install guide'),
             }),
           ) : null,
+          row('preview', t('试听', 'Preview'), [
+            h('button', {
+              key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,
+              onClick: () => { if (previewState === 'idle') void playPreview(); else stopPreview() },
+              children: previewState === 'loading'
+                ? t('停止（正在合成）', 'Stop (synthesizing)')
+                : previewState === 'playing'
+                  ? t('停止试听', 'Stop preview')
+                  : t('试听一下', 'Play a sample'),
+            }),
+            h('span', { key: 'hint', className: 'dsh-tts-hint' }, t('固定一句中英混读', 'fixed mixed zh/en sentence')),
+          ]),
         ),
         h('div', { className: 'dsh-tts-card', key: 'speech' },
           head('head', t('朗读', 'Playback'),
