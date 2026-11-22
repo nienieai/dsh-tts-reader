@@ -477,8 +477,13 @@
   var LIST_LIMIT = 60;
   var picker = { open: false, filter: '', hover: 0 };
 
+  /** The field also shows a ⌂/☁/★ prefix; a search must ignore those marks. */
+  function searchText(value) {
+    return String(value || '').replace(/[⌂☁★]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
   function matchingVoices() {
-    var needle = String(picker.filter || '').trim().toLowerCase();
+    var needle = searchText(picker.filter);
     if (!needle) return st.visible;
     return st.visible.filter(function (v) {
       var hay = (String(v.name || '') + ' ' + String(v.lang || '')).toLowerCase();
@@ -489,6 +494,7 @@
   function paintVoiceField() {
     var v = currentVoice();
     els.voiceSearch.value = v ? voiceLabel(v) : (st.visible.length ? '' : '（没有可用音色）');
+    els.voiceSearch.placeholder = '点开或输入筛选（例如 中文 / mandarin / cmn）';
   }
 
   function renderVoiceList() {
@@ -892,7 +898,11 @@
   });
 
   els.voiceSearch.addEventListener('focus', function () {
-    els.voiceSearch.select();
+    // Start empty so what you type is the whole search, with the current voice
+    // shown as a placeholder instead of sitting in the box as text.
+    var v = currentVoice();
+    els.voiceSearch.value = '';
+    if (v) els.voiceSearch.placeholder = voiceLabel(v);
     picker.filter = '';
     picker.hover = 0;
     renderVoiceList();

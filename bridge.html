@@ -367,14 +367,20 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   function paintVoiceField() {
     var v = currentVoice();
     el.voiceSearch.value = v ? voiceLabel(v) : (st.visible.length ? '' : '（没有可用音色）');
+    el.voiceSearch.placeholder = '音色：点开或输入筛选';
   }
 
   /* ---------- voice picker ---------- */
 
   var LIST_LIMIT = 60;
 
+  /** The field also shows a ⌂/☁ prefix; a search must ignore those marks. */
+  function searchText(value) {
+    return String(value || '').replace(/[⌂☁★]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
   function matchingVoices() {
-    var needle = String(st.filter || '').trim().toLowerCase();
+    var needle = searchText(st.filter);
     if (!needle) return st.visible;
     return st.visible.filter(function (v) {
       var hay = (String(v.name || '') + ' ' + String(v.lang || '')).toLowerCase();
@@ -635,7 +641,11 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   el.btnNext.addEventListener('click', function () { step(1); });
   // Typing filters the list; the field shows the chosen voice again on close.
   el.voiceSearch.addEventListener('focus', function () {
-    el.voiceSearch.select();
+    // Start empty so what you type is the whole search, with the current voice
+    // shown as a placeholder instead of sitting in the box as text.
+    var v = currentVoice();
+    el.voiceSearch.value = '';
+    if (v) el.voiceSearch.placeholder = voiceLabel(v);
     st.filter = '';
     st.hover = 0;
     renderVoiceList();
