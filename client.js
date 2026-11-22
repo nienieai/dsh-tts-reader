@@ -1507,11 +1507,23 @@ window.__ModuleLoader__.load({
       const width = Math.max(1, Math.min(24, Number(length) || 8))
       const needle = normalizeProbe(raw.slice(from, from + width))
       if (!needle) return
-      let at = state.index.text.indexOf(needle, span.start)
-      if (at === -1 || at + needle.length > span.end) {
-        // A repeated word or a rewritten span: place it by character share.
-        at = span.start + Math.round((from / Math.max(1, raw.length)) * (span.end - span.start))
+      // The same word can appear several times in one paragraph. Picking the
+      // first copy makes the mark jump back to it on every repeat, so the copy
+      // nearest the engine's own character offset wins; on a tie the later one
+      // does, because the reading only moves forward.
+      const target = span.start + Math.max(0, Math.min(span.end - span.start - 1, from))
+      let at = -1
+      let gap = Infinity
+      let found = state.index.text.indexOf(needle, span.start)
+      while (found !== -1 && found + needle.length <= span.end) {
+        const distance = Math.abs(found - target)
+        if (distance < gap || (distance === gap && found > at)) {
+          at = found
+          gap = distance
+        }
+        found = state.index.text.indexOf(needle, found + 1)
       }
+      if (at === -1) at = Math.min(target, span.end - 1)
       paintWord(state, unit, at, needle.length)
     }
 
