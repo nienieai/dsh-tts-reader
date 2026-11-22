@@ -198,6 +198,8 @@ window.__ModuleLoader__.load({
       if (target && target.text) payload.text = target.text
       // The bridge reads at the speed set on the settings page.
       payload.speed = Number(speed) || 1
+      // Its voice list is ordered by the app's language, not the browser's.
+      payload.lang = currentLang()
       try {
         const response = await fetch(BRIDGE_PATH, {
           method: 'POST',

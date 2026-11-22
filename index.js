@@ -2167,12 +2167,13 @@ export function apply(ctx, config) {
     const addBridge = (payload) => {
       pruneBridges()
       const id = crypto.randomUUID()
-      bridgeEntries.set(id, { at: Date.now(), title: payload.title, units: payload.units, speed: payload.speed })
+      bridgeEntries.set(id, { at: Date.now(), title: payload.title, units: payload.units, speed: payload.speed, lang: payload.lang })
       return id
     }
 
     const renderBridge = (entry) => {
-      const payload = JSON.stringify({ title: entry.title, units: entry.units, speed: entry.speed }).replace(/</g, '\\u003c')
+      const payload = JSON.stringify({ title: entry.title, units: entry.units, speed: entry.speed, lang: entry.lang })
+        .replace(/</g, '\\u003c')
       return bridgeSource().replace('__BRIDGE_DATA__', payload)
     }
 
@@ -2263,7 +2264,8 @@ export function apply(ctx, config) {
         const bridgeSpeed = Number.isFinite(requestedSpeed) && requestedSpeed > 0
           ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(requestedSpeed * 100) / 100))
           : current.speed
-        const payload = { title, units, speed: bridgeSpeed }
+        const lang = typeof body?.lang === 'string' ? body.lang.toLowerCase().slice(0, 12) : ''
+        const payload = { title, units, speed: bridgeSpeed, lang }
         // A bridge tab that is still open — possibly from hours ago — gets the
         // text directly. Opening another tab every time would pile them up.
         const delivered = deliverToBridge(payload)

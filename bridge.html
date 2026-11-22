@@ -33,8 +33,21 @@
   .progress{height:2px;background:transparent}
   #fill{height:100%;width:0;background:var(--accent);transition:width .25s linear}
 
-  select{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:7px;
-    padding:5px 7px;font:inherit;font-size:12.5px;max-width:12rem;min-width:0}
+  /* Voice picker: one searchable field, the list only exists while it is open.
+     A system can expose 10 000+ voices (espeak-ng), so a <select> is a trap. */
+  .picker{position:relative;flex:0 1 auto;min-width:0}
+  #voiceSearch{width:12rem;max-width:100%;background:var(--field);color:var(--fg);
+    border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:inherit;font-size:12.5px;
+    min-width:0}
+  #voiceSearch:focus{outline:none;border-color:var(--accent)}
+  #voiceList{position:absolute;top:calc(100% + 6px);left:0;z-index:20;width:20rem;max-width:80vw;
+    max-height:min(320px,60vh);overflow:auto;background:var(--bg);border:1px solid var(--line);
+    border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:4px}
+  #voiceList .item{padding:5px 8px;border-radius:6px;font-size:12.5px;cursor:pointer;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #voiceList .item:hover,#voiceList .item.hover{background:rgba(96,165,250,.18)}
+  #voiceList .item.current{color:var(--accent);font-weight:600}
+  #voiceList .more{padding:4px 8px;font-size:11.5px;color:var(--dim)}
   .chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);
     cursor:pointer;user-select:none;white-space:nowrap}
   .rate-wrap{display:inline-flex;align-items:center;gap:5px}
@@ -81,7 +94,11 @@
 <div class="bar">
   <div class="bar-inner">
     <span class="brand" id="brand">朗读桥</span>
-    <select id="voiceSel" title="音色"><option value="">（正在读取本机语音…）</option></select>
+    <span class="picker">
+      <input id="voiceSearch" type="search" autocomplete="off" spellcheck="false"
+             placeholder="音色：点开或输入筛选" title="音色（可输入筛选）">
+      <div id="voiceList" hidden></div>
+    </span>
     <label class="chk" title="只列出离线音色，不连厂商服务器"><input type="checkbox" id="onlyLocal"> 本地</label>
     <span class="rate-wrap">
       <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1" title="语速">
@@ -134,17 +151,27 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   var FOLLOW_RESUME_MS = 3000;
 
   var el = {};
-  ['brand','fill','banner','voiceSel','onlyLocal','btnPrev','btnPlay','btnNext','btnStop',
+  ['brand','fill','banner','voiceSearch','voiceList','onlyLocal','btnPrev','btnPlay','btnNext','btnStop',
    'rate','rateVal','dot','title','sub','doc'].forEach(function (id) { el[id] = document.getElementById(id); });
 
   var st = {
     voices: [], visible: [], idx: 0, running: false, paused: false, stop: false,
     gen: 0, watchdog: 0, boundary: 0, attempted: false, startedAt: 0,
-    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0
+    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0,
+    listOpen: false, filter: '', hover: -1
   };
 
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
-  function isCloud(v) { return v.localService === false; }
+  /**
+   * Firefox marks every speech-dispatcher voice as `localService: false`, so a
+   * name check decides the engines known to run on this machine; anything else
+   * that calls itself remote is treated as a vendor server.
+   */
+  function isCloud(v) {
+    if (v.localService !== false) return false;
+    var name = String(v.name || '') + ' ' + String(v.voiceURI || '');
+    return !/espeak|speech-?dispatcher|speechd|festival|pico|svox|mbrola/i.test(name);
+  }
   function fmt(ms) { return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
 
   function banner(kind, text) {
@@ -257,40 +284,65 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     try { return (synth && synth.getVoices()) || []; } catch (e) { return []; }
   }
 
+  /** The language the app speaks, so its voices come first instead of last. */
+  function preferredLang() {
+    var raw = String(data.lang || '').toLowerCase();
+    if (raw) return raw.split(/[-_]/)[0];
+    var sample = units.slice(0, 3).map(function (u) { return u.text; }).join(' ');
+    if (/[\u3400-\u9fff]/.test(sample)) return 'zh';
+    if (/[\u3040-\u30ff]/.test(sample)) return 'ja';
+    if (/[\uac00-\ud7af]/.test(sample)) return 'ko';
+    return String(navigator.language || 'en').toLowerCase().split(/[-_]/)[0];
+  }
+
   function sortVoices(list) {
+    var pref = preferredLang();
+    var rank = function (v) {
+      var lang = String(v.lang || '').toLowerCase().split(/[-_]/)[0];
+      if (lang === pref) return 0;
+      if (pref !== 'zh' && lang === 'zh') return 1;
+      if (lang === 'en' && pref !== 'en') return 2;
+      return 3;
+    };
     return list.slice().sort(function (a, b) {
-      if (isZh(a) !== isZh(b)) return isZh(a) ? -1 : 1;
-      if (isCloud(a) !== isCloud(b)) return isCloud(a) ? -1 : 1;
+      var ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      if (isCloud(a) !== isCloud(b)) return isCloud(a) ? 1 : -1;
+      // Plain names before espeak's "+Variant" copies.
+      var va = (a.name || '').indexOf('+') === -1 ? 0 : 1;
+      var vb = (b.name || '').indexOf('+') === -1 ? 0 : 1;
+      if (va !== vb) return va - vb;
       var la = a.lang || '', lb = b.lang || '';
       if (la !== lb) return la < lb ? -1 : 1;
       return (a.name || '') < (b.name || '') ? -1 : 1;
     });
   }
 
+  function voiceLabel(v) {
+    return (isCloud(v) ? '☁ ' : '⌂ ') + v.name + ' · ' + v.lang;
+  }
+
   function rebuildVoices() {
     st.voices = sortVoices(allVoices());
     st.visible = el.onlyLocal.checked ? st.voices.filter(function (v) { return !isCloud(v); }) : st.voices;
-    el.voiceSel.textContent = '';
-    if (!st.visible.length) {
-      var o0 = document.createElement('option');
-      o0.value = '';
-      o0.textContent = el.onlyLocal.checked ? '（没有本地音色）' : '（没有可用音色）';
-      el.voiceSel.appendChild(o0);
-      return;
+    if (!st.visible.length && el.onlyLocal.checked && st.voices.length) {
+      // Firefox labels speechd voices remote; never leave the user with nothing.
+      el.onlyLocal.checked = false;
+      st.visible = st.voices;
     }
-    st.visible.forEach(function (v, i) {
-      var o = document.createElement('option');
-      o.value = String(i);
-      o.textContent = (isCloud(v) ? '☁ ' : '⌂ ') + v.name + ' · ' + v.lang;
-      if (v.voiceURI === st.savedUri) o.selected = true;
-      el.voiceSel.appendChild(o);
-    });
-    if (!el.voiceSel.value && st.visible.length) el.voiceSel.value = '0';
+    if (!currentVoice() && st.visible.length) {
+      var remembered = st.visible.filter(function (v) { return v.voiceURI === st.savedUri })[0];
+      st.savedUri = (remembered || st.visible[0]).voiceURI;
+    }
+    paintVoiceField();
+    if (st.listOpen) renderVoiceList();
   }
 
   function currentVoice() {
-    var i = parseInt(el.voiceSel.value, 10);
-    return (i >= 0 && st.visible[i]) ? st.visible[i] : null;
+    if (!st.savedUri) return null;
+    for (var i = 0; i < st.visible.length; i++) if (st.visible[i].voiceURI === st.savedUri) return st.visible[i];
+    for (var j = 0; j < st.voices.length; j++) if (st.voices[j].voiceURI === st.savedUri) return st.voices[j];
+    return null;
   }
 
   function pickLocalVoice() {
@@ -302,11 +354,79 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
 
   function selectVoice(v) {
     if (!v) return false;
-    if (st.visible.indexOf(v) < 0) { el.onlyLocal.checked = false; rebuildVoices(); }
-    var i = st.visible.indexOf(v);
-    if (i < 0) return false;
-    el.voiceSel.value = String(i);
+    if (st.visible.indexOf(v) < 0) {
+      el.onlyLocal.checked = false;
+      rebuildVoices();
+      if (st.visible.indexOf(v) < 0) return false;
+    }
+    st.savedUri = v.voiceURI;
+    paintVoiceField();
     return true;
+  }
+
+  function paintVoiceField() {
+    var v = currentVoice();
+    el.voiceSearch.value = v ? voiceLabel(v) : (st.visible.length ? '' : '（没有可用音色）');
+  }
+
+  /* ---------- voice picker ---------- */
+
+  var LIST_LIMIT = 60;
+
+  function matchingVoices() {
+    var needle = String(st.filter || '').trim().toLowerCase();
+    if (!needle) return st.visible;
+    return st.visible.filter(function (v) {
+      var hay = (String(v.name || '') + ' ' + String(v.lang || '')).toLowerCase();
+      return needle.split(/\s+/).every(function (part) { return hay.indexOf(part) !== -1; });
+    });
+  }
+
+  function renderVoiceList() {
+    var list = matchingVoices();
+    el.voiceList.textContent = '';
+    el.voiceList.hidden = false;
+    st.listOpen = true;
+    if (st.hover >= list.length) st.hover = 0;
+    var shown = list.slice(0, LIST_LIMIT);
+    shown.forEach(function (v, i) {
+      var item = document.createElement('div');
+      item.className = 'item' + (i === st.hover ? ' hover' : '') + (v.voiceURI === st.savedUri ? ' current' : '');
+      item.textContent = voiceLabel(v);
+      item.title = String(v.voiceURI || '');
+      item.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        chooseVoice(v);
+      });
+      el.voiceList.appendChild(item);
+    });
+    if (list.length > shown.length) {
+      var more = document.createElement('div');
+      more.className = 'more';
+      more.textContent = '还有 ' + (list.length - shown.length) + ' 个，继续输入缩小范围';
+      el.voiceList.appendChild(more);
+    }
+    if (shown.length === 0) {
+      var none = document.createElement('div');
+      none.className = 'more';
+      none.textContent = '没有匹配的音色';
+      el.voiceList.appendChild(none);
+    }
+  }
+
+  function closeVoiceList() {
+    st.listOpen = false;
+    el.voiceList.hidden = true;
+    st.filter = '';
+    st.hover = -1;
+    paintVoiceField();
+  }
+
+  function chooseVoice(v) {
+    selectVoice(v);
+    try { localStorage.setItem(VOICE_KEY, v.voiceURI || ''); } catch (e) {}
+    closeVoiceList();
+    paint();
   }
 
   /** The settings page owns the speed; it arrives with the text. */
@@ -513,11 +633,38 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   el.btnStop.addEventListener('click', stop);
   el.btnPrev.addEventListener('click', function () { step(-1); });
   el.btnNext.addEventListener('click', function () { step(1); });
-  el.voiceSel.addEventListener('change', function () {
-    var v = currentVoice();
-    if (!v) return;
-    st.savedUri = v.voiceURI;
-    try { localStorage.setItem(VOICE_KEY, v.voiceURI || ''); } catch (e) {}
+  // Typing filters the list; the field shows the chosen voice again on close.
+  el.voiceSearch.addEventListener('focus', function () {
+    el.voiceSearch.select();
+    st.filter = '';
+    st.hover = 0;
+    renderVoiceList();
+  });
+  el.voiceSearch.addEventListener('input', function () {
+    st.filter = el.voiceSearch.value;
+    st.hover = 0;
+    renderVoiceList();
+  });
+  el.voiceSearch.addEventListener('keydown', function (event) {
+    var list = matchingVoices();
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!st.listOpen) { renderVoiceList(); return; }
+      var step = event.key === 'ArrowDown' ? 1 : -1;
+      st.hover = Math.max(0, Math.min(list.length - 1, (st.hover < 0 ? 0 : st.hover) + step));
+      renderVoiceList();
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (st.listOpen && list.length) chooseVoice(list[Math.max(0, Math.min(st.hover, list.length - 1))]);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Escape') { closeVoiceList(); event.preventDefault(); }
+  });
+  el.voiceSearch.addEventListener('blur', function () {
+    // The list uses mousedown, so a click already chose by the time focus dies.
+    setTimeout(function () { if (st.listOpen) closeVoiceList(); }, 120);
   });
   el.onlyLocal.addEventListener('change', function () { rebuildVoices(); paint(); });
   el.rate.addEventListener('input', function () {
