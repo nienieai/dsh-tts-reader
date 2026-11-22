@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浏览器朗读能力探测 · Web Speech</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#262b36; --fg:#e6e9ef; --dim:#9aa4b2;
+    --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:24px 20px 64px; background:var(--bg); color:var(--fg);
+    font:14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  main{max-width:980px; margin:0 auto; display:flex; flex-direction:column; gap:14px}
+  h1{font-size:18px; margin:0 0 2px; font-weight:600}
+  .sub{color:var(--dim); font-size:12.5px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px}
+  .card > h2{font-size:13px; margin:0 0 10px; font-weight:600; color:var(--dim); letter-spacing:.02em}
+  .badge{
+    display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
+    font-size:12.5px; font-weight:600; border:1px solid transparent;
+  }
+  .badge.ok{background:rgba(74,222,128,.12); color:var(--ok); border-color:rgba(74,222,128,.35)}
+  .badge.warn{background:rgba(251,191,36,.12); color:var(--warn); border-color:rgba(251,191,36,.35)}
+  .badge.err{background:rgba(248,113,113,.12); color:var(--err); border-color:rgba(248,113,113,.35)}
+  .kv{display:grid; grid-template-columns:118px 1fr; gap:4px 12px; font-size:13px; margin-top:10px}
+  .kv dt{color:var(--dim)}
+  .kv dd{margin:0; font-family:var(--mono); font-size:12.5px; word-break:break-all}
+  .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+  .row + .row{margin-top:10px}
+  label.fld{display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--dim)}
+  select, textarea, input[type=number]{
+    background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:7px;
+    padding:8px 10px; font:inherit;
+  }
+  select{min-width:min(520px, 100%)}
+  select:focus, textarea:focus, input:focus{outline:2px solid rgba(96,165,250,.45); outline-offset:1px}
+  textarea{width:100%; min-height:132px; resize:vertical; line-height:1.6}
+  input[type=range]{width:180px; accent-color:var(--accent)}
+  button{
+    background:#232838; color:var(--fg); border:1px solid var(--line); border-radius:7px;
+    padding:8px 14px; font:inherit; font-size:13px; cursor:pointer;
+  }
+  button:hover:not(:disabled){background:#2b3245}
+  button:disabled{opacity:.42; cursor:not-allowed}
+  button.primary{background:#2563eb; border-color:#2563eb}
+  button.primary:hover:not(:disabled){background:#1d4ed8}
+  .val{font-family:var(--mono); font-size:12.5px; color:var(--fg); min-width:52px; display:inline-block}
+  .hint{color:var(--dim); font-size:12px; margin-top:8px}
+  .hint code{font-family:var(--mono); background:#0c0e12; padding:1px 5px; border-radius:4px}
+  select.sm{min-width:0; width:auto}
+  label.chk{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--fg); cursor:pointer; user-select:none}
+  #vHint{margin-top:10px; font-size:12.5px; line-height:1.65; color:var(--dim)}
+  #vHint b{color:var(--warn); font-weight:600}
+  #chunkBar{height:4px; background:#0c0e12; border-radius:2px; overflow:hidden; margin-top:10px}
+  #chunkFill{height:100%; width:0; background:var(--accent); transition:width .18s linear}
+  #chunkNow{
+    margin-top:10px; padding:10px 12px; background:#0c0e12; border:1px solid var(--line);
+    border-radius:7px; min-height:44px; font-size:13.5px; line-height:1.7; max-height:132px; overflow:auto;
+  }
+  #chunkNow mark{background:rgba(96,165,250,.28); color:#dbeafe; border-radius:3px; padding:0 1px}
+  .stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px; margin-top:4px}
+  .stat{background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:9px 11px}
+  .stat b{display:block; font-family:var(--mono); font-size:15px; font-weight:600; margin-top:3px}
+  .stat span{font-size:11.5px; color:var(--dim)}
+  #log{
+    margin:0; height:220px; overflow:auto; background:#0c0e12; border:1px solid var(--line);
+    border-radius:8px; padding:10px 12px; font-family:var(--mono); font-size:12px;
+    line-height:1.7; white-space:pre-wrap; word-break:break-word; color:#c7cedb;
+  }
+  #log .t{color:#5b6472}
+  #log .w{color:var(--warn)}
+  #log .e{color:var(--err)}
+  #log .g{color:var(--ok)}
+  .msgs{margin:10px 0 0; padding-left:18px; font-size:12.5px; color:var(--dim)}
+  .msgs li{margin:3px 0}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>浏览器朗读能力探测</h1>
+    <div class="sub">纯前端单文件：检测 Web Speech API，列出系统/云端音色，测量首字延迟与分段间隔。不联网请求任何第三方服务（云端音色的语音由浏览器自己发给厂商）。</div>
+  </header>
+
+  <section class="card">
+    <h2>支持状态</h2>
+    <div class="row"><span id="badge" class="badge warn">检测中…</span><span id="badgeNote" class="sub"></span></div>
+    <dl class="kv">
+      <dt>浏览器</dt><dd id="kBrowser">—</dd>
+      <dt>API</dt><dd id="kApi">—</dd>
+      <dt>音色</dt><dd id="kVoiceCount">—</dd>
+      <dt>任务队列</dt><dd id="kQueue">—</dd>
+    </dl>
+    <div class="row" style="margin-top:12px">
+      <button id="btnRedetect">重新检测</button>
+      <button id="btnCopyDiag">复制诊断信息</button>
+    </div>
+    <ul id="notes" class="msgs"></ul>
+  </section>
+
+  <section class="card">
+    <h2>音色</h2>
+    <div class="row">
+      <label class="fld" style="flex:1">
+        选择音色
+        <select id="voiceSel"><option value="">（尚无音色列表）</option></select>
+      </label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="chk"><input type="checkbox" id="onlyLocal"> 只看本地音色（离线，不经过任何服务器）</label>
+    </div>
+    <dl class="kv">
+      <dt>voiceURI</dt><dd id="vUri">—</dd>
+      <dt>lang</dt><dd id="vLang">—</dd>
+      <dt>来源</dt><dd id="vLocal">—</dd>
+      <dt>default</dt><dd id="vDefault">—</dd>
+    </dl>
+    <div id="vHint"></div>
+    <div class="row" style="margin-top:12px">
+      <button id="btnSample">试听这句</button>
+      <span class="hint" style="margin-top:0">用固定短句 <code>你好，这是浏览器语音合成测试。</code> 快速比较音色，不影响下面的正文。</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>正文与参数</h2>
+    <textarea id="text" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:12px">
+      <label class="fld">语速 <span><input id="rate" type="range" min="0.5" max="2" step="0.05" value="1"><span class="val" id="rateVal">1.00</span></span></label>
+      <label class="fld">音调 <span><input id="pitch" type="range" min="0" max="2" step="0.05" value="1"><span class="val" id="pitchVal">1.00</span></span></label>
+      <label class="fld">音量 <span><input id="volume" type="range" min="0" max="1" step="0.05" value="1"><span class="val" id="volumeVal">1.00</span></span></label>
+      <label class="fld">每块字数 <input id="chunkSize" type="number" min="20" max="500" step="10" value="120" style="width:92px"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="fld">首音超时（秒）
+        <input id="firstTimeout" type="number" min="3" max="60" step="1" value="8" style="width:92px">
+      </label>
+      <label class="fld">超时后
+        <select id="timeoutAction" class="sm">
+          <option value="stop">停下并提示</option>
+          <option value="fallback">自动改用本地音色</option>
+        </select>
+      </label>
+      <span class="hint" style="margin-top:0; max-width:440px">云端音色连不上服务器时会既不出声也不报错，只能靠超时判定。</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="btnPlay" class="primary">播放</button>
+      <button id="btnPause" disabled>暂停</button>
+      <button id="btnResume" disabled>继续</button>
+      <button id="btnStop" disabled>停止</button>
+      <button id="btnFallback" hidden>改用本地音色重试</button>
+      <span class="hint" style="margin-top:0" id="chunkInfo">—</span>
+    </div>
+    <div id="chunkBar"><div id="chunkFill"></div></div>
+    <div id="chunkNow" class="sub">播放后这里显示当前分段，词边界处会高亮。</div>
+    <div class="hint">长文本按句切块后再逐块朗读，避免 Chromium 对超长 utterance 截断或卡死。<b>块间隔</b>是上一块结束到下一块开始之间的空档，正是“听起来有停顿”的直接指标。</div>
+  </section>
+
+  <section class="card">
+    <h2>测量</h2>
+    <div class="stats">
+      <div class="stat"><span>首字延迟（点击→开口）</span><b id="sFirst">—</b></div>
+      <div class="stat"><span>语音总时长</span><b id="sTotal">—</b></div>
+      <div class="stat"><span>速度（字/秒）</span><b id="sCps">—</b></div>
+      <div class="stat"><span>最大块间隔</span><b id="sGap">—</b></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>日志</h2>
+    <pre id="log"></pre>
+    <div class="row" style="margin-top:10px"><button id="btnClearLog">清空日志</button></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var synth = window.speechSynthesis;
+  var Utter = window.SpeechSynthesisUtterance;
+
+  var SAMPLE = [
+    '你好，这是浏览器语音合成测试。',
+    '这一段的长度大约两百字，用来观察长文本被切块之后，块与块之间会不会出现明显的停顿；如果停得久，实际朗读体验就会像“一句话一顿”。',
+    '中文标点。混合 English words and numbers 12345，看看中英混排时音色会不会切回本地音色或者读错。',
+    '这是一句刻意写得很长很长的话，中间只用逗号连接，用来测试按句切块会不会把一整段塞进一个 utterance 里，以及在很长的一段里语速、音量是不是还能即时生效；它应该一直延续到这一段文字的结尾处才结束。'
+  ].join('\n\n');
+
+  var els = {};
+  ['badge','badgeNote','kBrowser','kApi','kVoiceCount','kQueue','notes',
+   'voiceSel','vUri','vLang','vLocal','vDefault','onlyLocal','vHint',
+   'text','rate','rateVal','pitch','pitchVal','volume','volumeVal','chunkSize',
+   'firstTimeout','timeoutAction',
+   'btnRedetect','btnCopyDiag','btnSample','btnPlay','btnPause','btnResume','btnStop','btnFallback',
+   'chunkInfo','chunkFill','chunkNow','sFirst','sTotal','sCps','sGap','log','btnClearLog'
+  ].forEach(function (id) { els[id] = document.getElementById(id); });
+
+  var st = {
+    voices: [],
+    visible: [],
+    selectedUri: '',
+    loggedCount: -1,
+    chunks: [],
+    idx: 0,
+    running: false,
+    paused: false,
+    stopFlag: false,
+    watchdog: 0,
+    fallbackTried: false,
+    clickAt: 0,
+    firstAt: 0,
+    lastEndAt: 0,
+    chunksDone: 0,
+    speechMs: 0,
+    charsSpoken: 0,
+    maxGap: 0,
+    logs: 0
+  };
+
+  /* ---------- 工具 ---------- */
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;';
+    });
+  }
+
+  function fmt(ms) {
+    if (ms == null || !isFinite(ms)) return '—';
+    if (ms < 1000) return Math.round(ms) + ' ms';
+    return (ms / 1000).toFixed(2) + ' s';
+  }
+
+  function log(msg, cls) {
+    if (st.logs > 400) { els.log.textContent = ''; st.logs = 0; }
+    var t = st.clickAt ? (performance.now() - st.clickAt) : 0;
+    var line = document.createElement('span');
+    line.innerHTML = '<span class="t">' + (st.clickAt ? '+' + Math.round(t) + 'ms' : '      ') + '</span>  ' +
+      (cls ? '<span class="' + cls + '">' + esc(msg) + '</span>' : esc(msg)) + '\n';
+    els.log.appendChild(line);
+    els.log.scrollTop = els.log.scrollHeight;
+    st.logs++;
+  }
+
+  function setBadge(kind, text, note) {
+    els.badge.className = 'badge ' + kind;
+    els.badge.textContent = text;
+    els.badgeNote.textContent = note || '';
+  }
+
+  function browserName() {
+    var ua = navigator.userAgent;
+    var m;
+    if ((m = /Edg\/([\d.]+)/.exec(ua))) return 'Edge ' + m[1];
+    if ((m = /OPR\/([\d.]+)/.exec(ua))) return 'Opera ' + m[1];
+    if ((m = /Firefox\/([\d.]+)/.exec(ua))) return 'Firefox ' + m[1];
+    if ((m = /Chrome\/([\d.]+)/.exec(ua))) return 'Chrome ' + m[1];
+    if ((m = /Version\/([\d.]+).*Safari/.exec(ua))) return 'Safari ' + m[1];
+    return navigator.userAgent;
+  }
+
+  /* ---------- 检测 ---------- */
+
+  function detect() {
+    var notes = [];
+    els.kBrowser.textContent = browserName() + ' / ' + (navigator.platform || '—');
+
+    if (!synth || typeof Utter !== 'function') {
+      els.kApi.textContent = '缺失';
+      els.kVoiceCount.textContent = '—';
+      setBadge('err', '不支持', '这个浏览器没有 Web Speech 语音合成。');
+      notes.push('window.speechSynthesis 或 SpeechSynthesisUtterance 不存在，无法使用浏览器朗读。');
+      notes.push('常见的可用环境：桌面 Edge / Chrome / Safari、Android Chrome。部分精简版内核、WebView、无头模式没有语音引擎。');
+      renderNotes(notes);
+      setControlsEnabled(false);
+      return;
+    }
+
+    els.kApi.textContent = 'speechSynthesis 可用';
+    updateQueueInfo();
+
+    var list = getVoices();
+    els.kVoiceCount.textContent = list.length ? (list.length + ' 个') : '0 个（等待中）';
+
+    if (!list.length) {
+      setBadge('warn', '半可用', 'API 在，但语音列表为空。');
+      notes.push('API 对象存在，getVoices() 返回空数组。多数情况下稍后会通过 voiceschanged 补齐；如果始终为空，说明这个内核没有安装/暴露任何语音引擎。');
+      notes.push('Linux 上通常需要安装 speech-dispatcher 与音色包；无头浏览器与部分安卓 WebView 也会是空列表。');
+    } else {
+      var cloud = list.filter(function (v) { return v.localService === false; }).length;
+      var nat = list.filter(function (v) { return /natural/i.test(v.name || ''); }).length;
+      setBadge('ok', '可用', list.length + ' 个音色（云端 ' + cloud + '，含 Natural ' + nat + '）');
+      if (nat) notes.push('检测到 ' + nat + ' 个 Natural 音色：这类是厂商的神经网络音色（Edge 上通常是 Online 系列），音质明显好于本地 SAPI，但需要联网。');
+      if (!cloud && !nat) notes.push('列表里没有云端自然音色，只有本地引擎音色（Windows 上是 SAPI，音质偏机械）。');
+      if (!list.some(function (v) { return /^zh/i.test(v.lang || ''); })) notes.push('没有中文音色：读中文会退化成默认音色或用英文引擎硬读。');
+    }
+
+    notes.push('pause()/resume() 的支持因平台而异；本页会实时读取 synthesis.paused 判断是否真的暂停了。');
+    renderNotes(notes);
+    setControlsEnabled(list.length > 0);
+  }
+
+  function renderNotes(list) {
+    els.notes.innerHTML = '';
+    list.forEach(function (t) {
+      var li = document.createElement('li');
+      li.textContent = t;
+      els.notes.appendChild(li);
+    });
+  }
+
+  function updateQueueInfo() {
+    if (!synth) { els.kQueue.textContent = '—'; return; }
+    els.kQueue.textContent = 'speaking=' + synth.speaking + ' pending=' + synth.pending + ' paused=' + synth.paused;
+  }
+
+  /* ---------- 音色 ---------- */
+
+  function getVoices() {
+    try { return synth ? (synth.getVoices() || []) : []; } catch (e) { return []; }
+  }
+
+  function isZh(v) { return /^zh/i.test(v.lang || ''); }
+  function isCloud(v) { return v.localService === false; }
+  function isNatural(v) { return /natural/i.test(v.name || ''); }
+  function isGoogle(v) { return /^google/i.test(v.name || ''); }
+  function isMicrosoft(v) { return /microsoft/i.test(v.name || ''); }
+
+  function cmpVoice(a, b) {
+    if (isZh(a) !== isZh(b)) return isZh(a) ? -1 : 1;
+    if (isNatural(a) !== isNatural(b)) return isNatural(a) ? -1 : 1;
+    if (isCloud(a) !== isCloud(b)) return isCloud(a) ? -1 : 1;
+    var la = a.lang || '', lb = b.lang || '';
+    if (la !== lb) return la < lb ? -1 : 1;
+    return (a.name || '') < (b.name || '') ? -1 : 1;
+  }
+
+  function voiceLabel(v) {
+    var mark = isCloud(v) ? '☁' : '⌂';
+    var nat = isNatural(v) ? ' ★' : '';
+    return mark + nat + ' ' + v.name + '  ·  ' + v.lang;
+  }
+
+  function visibleVoices() {
+    if (!els.onlyLocal.checked) return st.voices;
+    return st.voices.filter(function (v) { return !isCloud(v); });
+  }
+
+  function rebuildVoiceOptions() {
+    var prev = st.selectedUri || '';
+    st.visible = visibleVoices();
+    els.voiceSel.innerHTML = '';
+
+    if (!st.visible.length) {
+      var o0 = document.createElement('option');
+      o0.value = '';
+      o0.textContent = els.onlyLocal.checked
+        ? '（没有本地音色；取消勾选后可见云端音色）'
+        : '（尚无音色列表）';
+      els.voiceSel.appendChild(o0);
+      st.selectedUri = '';
+      renderVoiceDetail();
+      return;
+    }
+
+    st.visible.forEach(function (v, i) {
+      var o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = voiceLabel(v);
+      els.voiceSel.appendChild(o);
+    });
+
+    var pick = -1;
+    for (var i = 0; i < st.visible.length; i++) {
+      if (prev && st.visible[i].voiceURI === prev) { pick = i; break; }
+    }
+    if (pick < 0) {
+      var prefer = function (test) {
+        for (var k = 0; k < st.visible.length; k++) if (test(st.visible[k])) return k;
+        return -1;
+      };
+      pick = prefer(function (v) { return isZh(v) && isNatural(v); });
+      if (pick < 0) pick = prefer(isZh);
+      if (pick < 0) {
+        var lang = (navigator.language || '').toLowerCase();
+        pick = prefer(function (v) { return lang && (v.lang || '').toLowerCase().indexOf(lang) === 0; });
+      }
+      if (pick < 0) pick = 0;
+    }
+    els.voiceSel.value = String(pick);
+    st.selectedUri = st.visible[pick].voiceURI || '';
+    renderVoiceDetail();
+  }
+
+  function refreshVoices(force) {
+    var list = getVoices();
+    if (!list.length) { updateQueueInfo(); return; }
+    var sorted = list.slice().sort(cmpVoice);
+    var same = st.voices.length === sorted.length &&
+      st.voices.every(function (v, i) { return v.voiceURI === sorted[i].voiceURI; });
+    st.voices = sorted;
+    els.kVoiceCount.textContent = sorted.length + ' 个';
+    if (same && !force) { updateQueueInfo(); return; }
+
+    rebuildVoiceOptions();
+    updateQueueInfo();
+    if (sorted.length !== st.loggedCount) {
+      st.loggedCount = sorted.length;
+      var localN = sorted.filter(function (v) { return !isCloud(v); }).length;
+      log('音色列表就绪：' + sorted.length + ' 个（本地 ' + localN + '，云端 ' + (sorted.length - localN) + '）', 'g');
+    }
+  }
+
+  function currentVoice() {
+    var i = parseInt(els.voiceSel.value, 10);
+    return (i >= 0 && st.visible[i]) ? st.visible[i] : null;
+  }
+
+  /* 把某个音色设为当前选择；它不在当前过滤结果里就自动取消“只看本地” */
+  function applyVoice(v) {
+    if (!v) return false;
+    var i = st.visible.indexOf(v);
+    if (i < 0) {
+      els.onlyLocal.checked = false;
+      st.selectedUri = v.voiceURI || '';
+      rebuildVoiceOptions();
+      i = st.visible.indexOf(v);
+    }
+    if (i < 0) return false;
+    els.voiceSel.value = String(i);
+    st.selectedUri = v.voiceURI || '';
+    renderVoiceDetail();
+    savePrefs();
+    return true;
+  }
+
+  function renderVoiceDetail() {
+    var v = currentVoice();
+    if (!v) {
+      els.vUri.textContent = els.vLang.textContent = els.vLocal.textContent = els.vDefault.textContent = '—';
+      els.vHint.textContent = '';
+      return;
+    }
+    els.vUri.textContent = v.voiceURI || '—';
+    els.vLang.textContent = v.lang || '—';
+    els.vLocal.textContent = isCloud(v) ? '云端（需联网）' : '本地引擎（离线）';
+    els.vDefault.textContent = v.default ? '是' : '否';
+
+    if (!isCloud(v)) {
+      els.vHint.textContent = '本地引擎：完全离线，不经过任何服务器，最稳；音质通常不如云端 Natural 音色。';
+    } else if (isGoogle(v)) {
+      els.vHint.innerHTML = '<b>Google 云端音色</b>：文本要发到 Google 的服务器。中国大陆通常连不通，' +
+        '此时 Chrome 不报错、只会一直挂起 —— 现在靠上面「首音超时」（' + (firstTimeoutMs() / 1000).toFixed(0) + ' 秒）兜底。';
+    } else if (isMicrosoft(v)) {
+      els.vHint.textContent = '微软云端音色（Edge 的 Online (Natural)）：文本发到微软服务器，国内一般可用，需要联网；首音延迟通常 1–2 秒。';
+    } else {
+      els.vHint.textContent = '云端音色：需要能访问对应厂商的服务器，连不上时同样只能靠超时判定。';
+    }
+  }
+
+  /* ---------- 切块 ---------- */
+
+  function splitSentences(text) {
+    var out = [], buf = '';
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      buf += ch;
+      if ('。！？!?；;\n'.indexOf(ch) >= 0) { out.push(buf); buf = ''; }
+    }
+    if (buf.trim()) out.push(buf);
+    return out.map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function chunkText(text, limit) {
+    var sents = splitSentences(text);
+    var chunks = [], cur = '';
+    for (var i = 0; i < sents.length; i++) {
+      var s = sents[i];
+      if (s.length > limit) {
+        if (cur) { chunks.push(cur); cur = ''; }
+        for (var p = 0; p < s.length; p += limit) chunks.push(s.slice(p, p + limit));
+        continue;
+      }
+      if (cur && (cur + s).length > limit) { chunks.push(cur); cur = ''; }
+      cur += s;
+    }
+    if (cur) chunks.push(cur);
+    return chunks;
+  }
+
+  function buildChunks() {
+    var limit = Math.max(20, Math.min(500, parseInt(els.chunkSize.value, 10) || 120));
+    var text = (els.text.value || '').trim();
+    if (!text) return [];
+    return chunkText(text, limit);
+  }
+
+  /* ---------- 设置 ---------- */
+
+  var PREF_KEY = 'dsh-tts-reader:webspeech-lab';
+
+  function firstTimeoutMs() {
+    var s = parseInt(els.firstTimeout.value, 10);
+    if (!isFinite(s) || s <= 0) s = 8;
+    return Math.max(3, Math.min(60, s)) * 1000;
+  }
+
+  function timeoutAction() {
+    return els.timeoutAction.value === 'fallback' ? 'fallback' : 'stop';
+  }
+
+  function savePrefs() {
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify({
+        rate: els.rate.value, pitch: els.pitch.value, volume: els.volume.value,
+        chunkSize: els.chunkSize.value, firstTimeout: els.firstTimeout.value,
+        timeoutAction: els.timeoutAction.value, onlyLocal: els.onlyLocal.checked,
+        voiceUri: st.selectedUri || ''
+      }));
+    } catch (e) { /* localStorage 不可用时忽略 */ }
+  }
+
+  function loadPrefs() {
+    var raw;
+    try { raw = localStorage.getItem(PREF_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var p;
+    try { p = JSON.parse(raw); } catch (e) { return; }
+    if (!p || typeof p !== 'object') return;
+    var put = function (el, v) { if (v != null && v !== '') el.value = String(v); };
+    put(els.rate, p.rate); put(els.pitch, p.pitch); put(els.volume, p.volume);
+    put(els.chunkSize, p.chunkSize); put(els.firstTimeout, p.firstTimeout);
+    put(els.timeoutAction, p.timeoutAction);
+    els.onlyLocal.checked = !!p.onlyLocal;
+    if (typeof p.voiceUri === 'string') st.selectedUri = p.voiceUri;
+    els.rateVal.textContent = u_num(els.rate.value);
+    els.pitchVal.textContent = u_num(els.pitch.value);
+    els.volumeVal.textContent = u_num(els.volume.value);
+  }
+
+  /* 首选本地音色：中文优先，其次第一个本地音色 */
+  function pickLocalVoice() {
+    var pool = st.voices.filter(function (v) { return !isCloud(v); });
+    if (!pool.length) return null;
+    for (var i = 0; i < pool.length; i++) if (isZh(pool[i])) return pool[i];
+    return pool[0];
+  }
+
+  /* ---------- 播放 ---------- */
+
+  function setControlsEnabled(canSpeak) {
+    var busy = st.running;
+    var pendingWork = busy || !!(synth && (synth.speaking || synth.pending));
+    els.btnPlay.disabled = !canSpeak || busy;
+    els.btnSample.disabled = !canSpeak || busy;
+    els.btnPause.disabled = !busy || st.paused;
+    els.btnResume.disabled = !busy || !st.paused;
+    els.btnStop.disabled = !pendingWork;
+  }
+
+  function resetStats() {
+    st.chunksDone = 0; st.speechMs = 0; st.charsSpoken = 0;
+    st.maxGap = 0; st.firstAt = 0; st.lastEndAt = 0;
+    els.sFirst.textContent = els.sTotal.textContent = els.sCps.textContent = els.sGap.textContent = '—';
+  }
+
+  function paintProgress() {
+    var n = st.chunks.length || 1;
+    els.chunkFill.style.width = (Math.min(st.idx, n) / n * 100) + '%';
+    els.chunkInfo.textContent = st.running
+      ? ('第 ' + Math.min(st.idx + 1, st.chunks.length) + ' / ' + st.chunks.length + ' 块 · 共 ' + st.chunks.reduce(function (a, s) { return a + s.length; }, 0) + ' 字')
+      : (st.chunks.length ? ('待播放：' + st.chunks.length + ' 块 / ' + st.chunks.reduce(function (a, s) { return a + s.length; }, 0) + ' 字') : '—');
+  }
+
+  function renderChunk(text) {
+    els.chunkNow.classList.remove('sub');
+    els.chunkNow.textContent = text;
+  }
+
+  function highlight(pos, len) {
+    var text = st.chunks[st.idx];
+    if (!text) return;
+    if (pos == null || pos < 0 || pos >= text.length) { els.chunkNow.textContent = text; return; }
+    var end = Math.min(text.length, pos + Math.max(1, len || 1));
+    els.chunkNow.innerHTML = esc(text.slice(0, pos)) + '<mark>' + esc(text.slice(pos, end)) + '</mark>' + esc(text.slice(end));
+  }
+
+  function speakChunk() {
+    if (st.stopFlag) return;
+    if (st.idx >= st.chunks.length) { finish(); return; }
+    var chunk = st.chunks[st.idx];
+    renderChunk(chunk);
+
+    var u = new Utter(chunk);
+    var v = currentVoice();
+    if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = parseFloat(els.rate.value) || 1;
+    u.pitch = parseFloat(els.pitch.value) || 1;
+    u.volume = parseFloat(els.volume.value) || 1;
+
+    var startedAt = 0;
+    var endedAt = 0;
+    var settled = false;
+    var clearWatchdog = function () {
+      if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = 0; }
+    };
+
+    u.onstart = function () {
+      settled = true;
+      clearWatchdog();
+      startedAt = performance.now();
+      if (!st.firstAt) {
+        st.firstAt = startedAt;
+        var first = st.firstAt - st.clickAt;
+        els.sFirst.textContent = fmt(first);
+        log('开口（首字延迟 ' + fmt(first) + '）', 'g');
+      } else if (st.lastEndAt) {
+        var gap = startedAt - st.lastEndAt;
+        if (gap > st.maxGap) { st.maxGap = gap; els.sGap.textContent = fmt(st.maxGap); }
+        log('第 ' + (st.idx + 1) + ' 块开始 · 块间隔 ' + fmt(gap), gap > 250 ? 'w' : null);
+      } else {
+        log('第 ' + (st.idx + 1) + ' 块开始');
+      }
+      updateQueueInfo();
+    };
+
+    u.onboundary = function (e) {
+      if (typeof e.charIndex === 'number') highlight(e.charIndex, e.charLength);
+    };
+
+    u.onend = function () {
+      settled = true;
+      clearWatchdog();
+      endedAt = performance.now();
+      st.lastEndAt = endedAt;
+      var dur = startedAt ? (endedAt - startedAt) : 0;
+      st.speechMs += dur;
+      st.charsSpoken += chunk.length;
+      st.chunksDone++;
+      els.sTotal.textContent = fmt(st.speechMs);
+      els.sCps.textContent = st.speechMs > 0 ? (st.charsSpoken / (st.speechMs / 1000)).toFixed(1) : '—';
+      log('第 ' + (st.idx + 1) + ' 块结束（' + chunk.length + ' 字 / ' + fmt(dur) + '）');
+      st.idx++;
+      paintProgress();
+      if (st.stopFlag) return;
+      speakChunk();
+    };
+
+    u.onerror = function (e) {
+      settled = true;
+      clearWatchdog();
+      var err = e && e.error ? e.error : 'unknown';
+      if (err === 'interrupted' || err === 'canceled') {
+        log('第 ' + (st.idx + 1) + ' 块被打断（' + err + '）', null);
+        return;
+      }
+      log('第 ' + (st.idx + 1) + ' 块出错：' + err, 'e');
+      st.idx++;
+      if (!st.stopFlag) speakChunk();
+    };
+
+    /* 看门狗：speak() 之后既不出声也不报错时（Chrome 的 Google 云端音色在国内就是这样），
+       只能靠超时判定，否则整条播放链会永远悬着。 */
+    var limitMs = firstTimeoutMs();
+    st.watchdog = setTimeout(function () {
+      st.watchdog = 0;
+      if (settled || st.stopFlag) return;
+      var nv = currentVoice();
+      log('音色「' + (nv ? nv.name : '默认') + '」在 ' + (limitMs / 1000).toFixed(0) +
+        ' 秒内没有任何响应（无 onstart、无 onerror），判定连不上厂商服务器。', 'e');
+      if (nv && isGoogle(nv)) {
+        log('这是 Chrome 的 Google 云端音色：文本要发到 Google 的服务器，中国大陆网络通常连不通，' +
+          '而且 Chrome 不会报错，只会一直挂起。', 'w');
+      } else if (nv && isCloud(nv)) {
+        log('这是云端音色，需要能访问对应厂商的服务器。', 'w');
+      }
+      try { synth.cancel(); } catch (e) { /* ignore */ }
+
+      var local = pickLocalVoice();
+      if (local) log('可用本地音色（离线）：' + local.name, 'w');
+      if (timeoutAction() === 'fallback' && local && !st.fallbackTried && nv && isCloud(nv)) {
+        st.fallbackTried = true;
+        if (applyVoice(local)) {
+          log('按设置自动改用本地音色重读本块：' + local.name, 'w');
+          setTimeout(function () { if (!st.stopFlag) speakChunk(); }, 80);
+          return;
+        }
+      }
+      abortSeries('首音超时', !!local);
+    }, limitMs);
+
+    try {
+      if (synth.paused) synth.resume();
+      synth.speak(u);
+    } catch (e) {
+      log('speak() 抛异常：' + (e && e.message ? e.message : e), 'e');
+      finish();
+    }
+  }
+
+  function startSpeaking(chunks, label) {
+    if (!synth) return;
+    stopSpeaking(true);
+    st.chunks = chunks;
+    st.idx = 0;
+    st.stopFlag = false;
+    st.paused = false;
+    st.running = true;
+    st.clickAt = performance.now();
+    st.fallbackTried = false;
+    els.btnFallback.hidden = true;
+    resetStats();
+    els.log.textContent = '';
+    st.logs = 0;
+    log(label + '：' + chunks.length + ' 块 / ' + chunks.reduce(function (a, s) { return a + s.length; }, 0) + ' 字');
+    var v = currentVoice();
+    log('音色：' + (v ? v.name + ' (' + v.lang + ', ' + (isCloud(v) ? '云端' : '本地') + ')' : '浏览器默认'));
+    log('参数：rate=' + u_num(els.rate.value) + ' pitch=' + u_num(els.pitch.value) + ' volume=' + u_num(els.volume.value));
+    log('超时策略：' + (firstTimeoutMs() / 1000).toFixed(0) + ' 秒无响应 → ' +
+      (timeoutAction() === 'fallback' ? '自动改用本地音色' : '停下并提示'));
+    setControlsEnabled(true);
+    paintProgress();
+    speakChunk();
+  }
+
+  function u_num(s) { return (parseFloat(s) || 0).toFixed(2); }
+
+  function finish() {
+    st.running = false;
+    st.paused = false;
+    st.stopFlag = false;
+    st.lastEndAt = 0;
+    if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = 0; }
+    els.btnFallback.hidden = true;
+    els.chunkFill.style.width = '100%';
+    els.chunkInfo.textContent = '完成：' + st.chunksDone + ' 块';
+    log('全部结束 · 语音总时长 ' + fmt(st.speechMs) + ' · 平均 ' +
+      (st.speechMs > 0 ? (st.charsSpoken / (st.speechMs / 1000)).toFixed(1) : '—') + ' 字/秒' +
+      (st.maxGap ? ' · 最大块间隔 ' + fmt(st.maxGap) : ''), 'g');
+    setControlsEnabled(true);
+    updateQueueInfo();
+  }
+
+  function stopSpeaking(silent) {
+    st.stopFlag = true;
+    st.running = false;
+    st.paused = false;
+    if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = 0; }
+    els.btnFallback.hidden = true;
+    try { synth.cancel(); } catch (e) { /* ignore */ }
+    setTimeout(function () { try { if (synth.paused) synth.resume(); } catch (e) { /* ignore */ } }, 0);
+    if (!silent) {
+      log('已停止', 'w');
+      els.chunkFill.style.width = '0%';
+      els.chunkInfo.textContent = '已停止';
+      els.chunkNow.textContent = '已停止。';
+      els.chunkNow.classList.add('sub');
+    }
+    setControlsEnabled(true);
+    updateQueueInfo();
+  }
+
+  /* 中断整条播放链：超时、异常等非用户主动停止的收尾，必须让 UI 落到确定状态 */
+  function abortSeries(reason, canRetryLocal) {
+    st.stopFlag = true;
+    st.running = false;
+    st.paused = false;
+    if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = 0; }
+    try { synth.cancel(); } catch (e) { /* ignore */ }
+    setTimeout(function () { try { if (synth.paused) synth.resume(); } catch (e) { /* ignore */ } }, 0);
+    log('播放链已中断：' + reason + (canRetryLocal ? '（可改用本地音色重试）' : ''), 'e');
+    els.chunkInfo.textContent = '中断：' + reason;
+    els.chunkNow.textContent = '中断：' + reason + '。' + (canRetryLocal ? '可以点“改用本地音色重试”。' : '');
+    els.chunkNow.classList.add('sub');
+    els.btnFallback.hidden = !canRetryLocal;
+    setControlsEnabled(true);
+    updateQueueInfo();
+  }
+
+  /* ---------- 事件 ---------- */
+
+  els.text.value = SAMPLE;
+  loadPrefs();
+
+  els.rate.addEventListener('input', function () { els.rateVal.textContent = u_num(els.rate.value); });
+  els.pitch.addEventListener('input', function () { els.pitchVal.textContent = u_num(els.pitch.value); });
+  els.volume.addEventListener('input', function () { els.volumeVal.textContent = u_num(els.volume.value); });
+  els.chunkSize.addEventListener('change', function () {
+    if (st.running) { log('分段字数在播放中不生效，下次播放生效', 'w'); return; }
+    paintProgress();
+  });
+
+  els.voiceSel.addEventListener('change', function () {
+    var v = currentVoice();
+    st.selectedUri = v ? (v.voiceURI || '') : '';
+    renderVoiceDetail();
+    savePrefs();
+  });
+
+  els.onlyLocal.addEventListener('change', function () {
+    rebuildVoiceOptions();
+    savePrefs();
+  });
+
+  els.firstTimeout.addEventListener('change', function () { renderVoiceDetail(); savePrefs(); });
+  els.timeoutAction.addEventListener('change', function () { savePrefs(); });
+
+  els.btnFallback.addEventListener('click', function () {
+    var local = pickLocalVoice();
+    if (!local) { log('没有可用的本地音色', 'e'); return; }
+    if (!applyVoice(local)) { log('切换到本地音色失败', 'e'); return; }
+    els.btnFallback.hidden = true;
+    log('改用本地音色重试：' + local.name, 'g');
+    var chunks = st.chunks.length ? st.chunks : buildChunks();
+    if (!chunks.length) { log('正文为空', 'w'); return; }
+    startSpeaking(chunks, '本地音色重试');
+  });
+
+  els.btnPlay.addEventListener('click', function () {
+    var chunks = buildChunks();
+    if (!chunks.length) { log('正文为空', 'w'); return; }
+    if (!currentVoice()) { log('没有可用音色', 'e'); return; }
+    startSpeaking(chunks, '播放正文');
+  });
+
+  els.btnSample.addEventListener('click', function () {
+    startSpeaking(['你好，这是浏览器语音合成测试。'], '试听');
+  });
+
+  els.btnPause.addEventListener('click', function () {
+    if (!st.running) return;
+    try { synth.pause(); } catch (e) { log('pause() 抛异常：' + e, 'e'); }
+    st.paused = true;
+    setTimeout(function () {
+      if (synth.paused) log('已暂停（synthesis.paused=true，真暂停）', 'g');
+      else log('调用了 pause() 但 synthesis.paused 仍为 false：这个平台可能不支持暂停，只能用停止', 'w');
+      setControlsEnabled(true);
+      updateQueueInfo();
+    }, 60);
+    setControlsEnabled(true);
+  });
+
+  els.btnResume.addEventListener('click', function () {
+    if (!st.running) return;
+    try { synth.resume(); } catch (e) { log('resume() 抛异常：' + e, 'e'); }
+    st.paused = false;
+    log('继续', null);
+    setControlsEnabled(true);
+    updateQueueInfo();
+  });
+
+  els.btnStop.addEventListener('click', function () { stopSpeaking(false); });
+
+  els.btnRedetect.addEventListener('click', function () {
+    log('重新检测', null);
+    refreshVoices(true);
+    detect();
+  });
+
+  els.btnCopyDiag.addEventListener('click', function () {
+    var v = currentVoice();
+    var info = {
+      at: new Date().toISOString(),
+      browser: browserName(),
+      ua: navigator.userAgent,
+      platform: navigator.platform,
+      lang: navigator.language,
+      api: !!(synth && Utter),
+      voices: st.voices.map(function (x) {
+        return { name: x.name, lang: x.lang, localService: x.localService, default: !!x.default, voiceURI: x.voiceURI };
+      }),
+      selected: v ? v.name : null,
+      firstSoundTimeoutMs: firstTimeoutMs(),
+      timeoutAction: timeoutAction(),
+      measured: {
+        firstSoundMs: st.firstAt ? st.firstAt - st.clickAt : null,
+        speechMs: Math.round(st.speechMs),
+        chars: st.charsSpoken,
+        charsPerSec: st.speechMs > 0 ? +(st.charsSpoken / (st.speechMs / 1000)).toFixed(2) : null,
+        maxChunkGapMs: Math.round(st.maxGap)
+      }
+    };
+    var txt = JSON.stringify(info, null, 2);
+    var done = function () { log('诊断信息已复制到剪贴板', 'g'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done, function () { log('复制失败（剪贴板被拒绝），诊断信息见控制台', 'w'); console.log(txt); });
+    } else {
+      console.log(txt);
+      log('这个环境没有剪贴板 API，诊断信息已打印到控制台', 'w');
+    }
+  });
+
+  els.btnClearLog.addEventListener('click', function () { els.log.textContent = ''; st.logs = 0; });
+
+  if (synth) {
+    if ('onvoiceschanged' in synth) {
+      synth.onvoiceschanged = function () { refreshVoices(false); detect(); };
+    }
+    // 有些内核必须先调用一次 getVoices() 才会触发 voiceschanged
+    getVoices();
+    [300, 1000, 2500].forEach(function (ms) {
+      setTimeout(function () { refreshVoices(false); detect(); }, ms);
+    });
+    // 重试用尽仍为空，才下“这个内核没有语音引擎”的结论
+    setTimeout(function () {
+      if (st.voices.length || getVoices().length) return;
+      els.kVoiceCount.textContent = '0 个（已重试 3 次）';
+      setBadge('warn', '半可用', 'API 在，但这个内核没有暴露任何语音引擎。');
+      log('语音列表重试后仍为空：这个内核没有可用的语音引擎。', 'e');
+      setControlsEnabled(false);
+    }, 3000);
+  }
+
+  window.addEventListener('beforeunload', function () { try { synth && synth.cancel(); } catch (e) { /* ignore */ } });
+
+  detect();
+  refreshVoices(true);
+  paintProgress();
+  if (synth && !getVoices().length) {
+    log('语音列表暂为空，浏览器可能会稍后异步补齐（300ms / 1000ms / 2500ms 会重试）。', 'w');
+  }
+})();
+</script>
+</body>
+</html>
