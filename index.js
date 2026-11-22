@@ -30,6 +30,8 @@ const CLEAR_PATH = PREFIX + '/cache/clear'
 const EVENTS_PATH = PREFIX + '/events'
 const PENDING_PATH = PREFIX + '/pending'
 const RECENT_PATH = PREFIX + '/recent'
+const BRIDGE_PATH = PREFIX + '/bridge'
+const BRIDGE_STREAM_PATH = BRIDGE_PATH + '/stream'
 
 const API_BASE = 'https://api.deepseek.com'
 const KEY_REF = 'DEEPSEEK_API_KEY'
@@ -75,6 +77,9 @@ const DEFAULTS = {
   voice: 'stella',
   maxChars: 4000,
   cacheMaxMb: 200,
+  // Where synthesized audio is kept: `disk` survives restarts and is evicted by
+  // size; `memory` never touches the disk and disappears with the process.
+  cacheMode: 'disk',
   // Playback rate for the page's pitch-preserving time-stretch; the TTS API
   // itself has no speed parameter, so this never reaches the request.
   speed: 1,
@@ -84,7 +89,9 @@ const DEFAULTS = {
   speakApprovals: true,
 }
 
-const ENGINES = new Set(['deepseek', 'piper', 'system', 'custom'])
+// `piper` stays in the set so an old settings.json still loads, but the UI no
+// longer offers it: normalizeSettings turns it into `system` (see below).
+const ENGINES = new Set(['deepseek', 'piper', 'system', 'custom', 'browser'])
 const CUSTOM_FORMATS = new Set(['wav', 'pcm'])
 const CUSTOM_PROTOCOLS = new Set(['openai', 'gpt-sovits', 'fish', 'template'])
 const CUSTOM_AUDIO_TYPES = new Set(['auto', 'wav', 'pcm'])
@@ -389,7 +396,10 @@ function normalizeSettings(raw, seed) {
   const speed = Number.isFinite(rawSpeed) && rawSpeed > 0
     ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(rawSpeed * 100) / 100))
     : DEFAULTS.speed
-  const engine = ENGINES.has(String(merged.engine)) ? String(merged.engine) : DEFAULTS.engine
+  const requestedEngine = ENGINES.has(String(merged.engine)) ? String(merged.engine) : DEFAULTS.engine
+  // Piper is hidden from the settings UI (browser speech replaces it). An old
+  // saved value degrades to the system voices, which need no path or model.
+  const engine = requestedEngine === 'piper' ? 'system' : requestedEngine
   const piperPath = typeof merged.piperPath === 'string' ? merged.piperPath.trim() : ''
   const piperModel = typeof merged.piperModel === 'string' ? merged.piperModel.trim() : ''
   const piperModelEn = typeof merged.piperModelEn === 'string' ? merged.piperModelEn.trim() : ''
@@ -408,12 +418,13 @@ function normalizeSettings(raw, seed) {
   const customHeaders = typeof merged.customHeaders === 'string' ? merged.customHeaders : ''
   const customBody = typeof merged.customBody === 'string' ? merged.customBody : ''
   const customAudioType = CUSTOM_AUDIO_TYPES.has(String(merged.customAudioType)) ? String(merged.customAudioType) : DEFAULTS.customAudioType
+  const cacheMode = merged.cacheMode === 'memory' ? 'memory' : 'disk'
   return {
     engine, piperPath, piperModel, piperModelEn, systemVoice,
     customBaseUrl, customModel, customVoice, customFormat, customProtocol,
     sovitsRefAudio, sovitsPromptText, sovitsTextLang, sovitsPromptLang,
     customMethod, customPath, customHeaders, customBody, customAudioType,
-    voice, maxChars, cacheMaxMb, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals,
+    voice, maxChars, cacheMaxMb, cacheMode, speed, autoRead, autoReadInterim, speakQuestions, speakApprovals,
   }
 }
 
@@ -618,6 +629,7 @@ function cacheStats() {
     bytes: loose.bytes + pinned.bytes,
     dir: cacheDir(),
     pinned,
+    memory: memoryCacheStats(),
   }
 }
 
@@ -646,7 +658,8 @@ function pruneCache(maxBytes) {
 }
 
 function clearCache() {
-  let removed = 0
+  let removed = memoryCache.size
+  memoryCache.clear()
   for (const dir of [cacheDir(), fixedCacheDir()]) {
     try {
       for (const entry of fs.readdirSync(dir)) {
@@ -656,6 +669,41 @@ function clearCache() {
     } catch {}
   }
   return removed
+}
+
+// ------------------------------------------------------------- memory cache
+// `cacheMode: 'memory'` keeps the same audio in RAM: nothing is written to disk
+// and nothing survives a restart. Fixed-size LRU, pinned marker audio exempt.
+const MEMORY_CACHE_BYTES = 128 * 1024 * 1024
+const memoryCache = new Map()
+
+function memoryCacheGet(hash) {
+  const entry = memoryCache.get(hash)
+  if (!entry) return null
+  // Map keeps insertion order, so re-inserting is the LRU touch.
+  memoryCache.delete(hash)
+  memoryCache.set(hash, entry)
+  return entry.buffer
+}
+
+function memoryCacheSet(hash, buffer, pinned) {
+  if (!buffer || buffer.length === 0) return
+  memoryCache.delete(hash)
+  memoryCache.set(hash, { buffer, pinned: !!pinned })
+  let total = memoryCacheStats().bytes
+  if (total <= MEMORY_CACHE_BYTES) return
+  for (const [key, entry] of memoryCache) {
+    if (total <= MEMORY_CACHE_BYTES) break
+    if (entry.pinned) continue
+    memoryCache.delete(key)
+    total -= entry.buffer.length
+  }
+}
+
+function memoryCacheStats() {
+  let bytes = 0
+  for (const entry of memoryCache.values()) bytes += entry.buffer.length
+  return { files: memoryCache.size, bytes, limitBytes: MEMORY_CACHE_BYTES }
 }
 
 /** Wrap raw PCM (24 kHz, mono, 16-bit LE) as a WAV container the browser can play. */
@@ -1715,6 +1763,11 @@ async function resolveUnits(scope, settings, sessionId, messageId, explicitText)
 
 /** 24 kHz mono PCM for one paragraph, from whichever engine is configured. */
 export async function* engineChunks(scope, settings, text, signal) {
+  // Browser speech happens in the page; the Host has no audio to give. Without
+  // this the call would fall through to the DeepSeek branch.
+  if (settings.engine === 'browser') {
+    throw engineError('「浏览器朗读」由页面自己合成，Host 不提供音频', 'NO_ENGINE')
+  }
   if (settings.engine === 'piper') {
     const model = piperModelFor(settings, text)
     const resampler = createResampler(piperSampleRate(model), SAMPLE_RATE)
@@ -1968,7 +2021,7 @@ export function apply(ctx, config) {
           'customBaseUrl', 'customModel', 'customVoice', 'customFormat', 'customProtocol',
           'sovitsRefAudio', 'sovitsPromptText', 'sovitsTextLang', 'sovitsPromptLang',
           'customMethod', 'customPath', 'customHeaders', 'customBody', 'customAudioType',
-          'voice', 'maxChars', 'cacheMaxMb', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals',
+          'voice', 'maxChars', 'cacheMaxMb', 'cacheMode', 'speed', 'autoRead', 'autoReadInterim', 'speakQuestions', 'speakApprovals',
         ]
         const next = normalizeSettings({ ...current, ...pick(body, editable) }, null)
         if (body.clearCache === true) clearCache()
@@ -2051,6 +2104,187 @@ export function apply(ctx, config) {
         return writeJson(response, 200, { ok: true, value: pendingPrompt })
       }),
     }), 'dsh-tts-reader: pending')
+
+    // ------------------------------------------------------------ 朗读桥
+    // A desktop shell (Electron) has no Web Speech voices; a real browser does.
+    // The bridge hands the paragraphs to the default browser: the page is served
+    // from here, the text lives in memory for five minutes, and the URL carries
+    // only a random id.
+    const bridgeEntries = new Map()
+    const BRIDGE_TTL_MS = 5 * 60 * 1000
+    const BRIDGE_MAX = 8
+    // Read on demand (with a short cache) instead of once at startup, so editing
+    // the page does not require restarting the Host to see the change.
+    let bridgeSourceCache = { text: '', at: 0 }
+    const bridgeSource = () => {
+      const now = Date.now()
+      if (bridgeSourceCache.text && now - bridgeSourceCache.at < 5000) return bridgeSourceCache.text
+      try {
+        const text = fs.readFileSync(new URL('./bridge.html', import.meta.url), 'utf8')
+        bridgeSourceCache = { text, at: now }
+        return text
+      } catch (error) {
+        if (!bridgeSourceCache.text) {
+          log?.warn?.('[dsh-tts-reader] 朗读桥页面缺失：' + (error?.message ?? String(error)))
+        }
+        return bridgeSourceCache.text
+      }
+    }
+
+    const pruneBridges = () => {
+      const now = Date.now()
+      for (const [id, entry] of bridgeEntries) {
+        if (now - entry.at > BRIDGE_TTL_MS) bridgeEntries.delete(id)
+      }
+      while (bridgeEntries.size > BRIDGE_MAX) bridgeEntries.delete(bridgeEntries.keys().next().value)
+    }
+
+    const addBridge = (payload) => {
+      pruneBridges()
+      const id = crypto.randomUUID()
+      bridgeEntries.set(id, { at: Date.now(), title: payload.title, units: payload.units, speed: payload.speed })
+      return id
+    }
+
+    const renderBridge = (entry) => {
+      const payload = JSON.stringify({ title: entry.title, units: entry.units, speed: entry.speed }).replace(/</g, '\\u003c')
+      return bridgeSource().replace('__BRIDGE_DATA__', payload)
+    }
+
+    // Pages currently listening for text. One long-lived bridge tab is the point:
+    // the plugin pushes the next reply into it instead of opening a new tab.
+    const bridgeClients = new Set()
+
+    const deliverToBridge = (payload) => {
+      if (bridgeClients.size === 0) return 0
+      const line = 'data: ' + JSON.stringify({ type: 'read', ...payload }) + '\n\n'
+      // Newest tab only: several listening pages would read the same text twice.
+      const all = [...bridgeClients]
+      for (let i = all.length - 1; i >= 0; i--) {
+        const response = all[i]
+        if (response.destroyed || response.writableEnded) { bridgeClients.delete(response); continue }
+        try { response.write(line); return 1 } catch { bridgeClients.delete(response) }
+      }
+      return 0
+    }
+
+    /** Launch the OS default browser on a loopback URL. */
+    const openExternal = (url) => {
+      if (!url) return false
+      const win32 = process.platform === 'win32'
+      const command = win32 ? (process.env.ComSpec || 'cmd.exe') : process.platform === 'darwin' ? 'open' : 'xdg-open'
+      const args = win32 ? ['/c', 'start', '', url] : [url]
+      try {
+        const child = spawn(command, args, { windowsHide: true, detached: true, stdio: 'ignore' })
+        // A spawn failure arrives asynchronously; the URL is returned either way
+        // so the page can still show it for a manual click.
+        child.on('error', (error) => {
+          log?.warn?.('[dsh-tts-reader] 唤起浏览器失败：' + (error?.message ?? String(error)))
+        })
+        child.unref()
+        return true
+      } catch (error) {
+        log?.warn?.('[dsh-tts-reader] 唤起浏览器失败：' + (error?.message ?? String(error)))
+        return false
+      }
+    }
+
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: BRIDGE_PATH,
+      handler: routeHandler(log, async (request, response) => {
+        if (!guard(request, response)) return
+        const method = request.method ?? 'GET'
+        if (method === 'GET') {
+          let id = ''
+          try { id = String(new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? '') } catch {}
+          pruneBridges()
+          const entry = bridgeEntries.get(id)
+          if (!entry || !bridgeSource()) {
+            response.writeHead(404, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+            response.end('<!doctype html><meta charset="utf-8"><title>朗读桥</title>'
+              + '<p style="font:14px system-ui;padding:24px">这个朗读链接已过期，请回到对话里重新点一次「在浏览器中朗读」。</p>')
+            return
+          }
+          response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+          response.end(renderBridge(entry))
+          return
+        }
+        if (method !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
+        if (!bridgeSource()) return writeJson(response, 500, { ok: false, code: 'NO_PAGE', error: '朗读桥页面缺失，请重装插件' })
+        const body = await readJsonBody(request)
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+        const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
+        const explicitText = typeof body?.text === 'string' ? body.text.trim() : ''
+        if (!explicitText && (!sessionId || !messageId)) {
+          return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '需要 sessionId 与 messageId（或直接给 text）' })
+        }
+        const current = readSettings()
+        let plan
+        try {
+          plan = await resolveUnits(scope, current, sessionId, messageId, explicitText)
+        } catch (error) {
+          return writeJson(response, error.status || 500, { ok: false, code: error.code || 'FAILED', error: error.message })
+        }
+        if (plan.items.length === 0) {
+          return writeJson(response, 404, { ok: false, code: 'NO_TEXT', error: '这条消息没有可朗读的文字（代码块、表格、公式会被跳过）' })
+        }
+        const units = plan.items.map((item, index) => ({ index, text: String(item.text ?? '') }))
+        const first = units.length > 0 ? units[0].text.replace(/\s+/g, ' ').trim() : ''
+        const title = first.length > 24 ? first.slice(0, 24) + '…' : first
+        // The settings page speed travels with the text, so the bridge reads at
+        // the same rate as the in-app player.
+        const requestedSpeed = Number(body?.speed)
+        const bridgeSpeed = Number.isFinite(requestedSpeed) && requestedSpeed > 0
+          ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(requestedSpeed * 100) / 100))
+          : current.speed
+        const payload = { title, units, speed: bridgeSpeed }
+        // A bridge tab that is still open — possibly from hours ago — gets the
+        // text directly. Opening another tab every time would pile them up.
+        const delivered = deliverToBridge(payload)
+        if (delivered > 0) {
+          return writeJson(response, 200, {
+            ok: true,
+            value: { delivered, launched: false, reclaimed: true, url: '', units: units.length },
+          })
+        }
+        const id = addBridge(payload)
+        const host = String(request.headers?.host ?? '')
+        const link = /^[A-Za-z0-9.\-\[\]:]+$/.test(host) ? 'http://' + host + BRIDGE_PATH + '?id=' + id : ''
+        return writeJson(response, 200, {
+          ok: true,
+          value: { url: link, launched: link ? openExternal(link) : false, delivered: 0, units: units.length },
+        })
+      }),
+    }), 'dsh-tts-reader: bridge')
+
+    // The bridge page keeps this open. While at least one listener is attached,
+    // POST /bridge delivers the text over this stream instead of launching a tab.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: BRIDGE_STREAM_PATH,
+      handler: routeHandler(log, (request, response) => {
+        if (!guard(request, response)) return
+        response.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-store',
+          connection: 'keep-alive',
+        })
+        response.write(': bridge connected\n\n')
+        bridgeClients.add(response)
+        const cleanup = () => {
+          clearInterval(heartbeat)
+          bridgeClients.delete(response)
+        }
+        const heartbeat = setInterval(() => {
+          if (response.destroyed || response.writableEnded) { cleanup(); return }
+          try { response.write(': ping\n\n') } catch { cleanup() }
+        }, 25000)
+        request.on('close', cleanup)
+        response.on('close', cleanup)
+        response.on('error', cleanup)
+      }),
+    }), 'dsh-tts-reader: bridge stream')
 
     // The floating player asks for the paragraph list first: it needs the count
     // and each paragraph's opening words, and `unit` on /read addresses this list.
@@ -2152,11 +2386,20 @@ export function apply(ctx, config) {
           truncated = plan.truncated
           served = unitIndex >= 0 ? [plan.items[unitIndex]] : plan.items
         }
+        const diskCache = current.cacheMode !== 'memory'
         const units = served.map((item) => {
           // Markers are fixed strings: pin their audio so eviction never costs
           // the user a re-synthesis of "here is a table".
-          const file = cacheFile(cacheKey(current, item.text, piperModelFor(current, item.text)), BLOCK_MARKER_TEXTS.has(item.text))
-          return { unit: item.text, file, cached: hasCachedWav(file) }
+          const pinned = BLOCK_MARKER_TEXTS.has(item.text)
+          const hash = cacheKey(current, item.text, piperModelFor(current, item.text))
+          const file = cacheFile(hash, pinned)
+          return {
+            unit: item.text,
+            hash,
+            file,
+            pinned,
+            cached: diskCache ? hasCachedWav(file) : !!memoryCacheGet(hash),
+          }
         })
         const hits = units.filter((item) => item.cached).length
         const cacheState = hits === units.length ? 'hit' : hits === 0 ? 'miss' : 'mixed'
@@ -2170,6 +2413,27 @@ export function apply(ctx, config) {
 
         /** PCM for one unit: the cached WAV body, or upstream bytes teed to disk. */
         async function* unitChunks(item) {
+          if (!diskCache) {
+            // RAM-only: no temp file, no rename, nothing on disk.
+            const hit = memoryCacheGet(item.hash)
+            if (hit) { yield hit; return }
+            upstreams += 1
+            const collected = []
+            try {
+              for await (const chunk of engineChunks(scope, current, item.unit, controller.signal)) {
+                if (controller.signal.aborted) break
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+                collected.push(buffer)
+                yield buffer
+              }
+              if (!controller.signal.aborted && collected.length > 0) {
+                memoryCacheSet(item.hash, Buffer.concat(collected), item.pinned)
+              }
+            } finally {
+              collected.length = 0
+            }
+            return
+          }
           // Hit testing here, not only when the plan was built: a message with
           // several tables repeats the same marker text, and the first occurrence
           // writes the file this one must stream instead of synthesizing again.

@@ -88,6 +88,9 @@ window.__ModuleLoader__.load({
     // Playback rate: 1 is unchanged. Applied client-side as a pitch-preserving
     // time-stretch — the TTS API has no speed parameter.
     let speed = 1
+    // Which synthesizer the Host is configured with. `browser` never reaches the
+    // Host: the page speaks the paragraphs itself.
+    let engineMode = 'deepseek'
     let activeSessionId = null
     const autoPlayed = new Set()
     let eventSource = null
@@ -95,6 +98,127 @@ window.__ModuleLoader__.load({
     // The replay button polls the Host for the pending question / approval, so
     // it shows up even if a particular page instance missed the event.
     const PENDING_PATH = '/api/dsh-tts/pending'
+    const BRIDGE_PATH = '/api/dsh-tts/bridge'
+    const SPEECH_VOICE_KEY = 'dsh-tts-reader:speech-voice'
+    const SPEECH_FIRST_TIMEOUT_MS = 8000
+
+    // ---------------------------------------------------------- browser speech
+    // A real browser ships speech voices; a desktop shell (Electron) exposes the
+    // API but no engine, so it needs the bridge to a browser.
+    function speechSynth() {
+      try {
+        if (typeof window === 'undefined') return null
+        return window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function'
+          ? window.speechSynthesis
+          : null
+      } catch { return null }
+    }
+
+    let speechVoices = []
+    const speechListeners = new Set()
+
+    function refreshSpeechVoices() {
+      const synth = speechSynth()
+      let list = []
+      try { list = (synth && synth.getVoices()) || [] } catch { list = [] }
+      const changed = list.length !== speechVoices.length
+        || list.some((voice, index) => (speechVoices[index] && speechVoices[index].voiceURI) !== voice.voiceURI)
+      speechVoices = list
+      if (changed) {
+        for (const listener of speechListeners) {
+          try { listener(speechVoices) } catch {}
+        }
+      }
+      return speechVoices
+    }
+
+    function subscribeSpeechVoices(listener) {
+      speechListeners.add(listener)
+      return () => { speechListeners.delete(listener) }
+    }
+
+    const isDesktopShell = (() => {
+      try {
+        const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '')
+        if (/Electron/i.test(ua)) return true
+        // The packaged shell could strip the token from the UA; the renderer's
+        // own process object is the second tell.
+        const proc = typeof window !== 'undefined' ? window.process : null
+        return !!(proc && proc.versions && proc.versions.electron)
+      } catch { return false }
+    })()
+
+    // Which of the two browser paths this shell uses: its own voices, or the
+    // bridge to a real browser. A desktop shell defaults to the bridge, because
+    // its voice list can look fine and still stay silent.
+    const BRIDGE_TARGET = 'bridge'
+    const speechTargetValue = () => {
+      const stored = storedSpeechVoice()
+      if (isDesktopShell) return stored === '' || stored === BRIDGE_TARGET ? BRIDGE_TARGET : stored
+      return stored || ((pickSpeechVoice() || {}).voiceURI || '')
+    }
+    const usesBridge = () => speechTargetValue() === BRIDGE_TARGET
+
+    const speechCapable = () => speechVoices.length > 0
+
+    function storedSpeechVoice() {
+      try { return window.localStorage.getItem(SPEECH_VOICE_KEY) || '' } catch { return '' }
+    }
+
+    function rememberSpeechVoice(uri) {
+      try {
+        if (uri) window.localStorage.setItem(SPEECH_VOICE_KEY, uri)
+        else window.localStorage.removeItem(SPEECH_VOICE_KEY)
+      } catch {}
+    }
+
+    function isCloudVoice(voice) { return voice && voice.localService === false }
+
+    /** Prefer the remembered voice, then a local Chinese one, then anything. */
+    function pickSpeechVoice() {
+      const wanted = storedSpeechVoice()
+      const byUri = wanted ? speechVoices.find((voice) => voice.voiceURI === wanted) : null
+      if (byUri) return byUri
+      const local = speechVoices.filter((voice) => !isCloudVoice(voice))
+      const pool = local.length > 0 ? local : speechVoices
+      return pool.find((voice) => /^zh/i.test(voice.lang || '')) || pool[0] || null
+    }
+
+    /**
+     * Ask the Host to hand this text to the default browser. The desktop shell
+     * has no speech engine, so this is how it reads aloud at all.
+     */
+    async function openBridge(target) {
+      const payload = {}
+      if (target && target.sessionId) payload.sessionId = target.sessionId
+      if (target && target.messageId) payload.messageId = target.messageId
+      if (target && target.text) payload.text = target.text
+      // The bridge reads at the speed set on the settings page.
+      payload.speed = Number(speed) || 1
+      try {
+        const response = await fetch(BRIDGE_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const body = await response.json().catch(() => null)
+        if (!response.ok || !body || body.ok !== true) {
+          throw new Error((body && body.error) || t('朗读桥失败', 'the bridge failed'))
+        }
+        const value = body.value || {}
+        if (value.delivered > 0) {
+          // A bridge tab was already listening: nothing new was opened.
+          showFailureToast(t('已发送到浏览器里那个朗读页', 'sent to the bridge tab you already have open'), 'ok')
+        } else if (!value.launched && value.url) {
+          try { await navigator.clipboard.writeText(value.url) } catch {}
+          showFailureToast(t('没能自动打开浏览器，链接已复制到剪贴板：', 'could not open a browser; the link is copied: ') + value.url)
+        }
+        return value
+      } catch (error) {
+        showFailureToast((error && error.message) || String(error))
+        return null
+      }
+    }
 
     function applyRemoteConfig(value) {
       if (!value || typeof value !== 'object') return
@@ -102,6 +226,7 @@ window.__ModuleLoader__.load({
       autoReadInterim = value.autoReadInterim === true
       speakQuestions = value.speakQuestions !== false
       speakApprovals = value.speakApprovals !== false
+      if (typeof value.engine === 'string') engineMode = value.engine
       const nextSpeed = Number(value.speed)
       const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
       if (resolved === speed) return
@@ -476,6 +601,9 @@ window.__ModuleLoader__.load({
         try { active.controller.abort() } catch {}
         if (active.timer) clearTimeout(active.timer)
         try { if (active.context) active.context.close() } catch {}
+        if (active.speech) {
+          try { const synth = speechSynth(); if (synth) synth.cancel() } catch {}
+        }
       }
       setPreviewPhase('idle')
     }
@@ -505,8 +633,68 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Preview through Web Speech: no Host round-trip, no cache, no AudioContext. */
+    function playPreviewSpeech() {
+      const synth = speechSynth()
+      refreshSpeechVoices()
+      if (!synth || !speechCapable()) {
+        showFailureToast(t('这台环境没有浏览器语音，无法试听', 'no browser voices here'))
+        return
+      }
+      const active = { speech: true, timer: 0, cancelled: false }
+      preview = active
+      setPreviewPhase('loading')
+      const utter = new window.SpeechSynthesisUtterance(PREVIEW_TEXT)
+      const voice = pickSpeechVoice()
+      if (voice) { utter.voice = voice; utter.lang = voice.lang }
+      utter.rate = Math.min(2, Math.max(0.5, speed))
+      let started = false
+      const done = () => {
+        if (preview !== active) return
+        preview = null
+        if (active.timer) clearTimeout(active.timer)
+        setPreviewPhase('idle')
+      }
+      utter.onstart = () => {
+        if (preview !== active) return
+        started = true
+        setPreviewPhase('playing')
+      }
+      utter.onend = done
+      utter.onerror = (event) => {
+        const reason = (event && event.error) || 'unknown'
+        if (preview !== active) return
+        done()
+        if (reason === 'interrupted' || reason === 'canceled') return
+        if (reason === 'not-allowed') {
+          showFailureToast(t('浏览器要求页面上先有一次点击才允许发声：请再点一次试听',
+            'the browser needs one click on this page before it may speak; try again'))
+          return
+        }
+        showFailureToast(t('试听失败：', 'preview failed: ') + reason)
+      }
+      active.timer = setTimeout(() => {
+        if (started || preview !== active) return
+        try { synth.cancel() } catch {}
+        done()
+        showFailureToast(isCloudVoice(voice)
+          ? t('这个云端音色 8 秒内没有出声，多半连不上厂商服务器；换成 ⌂ 本地音色试试',
+            'the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice')
+          : t('浏览器 8 秒内没有出声，可能被自动播放策略挡住', 'no sound in 8 s; the browser may be blocking autoplay'))
+      }, SPEECH_FIRST_TIMEOUT_MS)
+      try { synth.speak(utter) } catch (error) {
+        done()
+        showFailureToast((error && error.message) || String(error))
+      }
+    }
+
     async function playPreview() {
       if (preview) { stopPreview(); return }
+      if (engineMode === 'browser') {
+        if (usesBridge()) { void openBridge({ text: PREVIEW_TEXT }); return }
+        playPreviewSpeech()
+        return
+      }
       const active = { context: null, controller: new AbortController(), sources: [], timer: 0, cancelled: false }
       preview = active
       setPreviewPhase('loading')
@@ -613,6 +801,15 @@ window.__ModuleLoader__.load({
     function playerStop() {
       const session = player
       player = null
+      if (session && session.kind === 'speech') {
+        // Browser speech owns no AudioContext: cancel the queue and drop timers.
+        if (session.timer) clearTimeout(session.timer)
+        if (session.watchdog) clearTimeout(session.watchdog)
+        try { const synth = speechSynth(); if (synth) synth.cancel() } catch {}
+        current = null
+        updatePlayerWindow()
+        return
+      }
       if (session) {
         if (session.pendingNext) clearTimeout(session.pendingNext)
         if (session.prefetch) { try { session.prefetch.controller.abort() } catch {} }
@@ -683,7 +880,13 @@ window.__ModuleLoader__.load({
     function playerApplySpeed(nextSpeed) {
       const next = playerClampSpeed(nextSpeed)
       const session = player
-      if (session) {
+      if (session && session.kind === 'speech') {
+        // A running utterance keeps its old rate, so restart the current
+        // paragraph from the last word boundary to make the change audible now.
+        session.speed = next
+        playerView({ speed: next })
+        if (!session.desiredPaused) speakSpeechUnit(session, session.unit, session.boundary || 0)
+      } else if (session) {
         playerRerender(session, next)
         playerView({ speed: next })
       }
@@ -710,7 +913,16 @@ window.__ModuleLoader__.load({
 
     function playerPause() {
       const session = player
-      if (!session || !session.context) return
+      if (!session) return
+      if (session.kind === 'speech') {
+        session.desiredPaused = true
+        session.phase = 'paused'
+        try { const synth = speechSynth(); if (synth) synth.pause() } catch {}
+        setPlayback({ phase: 'paused' })
+        playerView({ phase: 'paused' })
+        return
+      }
+      if (!session.context) return
       session.desiredPaused = true
       session.phase = 'paused'
       try { void session.context.suspend().catch(() => {}) } catch {}
@@ -720,7 +932,16 @@ window.__ModuleLoader__.load({
 
     function playerResume() {
       const session = player
-      if (!session || !session.context) return
+      if (!session) return
+      if (session.kind === 'speech') {
+        session.desiredPaused = false
+        session.phase = 'playing'
+        try { const synth = speechSynth(); if (synth) synth.resume() } catch {}
+        setPlayback({ phase: 'playing' })
+        playerView({ phase: 'playing' })
+        return
+      }
+      if (!session.context) return
       session.desiredPaused = false
       session.phase = 'playing'
       try { void session.context.resume().catch(() => {}) } catch {}
@@ -733,7 +954,8 @@ window.__ModuleLoader__.load({
       if (!session) return
       const target = session.unit + delta
       if (target < 0 || target >= session.units.length) return
-      void playerPlayUnit(session, target)
+      if (session.kind === 'speech') speakSpeechUnit(session, target, 0)
+      else void playerPlayUnit(session, target)
     }
 
     function playerAdvance(session, gen) {
@@ -958,8 +1180,176 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ------------------------------------------------ browser speech playback
+    // Web Speech hands back no samples: there is nothing to cache, and the only
+    // speed control is the utterance rate. The same floating window drives it.
+    function speechTimersOff(session) {
+      if (!session) return
+      if (session.timer) { clearTimeout(session.timer); session.timer = 0 }
+      if (session.watchdog) { clearTimeout(session.watchdog); session.watchdog = 0 }
+    }
+
+    function speakSpeechUnit(session, index, fromChar) {
+      if (player !== session) return
+      const synth = speechSynth()
+      if (!synth) {
+        fail(session.key, new Error(t('这个环境没有浏览器朗读能力', 'browser speech is not available here')))
+        return
+      }
+      if (session.units.length === 0) return
+      const target = Math.max(0, Math.min(index, session.units.length - 1))
+      const unit = session.units[target] || {}
+      const text = String(unit.text || '')
+      const base = Math.max(0, Math.min(fromChar || 0, Math.max(0, text.length - 1)))
+      session.unit = target
+      session.boundary = base
+      session.gen += 1
+      const gen = session.gen
+      speechTimersOff(session)
+      try { synth.cancel() } catch {}
+      session.phase = session.desiredPaused ? 'paused' : 'loading'
+      playerView({ unit: target, phase: session.phase, speed: session.speed, preview: previewOf(unit) })
+      setPlayback({ key: session.key, phase: session.phase })
+      if (session.desiredPaused) {
+        try { synth.pause() } catch {}
+      }
+
+      const utter = new window.SpeechSynthesisUtterance(text.slice(base))
+      const voice = pickSpeechVoice()
+      if (voice) { utter.voice = voice; utter.lang = voice.lang }
+      utter.rate = Math.min(2, Math.max(0.5, Number(session.speed) || 1))
+      utter.pitch = 1
+      utter.volume = 1
+      let started = false
+
+      utter.onstart = () => {
+        if (player !== session || session.gen !== gen) return
+        started = true
+        if (session.watchdog) { clearTimeout(session.watchdog); session.watchdog = 0 }
+        if (session.desiredPaused) return
+        session.phase = 'playing'
+        playerView({ phase: 'playing' })
+        setPlayback({ phase: 'playing' })
+      }
+      utter.onboundary = (event) => {
+        if (player !== session || session.gen !== gen) return
+        if (event && typeof event.charIndex === 'number') session.boundary = base + event.charIndex
+      }
+      utter.onend = () => {
+        if (player !== session || session.gen !== gen) return
+        speechTimersOff(session)
+        session.boundary = 0
+        if (session.unit + 1 >= session.units.length) { playerFinish(); return }
+        session.timer = setTimeout(() => {
+          session.timer = 0
+          if (player === session) speakSpeechUnit(session, session.unit + 1, 0)
+        }, PLAYER_UNIT_GAP_MS)
+      }
+      utter.onerror = (event) => {
+        if (player !== session || session.gen !== gen) return
+        const reason = (event && event.error) || 'unknown'
+        if (reason === 'interrupted' || reason === 'canceled') return
+        speechTimersOff(session)
+        // Autoplay policy: speech driven by an event (auto-read) may be blocked
+        // until the page sees a click. Say so instead of "failed".
+        if (reason === 'not-allowed') {
+          fail(session.key, new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
+            'the browser needs one click on this page before it may speak; press read')))
+          return
+        }
+        fail(session.key, new Error(t('浏览器朗读失败：', 'browser speech failed: ') + reason))
+      }
+      // A cloud voice that cannot reach its vendor never fires onstart and never
+      // fires onerror, so silence is the only signal.
+      session.watchdog = setTimeout(() => {
+        session.watchdog = 0
+        if (started || player !== session) return
+        const cloud = isCloudVoice(voice)
+        // A desktop shell that stayed silent switches itself to the bridge, so
+        // the next click does not wait eight seconds again.
+        if (isDesktopShell) rememberSpeechVoice(BRIDGE_TARGET)
+        fail(session.key, new Error(cloud
+          ? t('这个云端音色 8 秒内没有出声（多半连不上厂商服务器），请换成 ⌂ 本地音色',
+            'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice')
+          : isDesktopShell
+            ? t('这个桌面外壳没能出声，已切换到朗读桥：再点一次朗读会在浏览器里读',
+              'this desktop shell stayed silent; it now uses the bridge — press read again')
+            : t('浏览器 8 秒内没有出声，可能被自动播放策略挡住，请再点一次朗读',
+              'no sound in 8 s; the browser may be blocking autoplay — press read again')))
+      }, SPEECH_FIRST_TIMEOUT_MS)
+
+      // Chrome drops a speak() issued in the same tick as cancel(); yield first.
+      session.timer = setTimeout(() => {
+        session.timer = 0
+        if (player !== session || session.gen !== gen) return
+        try { synth.speak(utter) } catch (error) { fail(session.key, error) }
+      }, 30)
+    }
+
+    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection) {      refreshSpeechVoices()
+      if (!speechCapable()) {
+        fail(stateKey, new Error(t('这台环境没有浏览器语音', 'no browser voices here')))
+        return
+      }
+      stopCurrentOnly()
+      const session = {
+        kind: 'speech',
+        key: stateKey, sessionId, messageId, selection: selection || '',
+        units: [], unit: 0, total: 0, phase: 'loading', desiredPaused: false,
+        speed, boundary: 0, gen: 0, watchdog: 0, timer: 0,
+        view: { open: true, unit: 0, total: 0, phase: 'loading', speed, preview: '' },
+      }
+      player = session
+      current = { key: stateKey }
+      playedMessages.add(stateKey)
+      setPlayback({ key: stateKey, phase: 'loading', error: '' })
+      updatePlayerWindow()
+      try {
+        const response = await fetch(PLAN_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            ...(sessionId && messageId ? { sessionId, messageId } : {}),
+            ...(selection ? { text: selection } : {}),
+          }),
+        })
+        const payload = await response.json().catch(() => null)
+        if (player !== session) return
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error((payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+        }
+        const units = Array.isArray(payload.value && payload.value.units) ? payload.value.units : []
+        if (units.length === 0) throw new Error(t('这条消息没有可朗读的文字', 'nothing to read here'))
+        session.units = units
+        session.total = units.length
+        session.view.total = units.length
+        session.view.preview = previewOf(units[0])
+        updatePlayerWindow()
+        speakSpeechUnit(session, 0, 0)
+      } catch (error) {
+        if (player !== session) return
+        fail(stateKey, error)
+      }
+    }
+
     async function startReadAloud(sessionId, messageId, stateKey, options) {
       const selection = options && options.text ? String(options.text) : ''
+      if (engineMode === 'browser') {
+        refreshSpeechVoices()
+        // Desktop: the bridge is the default and needs no voice list at all.
+        if (usesBridge() || (!speechCapable() && isDesktopShell)) {
+          setPlayback({ key: null, phase: 'idle', error: '' })
+          // A selection read has no message id, so the text itself goes along.
+          void openBridge({ sessionId, messageId, text: selection || undefined })
+          return
+        }
+        if (!speechCapable()) {
+          fail(stateKey, new Error(t('这个环境没有浏览器语音', 'no browser voices here')))
+          return
+        }
+        await startSpeechReadAloud(sessionId, messageId, stateKey, selection)
+        return
+      }
       // Only the audible item is replaced: the waiting queue must survive, or
       // draining one entry would throw away the rest.
       stopCurrentOnly()
@@ -1200,8 +1590,9 @@ window.__ModuleLoader__.load({
       try { node.remove() } catch {}
     }
 
-    function showFailureToast(message) {
+    function showFailureToast(message, tone) {
       if (typeof document === 'undefined' || !document.body) return
+      const ok = tone === 'ok'
       hideFailureToast()
       const node = document.createElement('div')
       try { node.setAttribute('popover', 'manual') } catch {}
@@ -1212,8 +1603,8 @@ window.__ModuleLoader__.load({
         + 'color:var(--dsw-alias-label-primary,#eee);font-size:12px;line-height:1.5;'
         + 'box-shadow:0 8px 28px rgba(0,0,0,.38);font-family:inherit'
       const title = document.createElement('div')
-      title.textContent = t('朗读失败', 'Playback failed')
-      title.style.cssText = 'font-weight:600;margin-bottom:4px;color:#e5484d'
+      title.textContent = ok ? t('已交给浏览器', 'Sent to the browser') : t('朗读失败', 'Playback failed')
+      title.style.cssText = 'font-weight:600;margin-bottom:4px;color:' + (ok ? '#30a46c' : '#e5484d')
       const body = document.createElement('div')
       body.textContent = String(message || '')
       body.style.cssText = 'white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text'
@@ -1232,7 +1623,7 @@ window.__ModuleLoader__.load({
         try { node.removeAttribute('popover') } catch {}
       }
       toastEl = node
-      toastTimer = setTimeout(hideFailureToast, 30000)
+      toastTimer = setTimeout(hideFailureToast, ok ? 5000 : 30000)
     }
 
     function SpeakerIcon() {
@@ -1908,7 +2299,22 @@ window.__ModuleLoader__.load({
       const [speedDraft, setSpeedDraft] = React.useState(null)
       const [guideOpen, setGuideOpen] = React.useState(false)
       const [previewState, setPreviewState] = React.useState(previewPhase)
+      // Browser voices arrive asynchronously (voiceschanged); re-render when they do.
+      const [voices, setVoices] = React.useState(() => refreshSpeechVoices().slice())
       useLocaleTick()
+
+      React.useEffect(() => {
+        const sync = () => setVoices(refreshSpeechVoices().slice())
+        sync()
+        const synth = speechSynth()
+        if (!synth) return
+        const timer = setTimeout(sync, 900)
+        try { synth.addEventListener('voiceschanged', sync) } catch {}
+        return () => {
+          clearTimeout(timer)
+          try { synth.removeEventListener('voiceschanged', sync) } catch {}
+        }
+      }, [])
 
       const load = React.useCallback(() => {
         fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
@@ -1965,6 +2371,12 @@ window.__ModuleLoader__.load({
       const cacheMb = (config.cache && config.cache.bytes ? config.cache.bytes / 1048576 : 0).toFixed(1)
       const cacheLimit = config.cacheMaxMb || 200
       const cachePct = Math.min(100, Math.round(((config.cache && config.cache.bytes ? config.cache.bytes : 0) / (cacheLimit * 1048576)) * 100))
+      // Where the synthesized audio lives: the cache folder, or RAM only.
+      const cacheMode = config.cacheMode === 'memory' ? 'memory' : 'disk'
+      const memCache = (config.cache && config.cache.memory) || { files: 0, bytes: 0, limitBytes: 134217728 }
+      const memMb = (memCache.bytes / 1048576).toFixed(1)
+      const memLimitMb = ((memCache.limitBytes || 134217728) / 1048576).toFixed(0)
+      const memPct = Math.min(100, Math.round((memCache.bytes / (memCache.limitBytes || 134217728)) * 100))
       const piper = config.piper || { exe: false, model: false, modelEn: false, sampleRate: 0, voices: [] }
       const localVoices = Array.isArray(piper.voices) ? piper.voices : []
       const system = config.system || { supported: false, voices: [] }
@@ -1977,31 +2389,39 @@ window.__ModuleLoader__.load({
         ? custom.protocol
         : 'openai'
       const engine = config.engine || 'deepseek'
+      // Piper is no longer offered (browser speech replaces it); the Host also
+      // downgrades a saved `piper` value, so this stays false on purpose.
+      const localEngine = false
       const cloudEngine = engine === 'deepseek'
-      const localEngine = engine === 'piper'
+      const browserEngine = engine === 'browser'
       const systemEngine = engine === 'system'
       const customEngine = engine === 'custom'
-      const piperReady = piper.exe === true && piper.model === true
       const systemReady = system.supported === true && systemVoices.length > 0
       const customReady = custom.ready === true
+      const browserReady = voices.length > 0
       const engineReady = cloudEngine ? config.keyConfigured === true
-        : localEngine ? piperReady
+        // A desktop shell can always hand the text to a browser, voices or not.
+        : browserEngine ? (browserReady || isDesktopShell)
           : systemEngine ? systemReady
             : customReady
       const engineHint = cloudEngine
-        ? t('DeepSeek 官方 TTS，需要 Key 和网络。', 'The official DeepSeek TTS API; needs a key and network.')
-        : localEngine
-          ? t('你自己装的 Piper，离线、不花钱；再填一个英文模型，纯英文段落会交给它读。',
-            'Your own Piper install, offline and free; set an English model and pure-English parts go to it.')
+        ? t('DeepSeek 官方 TTS：在线合成按量计费，用你自己的 API 余额；需要 Key 和网络。',
+          'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.')
+        : browserEngine
+          ? (isDesktopShell
+            ? t('用浏览器朗读：桌面端默认交给默认浏览器（朗读桥），也可以选下面的本机语音。',
+              'Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.')
+            : t('用浏览器自带的语音朗读：不用 Key、不落盘、不走 Host；语速就是语音引擎自身的语速。',
+              'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.'))
           : systemEngine
             ? t('操作系统自带的语音，离线、零下载；中英混读正常，但音色偏机械。',
               'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.')
-            : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；Key 只存本机，不回传给页面。',
-              'Any OpenAI-compatible /v1/audio/speech endpoint; the key stays on this machine and is never sent back to the page.')
+            : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；在线服务按量计费、消耗你账户的余额，本机服务免费。Key 只存本机，不回传给页面。',
+              'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.')
       const engineStatus = engineReady
         ? t('已就绪', 'ready')
         : cloudEngine ? t('需配置 Key', 'key missing')
-          : localEngine ? t('需要配置', 'needs setup')
+          : browserEngine ? t('这个环境没有浏览器语音', 'no browser voices')
             : systemEngine ? (system.supported ? t('没有语音', 'no voices') : t('系统不支持', 'unsupported'))
               : t('需要配置', 'needs setup')
 
@@ -2050,68 +2470,33 @@ window.__ModuleLoader__.load({
               onChange: (event) => save({ engine: event.target.value }),
               children: [
                 h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
-                h('option', { value: 'piper', key: 'piper' }, t('本地 Piper（离线）', 'Local Piper (offline)')),
+                h('option', { value: 'browser', key: 'browser', disabled: !browserReady && !isDesktopShell },
+                  browserReady
+                    ? t('浏览器朗读（本机 ' + voices.length + ' 个语音）', 'Browser speech (' + voices.length + ' voices)')
+                    : isDesktopShell
+                      ? t('浏览器朗读（交给浏览器）', 'Browser speech (hand off to a browser)')
+                      : t('浏览器朗读（这个环境没有语音）', 'Browser speech (no voices here)')),
                 h('option', { value: 'system', key: 'system' }, t('系统语音（离线）', 'System voices (offline)')),
                 h('option', { value: 'custom', key: 'custom' }, t('自定义 API（在线）', 'Custom API (online)')),
               ],
             }),
           ),
-          localEngine ? row('piper-exe', t('程序', 'Program'), [
-            h(TextInput, {
-              key: 'input',
-              className: 'dsh-tts-input wide', value: config.piperPath, disabled: busy,
-              placeholder: 'C:\\path\\to\\piper.exe',
-              onCommit: (value) => void save({ piperPath: value }),
-            }),
-            badge('state', piper.exe === true, piper.exe ? t('已找到', 'found') : t('未找到', 'missing')),
-          ]) : null,
-          localEngine ? row('piper-model', t('音色模型', 'Voice model'), [
-            localVoices.length > 0
-              ? h('select', {
-                  key: 'select',
-                  className: 'dsh-tts-select', value: config.piperModel, disabled: busy,
-                  onChange: (event) => save({ piperModel: event.target.value }),
-                  children: [
-                    ...(localVoices.some((voice) => voice.path === config.piperModel)
-                      ? []
-                      : [h('option', { value: config.piperModel || '', key: 'current' }, t('当前（自定义路径）', 'current (custom path)'))]),
-                    ...localVoices.map((voice) => h('option', { value: voice.path, key: voice.path },
-                      voice.name + ' · ' + (voice.sampleRate / 1000).toFixed(2) + ' kHz')),
-                  ],
-                })
-              : h(TextInput, {
-                  key: 'input',
-                  className: 'dsh-tts-input wide', value: config.piperModel, disabled: busy,
-                  placeholder: 'C:\\voices\\zh_CN-huayan-medium.onnx',
-                  onCommit: (value) => void save({ piperModel: value }),
-                }),
-            badge('state', piper.model === true, piper.model ? t('已找到', 'found') : t('未找到', 'missing')),
-          ]) : null,
-          localEngine ? row('piper-model-en', t('英文模型', 'English model'), [
-            localVoices.length > 0
-              ? h('select', {
-                  key: 'select',
-                  className: 'dsh-tts-select', value: config.piperModelEn || '', disabled: busy,
-                  onChange: (event) => save({ piperModelEn: event.target.value }),
-                  children: [
-                    h('option', { value: '', key: 'off' }, t('不启用（英文也用中文模型）', 'off (Chinese model reads everything)')),
-                    ...(config.piperModelEn && !localVoices.some((voice) => voice.path === config.piperModelEn)
-                      ? [h('option', { value: config.piperModelEn, key: 'current' }, t('当前（自定义路径）', 'current (custom path)'))]
-                      : []),
-                    ...localVoices.map((voice) => h('option', { value: voice.path, key: voice.path },
-                      voice.name + ' · ' + (voice.sampleRate / 1000).toFixed(2) + ' kHz')),
-                  ],
-                })
-              : h(TextInput, {
-                  key: 'input',
-                  className: 'dsh-tts-input wide', value: config.piperModelEn, disabled: busy,
-                  placeholder: 'C:\\voices\\en_US-lessac-medium.onnx',
-                  onCommit: (value) => void save({ piperModelEn: value }),
-                }),
-            config.piperModelEn
-              ? badge('state', piper.modelEn === true, piper.modelEn ? t('已找到', 'found') : t('未找到', 'missing'))
-              : null,
-          ]) : null,
+          browserEngine ? row('speech-voice', t('语音', 'Voice'), (voices.length > 0 || isDesktopShell)
+            ? h('select', {
+                className: 'dsh-tts-select',
+                value: speechTargetValue(),
+                disabled: busy,
+                onChange: (event) => { rememberSpeechVoice(event.target.value); setVoices(refreshSpeechVoices().slice()) },
+                children: [
+                  // Only a desktop shell gets this: a real browser reads in place.
+                  isDesktopShell ? h('option', { value: BRIDGE_TARGET, key: 'bridge' },
+                    t('🌐 朗读桥 · 在浏览器中朗读（推荐）', '🌐 Speech bridge · read in a browser (recommended)')) : null,
+                  ...voices.map((voice) => h('option', {
+                    value: voice.voiceURI, key: voice.voiceURI,
+                  }, (isCloudVoice(voice) ? '☁ ' : '⌂ ') + voice.name + ' · ' + voice.lang)),
+                ].filter(Boolean),
+              })
+            : badge('state', false, t('这个环境没有浏览器语音', 'no browser voices here'))) : null,
           cloudEngine ? row('voice', t('音色', 'Voice'),
             h('select', {
               className: 'dsh-tts-select', value: config.voice, disabled: busy,
@@ -2284,13 +2669,6 @@ window.__ModuleLoader__.load({
               : null,
             badge('state', custom.keyConfigured === true, custom.keyConfigured ? t('已配置', 'configured') : t('未配置', 'missing')),
           ]) : null,
-          localEngine ? row('guide', t('安装帮助', 'Setup'),
-            h('button', {
-              key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,
-              onClick: () => setGuideOpen(true),
-              children: t('离线安装说明', 'Offline install guide'),
-            }),
-          ) : null,
           row('preview', t('试听', 'Preview'), [
             h('button', {
               key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,
@@ -2349,14 +2727,29 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dsh-tts-h1', key: 'h' }, t('音频缓存', 'Audio cache')),
             ),
             h('div', { className: 'dsh-tts-hint', key: 'hint' },
-              (config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'
-              + (config.cache && config.cache.pinned && config.cache.pinned.files > 0
-                ? t('（固定提示语 ' + config.cache.pinned.files + ' 个，不参与淘汰）',
-                  ' (' + config.cache.pinned.files + ' pinned, never evicted)')
-                : '')),
-            h('div', { className: 'dsh-tts-meter', key: 'meter' }, h('i', { style: { width: cachePct + '%' } })),
+              cacheMode === 'disk'
+                ? ((config.cache ? config.cache.files : 0) + t(' 个文件 · ', ' files · ') + cacheMb + ' MB / ' + cacheLimit + ' MB'
+                  + (config.cache && config.cache.pinned && config.cache.pinned.files > 0
+                    ? t('（固定提示语 ' + config.cache.pinned.files + ' 个，不参与淘汰）',
+                      ' (' + config.cache.pinned.files + ' pinned, never evicted)')
+                    : ''))
+                : (t('内存中 ', 'in memory: ') + memCache.files + t(' 段 · ', ' entries · ') + memMb + ' MB / ' + memLimitMb + ' MB')),
+            h('div', { className: 'dsh-tts-hint', key: 'note' },
+              t('只缓存走 Host 合成的引擎（DeepSeek / 自定义 API / 系统语音）；浏览器朗读不产生缓存。',
+                'Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.')),
+            h('div', { className: 'dsh-tts-meter', key: 'meter' },
+              h('i', { style: { width: (cacheMode === 'disk' ? cachePct : memPct) + '%' } })),
           ),
-          row('limit', t('上限', 'Limit'), [
+          row('mode', t('位置', 'Location'),
+            h('select', {
+              className: 'dsh-tts-select', value: cacheMode, disabled: busy,
+              onChange: (event) => void save({ cacheMode: event.target.value }),
+              children: [
+                h('option', { value: 'disk', key: 'disk' }, t('硬盘（重启后仍在）', 'Disk (survives a restart)')),
+                h('option', { value: 'memory', key: 'memory' }, t('内存（重启即清空，不写盘）', 'Memory (cleared on restart, nothing written)')),
+              ],
+            })),
+          cacheMode === 'disk' ? row('limit', t('上限', 'Limit'), [
             h(NumberInput, {
               key: 'input',
               className: 'dsh-tts-input num', min: MIN_CACHE_MB, max: MAX_CACHE_MB, step: 50,
@@ -2364,9 +2757,11 @@ window.__ModuleLoader__.load({
               onCommit: (value) => void save({ cacheMaxMb: value }),
             }),
             h('span', { className: 'dsh-tts-unit', key: 'unit' }, 'MB'),
+          ]) : null,
+          row('clear', t('清理', 'Cleanup'), [
             h('button', {
               key: 'clear',
-              className: 'dsh-tts-btn danger push', type: 'button', disabled: busy,
+              className: 'dsh-tts-btn danger', type: 'button', disabled: busy,
               onClick: async () => {
                 try {
                   const response = await fetch(CLEAR_PATH, { method: 'POST' })
