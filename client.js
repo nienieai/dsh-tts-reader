@@ -1482,6 +1482,19 @@ window.__ModuleLoader__.load({
       }, 150)
     }
 
+    /** Short "which voice · which signals" label for the floating window. */
+    function speechLabel(session) {
+      const name = String(session.voiceName || '')
+      const short = name
+        .replace(/^Microsoft\s+/i, '')
+        .replace(/\s+Online$/i, ' ' + t('在线', 'online'))
+        .replace(/\s+Desktop$/i, '')
+      const bits = []
+      if (short) bits.push((session.voiceCloud ? '☁ ' : '⌂ ') + short)
+      if (session.boundarySeen) bits.push(t('逐词', 'words'))
+      return bits.join(' · ')
+    }
+
     /**
      * Queue one utterance per paragraph in a single call: the engine plays them
      * back to back, so nothing waits on us between paragraphs, and each
@@ -1513,6 +1526,9 @@ window.__ModuleLoader__.load({
       highlightWord(session, from, skip, 1)
 
       const voice = pickSpeechVoice()
+      session.voiceName = voice ? String(voice.name || '') : ''
+      session.voiceCloud = isCloudVoice(voice)
+      session.boundarySeen = false
       let started = false
       const items = []
       for (let index = from; index < session.units.length; index += 1) {
@@ -1574,6 +1590,11 @@ window.__ModuleLoader__.load({
             session.skip = at
             session.boundary = at
             highlightWord(session, item.index, at, event.charLength || 1)
+            if (!session.boundarySeen) {
+              // Only the first one repaints the window: this flips a label once.
+              session.boundarySeen = true
+              playerView({})
+            }
           }
           utter.onend = () => {
             if (player !== session || session.gen !== gen) return
@@ -1871,7 +1892,11 @@ window.__ModuleLoader__.load({
       try {
         if (typeof wrap.showPopover === 'function' && !wrap.matches(':popover-open')) wrap.showPopover()
       } catch {}
-      parts.title.textContent = view.phase === 'paused' ? t('已暂停', 'Paused') : t('语音朗读', 'Read aloud')
+      const title = view.phase === 'paused' ? t('已暂停', 'Paused') : t('语音朗读', 'Read aloud')
+      // Which voice is actually speaking, and whether it reports word positions:
+      // the two things a wrong highlight has to be blamed on.
+      const talker = player.kind === 'speech' ? speechLabel(player) : ''
+      parts.title.textContent = talker ? title + ' · ' + talker : title
       const progress = view.total > 1 ? (Math.min(view.unit + 1, view.total) + '/' + view.total + ' · ') : ''
       parts.meta.textContent = progress + (view.preview || '')
       parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
