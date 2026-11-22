@@ -307,6 +307,11 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     return list.slice().sort(function (a, b) {
       var ra = rank(a), rb = rank(b);
       if (ra !== rb) return ra - rb;
+      // Natural voices (Edge's Online series) sound like speech and do report
+      // word boundaries, so they lead; then local engines; plain cloud last.
+      var na = /natural/i.test(a.name || '') ? 0 : 1;
+      var nb = /natural/i.test(b.name || '') ? 0 : 1;
+      if (na !== nb) return na - nb;
       if (isCloud(a) !== isCloud(b)) return isCloud(a) ? 1 : -1;
       // Plain names before espeak's "+Variant" copies.
       var va = (a.name || '').indexOf('+') === -1 ? 0 : 1;

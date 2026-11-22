@@ -177,14 +177,34 @@ window.__ModuleLoader__.load({
 
     function isCloudVoice(voice) { return voice && voice.localService === false }
 
-    /** Prefer the remembered voice, then a local Chinese one, then anything. */
+    /**
+     * Which voice reads by default. The remembered one wins; otherwise a
+     * "Natural" voice in the app language is best — Edge's Online (Natural)
+     * voices sound like speech and do report word boundaries. They are still
+     * network voices, so plain cloud voices (Chrome's "Google …", which can hang
+     * without ever starting) rank below the local engines.
+     */
     function pickSpeechVoice() {
       const wanted = storedSpeechVoice()
-      const byUri = wanted ? speechVoices.find((voice) => voice.voiceURI === wanted) : null
-      if (byUri) return byUri
-      const local = speechVoices.filter((voice) => !isCloudVoice(voice))
-      const pool = local.length > 0 ? local : speechVoices
-      return pool.find((voice) => /^zh/i.test(voice.lang || '')) || pool[0] || null
+      if (wanted) {
+        const remembered = speechVoices.find((voice) => voice.voiceURI === wanted)
+        if (remembered) return remembered
+      }
+      const zh = (voice) => /^zh/i.test(voice.lang || '')
+      const natural = (voice) => /natural/i.test(voice.name || '')
+      const local = (voice) => !isCloudVoice(voice)
+      const best = [
+        (voice) => zh(voice) && natural(voice),
+        (voice) => zh(voice) && local(voice),
+        zh,
+        natural,
+        local,
+      ]
+      for (const test of best) {
+        const found = speechVoices.find(test)
+        if (found) return found
+      }
+      return speechVoices[0] || null
     }
 
     /**
