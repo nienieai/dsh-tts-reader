@@ -3,75 +3,105 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>浏览器朗读</title>
+<title>朗读桥</title>
 <style>
   :root{
-    --bg:#0f1115; --card:#171a21; --line:#262b36; --fg:#e6e9ef; --dim:#9aa4b2;
+    --bg:#0f1115; --line:#262b36; --fg:#e6e9ef; --dim:#98a2b3;
+    --dim-text:rgba(230,233,239,.52); --bar:rgba(15,17,21,.82); --field:#0c0e12;
     --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
   }
+  @media (prefers-color-scheme: light) {
+    :root{
+      --bg:#fbfbfa; --line:#e3e4e8; --fg:#1f2329; --dim:#6b7280;
+      --dim-text:rgba(31,35,41,.55); --bar:rgba(251,251,250,.84); --field:#ffffff;
+      --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
+    }
+  }
   *{box-sizing:border-box}
-  body{margin:0;padding:22px 18px 56px;background:var(--bg);color:var(--fg);
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);
     font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
-  main{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
-  h1{font-size:17px;margin:0;font-weight:600}
-  .sub{color:var(--dim);font-size:12.5px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
-  .row{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
-  .row + .row{margin-top:9px}
-  select,input[type=number]{background:#0c0e12;color:var(--fg);border:1px solid var(--line);
-    border-radius:7px;padding:7px 9px;font:inherit}
-  select{min-width:min(420px,100%)}
-  input[type=range]{width:150px;accent-color:var(--accent)}
-  button{background:#232838;color:var(--fg);border:1px solid var(--line);border-radius:7px;
-    padding:7px 13px;font:inherit;font-size:13px;cursor:pointer}
-  button:hover:not(:disabled){background:#2b3245}
-  button:disabled{opacity:.42;cursor:not-allowed}
-  button.primary{background:#2563eb;border-color:#2563eb}
-  button.primary:hover:not(:disabled){background:#1d4ed8}
-  label.chk{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;cursor:pointer;user-select:none}
-  .val{font-family:var(--mono);font-size:12.5px;min-width:46px;display:inline-block}
-  #bar{height:4px;background:#0c0e12;border-radius:2px;overflow:hidden;margin-top:10px}
-  #fill{height:100%;width:0;background:var(--accent);transition:width .2s linear}
-  #now{margin-top:10px;padding:10px 12px;background:#0c0e12;border:1px solid var(--line);
-    border-radius:7px;min-height:52px;line-height:1.75;max-height:190px;overflow:auto;font-size:13.5px}
-  #now mark{background:rgba(96,165,250,.28);color:#dbeafe;border-radius:3px;padding:0 1px}
-  #banner{display:none;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.6}
+
+  /* One floating layer: the controls. Everything else is the page itself. */
+  .bar{position:sticky;top:0;z-index:10;background:var(--bar);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+  .bar-inner{max-width:44rem;margin:0 auto;padding:0 16px;height:52px;
+    display:flex;align-items:center;gap:8px}
+  .brand{flex:0 0 auto;font-size:13px;color:var(--dim);letter-spacing:.02em;margin-right:auto;
+    white-space:nowrap}
+  .progress{height:2px;background:transparent}
+  #fill{height:100%;width:0;background:var(--accent);transition:width .25s linear}
+
+  select{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:7px;
+    padding:5px 7px;font:inherit;font-size:12.5px;max-width:12rem;min-width:0}
+  .chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);
+    cursor:pointer;user-select:none;white-space:nowrap}
+  .rate-wrap{display:inline-flex;align-items:center;gap:5px}
+  input[type=range]{width:88px;accent-color:var(--accent)}
+  .val{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:44px}
+
+  button{background:transparent;color:var(--fg);border:1px solid transparent;border-radius:7px;
+    width:32px;height:30px;font:inherit;font-size:13px;line-height:1;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center}
+  button:hover:not(:disabled){background:#222736}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.play{width:36px;border-color:var(--line)}
+
+  .dot{width:8px;height:8px;border-radius:50%;background:#4b5563;margin-left:4px;flex:none}
+  .dot.ok{background:var(--ok)}
+  .dot.warn{background:var(--warn)}
+
+  #banner{display:none;max-width:44rem;margin:0 auto;padding:7px 20px;font-size:12.5px;line-height:1.5}
   #banner.show{display:block}
-  #banner.warn{background:rgba(251,191,36,.12);color:var(--warn);border:1px solid rgba(251,191,36,.35)}
-  #banner.err{background:rgba(248,113,113,.12);color:var(--err);border:1px solid rgba(248,113,113,.35)}
-  #banner b{font-weight:600}
-  #meta{font-size:12px;color:var(--dim);font-family:var(--mono)}
+  #banner.warn{color:var(--warn)}
+  #banner.err{color:var(--err)}
+
+  /* Full-page scroll, one readable column: no inner scrollers. */
+  main{max-width:44rem;margin:0 auto;padding:26px 20px 45vh}
+  h1{font-size:19px;margin:0 0 4px;font-weight:600;line-height:1.4}
+  .sub{color:var(--dim);font-size:12.5px}
+  .doc{margin-top:22px}
+  .doc p{margin:0 0 1.15em;font-size:17px;line-height:1.85;color:var(--dim-text);
+    transition:color .18s ease}
+  .doc p.on{color:var(--fg)}
+  .doc p.mark{background:rgba(96,165,250,.14);border-radius:4px}
+  .doc p.empty{color:var(--dim);font-size:15px}
+  ::highlight(bridge-para){background-color:rgba(96,165,250,.14)}
+  ::highlight(bridge-word){background-color:rgba(96,165,250,.45)}
+  @media (max-width: 600px) {
+    .brand{display:none}
+    .bar-inner{gap:6px;padding:0 12px}
+    main{padding:20px 14px 45vh}
+    input[type=range]{width:64px}
+  }
 </style>
 </head>
 <body>
-<main>
-  <div>
-    <h1>浏览器朗读</h1>
-    <div class="sub" id="sub">正在读取…</div>
+<div class="bar">
+  <div class="bar-inner">
+    <span class="brand" id="brand">朗读桥</span>
+    <select id="voiceSel" title="音色"><option value="">（正在读取本机语音…）</option></select>
+    <label class="chk" title="只列出离线音色，不连厂商服务器"><input type="checkbox" id="onlyLocal"> 本地</label>
+    <span class="rate-wrap">
+      <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1" title="语速">
+      <span class="val" id="rateVal">1.00×</span>
+    </span>
+    <button id="btnPrev" title="上一段" disabled>⏮</button>
+    <button id="btnPlay" class="play" title="开始朗读">▶</button>
+    <button id="btnNext" title="下一段" disabled>⏭</button>
+    <button id="btnStop" title="停止" disabled>■</button>
+    <span id="dot" class="dot" title="未连接 DSH"></span>
   </div>
+  <div class="progress"><div id="fill"></div></div>
+</div>
 
-  <div id="banner"></div>
+<div id="banner"></div>
 
-  <section class="card">
-    <div class="row">
-      <select id="voiceSel"><option value="">（正在读取本机语音…）</option></select>
-      <label class="chk"><input type="checkbox" id="onlyLocal"> 只看本地音色（不走厂商服务器）</label>
-    </div>
-    <div class="row">
-      <button id="btnPlay" class="primary">开始朗读</button>
-      <button id="btnPause" disabled>暂停</button>
-      <button id="btnPrev" disabled>上一段</button>
-      <button id="btnNext" disabled>下一段</button>
-      <button id="btnStop" disabled>停止</button>
-      <span class="row" style="gap:6px;margin-left:auto">
-        <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1"><span class="val" id="rateVal">1.00×</span>
-      </span>
-    </div>
-    <div id="bar"><div id="fill"></div></div>
-    <div id="now" class="sub">点“开始朗读”后用浏览器自带的语音朗读。</div>
-    <div class="row" style="margin-top:9px"><span id="meta">—</span></div>
-  </section>
+<main>
+  <h1 id="title"></h1>
+  <div id="sub" class="sub"></div>
+  <div id="doc" class="doc"></div>
 </main>
 
 <script>window.__BRIDGE__ = __BRIDGE_DATA__;</script>
@@ -79,45 +109,124 @@
 (function () {
   'use strict';
   var data = window.__BRIDGE__ || {};
-  var units = Array.isArray(data.units) ? data.units : [];
+  var units = Array.isArray(data.units) ? data.units.map(function (u, i) {
+    return { index: i, text: String((u && u.text) || '') };
+  }) : [];
   var synth = window.speechSynthesis;
   var Utter = window.SpeechSynthesisUtterance;
   var FIRST_SOUND_TIMEOUT = 8000;
+  var VOICE_KEY = 'dsh-tts-bridge:voice-v2';
+  var FOLLOW_RESUME_MS = 3000;
 
   var el = {};
-  ['sub','banner','voiceSel','onlyLocal','btnPlay','btnPause','btnPrev','btnNext','btnStop',
-   'rate','rateVal','fill','now','meta'].forEach(function (id) { el[id] = document.getElementById(id); });
+  ['brand','fill','banner','voiceSel','onlyLocal','btnPrev','btnPlay','btnNext','btnStop',
+   'rate','rateVal','dot','title','sub','doc'].forEach(function (id) { el[id] = document.getElementById(id); });
 
   var st = {
     voices: [], visible: [], idx: 0, running: false, paused: false, stop: false,
-    gen: 0, watchdog: 0, boundary: 0, attempted: false, chars: 0, speechMs: 0, startedAt: 0,
-    rate: 1, savedUri: ''
+    gen: 0, watchdog: 0, boundary: 0, attempted: false, startedAt: 0,
+    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0
   };
 
-  function esc(s) {
-    return String(s).replace(/[&<>]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'; });
-  }
-  function fmt(ms) { return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
   function isCloud(v) { return v.localService === false; }
-  function isGoogle(v) { return /^google/i.test(v.name || ''); }
+  function fmt(ms) { return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
 
-  function banner(kind, html) {
+  function banner(kind, text) {
     el.banner.className = 'show ' + kind;
-    el.banner.innerHTML = html;
+    el.banner.textContent = text;
   }
-  function clearBanner() { el.banner.className = ''; el.banner.innerHTML = ''; }
+  function clearBanner() { el.banner.className = ''; el.banner.textContent = ''; }
 
-  function setMeta(text) { el.meta.textContent = text; }
+  /* ---------- the document ---------- */
 
-  /** The settings page owns the speed; it arrives with the text. */
-  function applySpeed(value) {
-    var next = Number(value);
-    if (!isFinite(next) || next <= 0) return;
-    st.rate = Math.min(2, Math.max(0.5, Math.round(next * 100) / 100));
-    el.rate.value = String(st.rate);
-    el.rateVal.textContent = st.rate.toFixed(2) + '×';
+  function renderDoc() {
+    el.doc.textContent = '';
+    st.paragraphs = [];
+    if (!units.length) {
+      var empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'DSH 还没有推送朗读内容。在 DSH 里点一次「朗读」，这段文字会自动出现在这一页。';
+      el.doc.appendChild(empty);
+      return;
+    }
+    units.forEach(function (unit, index) {
+      var p = document.createElement('p');
+      p.textContent = unit.text;
+      p.setAttribute('data-i', String(index));
+      el.doc.appendChild(p);
+      st.paragraphs.push(p);
+    });
   }
+
+  function paragraphText(index) {
+    var p = st.paragraphs[index];
+    return p ? p.textContent : '';
+  }
+
+  function paragraphRange(index) {
+    var p = st.paragraphs[index];
+    if (!p || !p.firstChild) return null;
+    try {
+      var range = document.createRange();
+      range.setStart(p.firstChild, 0);
+      range.setEnd(p.firstChild, String(p.textContent || '').length);
+      return range;
+    } catch (e) { return null; }
+  }
+
+  function paintPara(index) {
+    st.paragraphs.forEach(function (p, i) {
+      if (i === index) p.classList.add('on');
+      else p.classList.remove('on');
+    });
+    if (supportsHighlight()) {
+      var range = paragraphRange(index);
+      try {
+        if (range) window.CSS.highlights.set('bridge-para', new window.Highlight(range));
+        else window.CSS.highlights.delete('bridge-para');
+      } catch (e) {}
+    } else {
+      // No Highlight API: the block background carries the paragraph layer.
+      st.paragraphs.forEach(function (p, i) { p.classList.toggle('mark', i === index); });
+    }
+  }
+
+  function paintWord(index, from, length) {
+    if (!supportsHighlight()) return;
+    var p = st.paragraphs[index];
+    if (!p || !p.firstChild) return;
+    var total = String(p.textContent || '').length;
+    if (!total) return;
+    var start = Math.max(0, Math.min(Number(from) || 0, total - 1));
+    var end = Math.max(start + 1, Math.min(total, start + Math.max(1, Number(length) || 1)));
+    try {
+      var range = document.createRange();
+      range.setStart(p.firstChild, start);
+      range.setEnd(p.firstChild, end);
+      window.CSS.highlights.set('bridge-word', new window.Highlight(range));
+    } catch (e) {}
+  }
+
+  function supportsHighlight() {
+    return !!(window.CSS && window.CSS.highlights && typeof window.Highlight === 'function');
+  }
+
+  function follow(index) {
+    var p = st.paragraphs[index];
+    if (!p) return;
+    if (performance.now() - st.userScrolledAt < FOLLOW_RESUME_MS) return;
+    var rect = p.getBoundingClientRect();
+    var height = window.innerHeight || 0;
+    if (rect.top >= 0 && rect.bottom <= height) return;
+    try { p.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {
+      try { p.scrollIntoView(); } catch (e2) {}
+    }
+  }
+
+  ['wheel', 'touchmove', 'keydown'].forEach(function (name) {
+    window.addEventListener(name, function () { st.userScrolledAt = performance.now(); }, { passive: true });
+  });
 
   /* ---------- voices ---------- */
 
@@ -138,7 +247,7 @@
   function rebuildVoices() {
     st.voices = sortVoices(allVoices());
     st.visible = el.onlyLocal.checked ? st.voices.filter(function (v) { return !isCloud(v); }) : st.voices;
-    el.voiceSel.innerHTML = '';
+    el.voiceSel.textContent = '';
     if (!st.visible.length) {
       var o0 = document.createElement('option');
       o0.value = '';
@@ -177,27 +286,28 @@
     return true;
   }
 
+  /** The settings page owns the speed; it arrives with the text. */
+  function applySpeed(value) {
+    var next = Number(value);
+    if (!isFinite(next) || next <= 0) return;
+    st.rate = Math.min(2, Math.max(0.5, Math.round(next * 100) / 100));
+    el.rate.value = String(st.rate);
+    el.rateVal.textContent = st.rate.toFixed(2) + '×';
+  }
+
   /* ---------- speaking ---------- */
 
   function clearWatchdog() { if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = 0; } }
 
-  function renderUnit(text, pos, len) {
-    el.now.className = '';
-    if (pos == null || pos < 0 || pos >= text.length) { el.now.textContent = text; return; }
-    var end = Math.min(text.length, pos + Math.max(1, len || 1));
-    el.now.innerHTML = esc(text.slice(0, pos)) + '<mark>' + esc(text.slice(pos, end)) + '</mark>' + esc(text.slice(end));
-  }
-
   function paint() {
-    var n = units.length || 1;
-    el.fill.style.width = (Math.min(st.idx, n) / n * 100) + '%';
-    el.btnPause.disabled = !st.running;
-    el.btnPrev.disabled = !st.running || st.idx <= 0;
-    el.btnNext.disabled = !st.running || st.idx >= units.length - 1;
-    el.btnStop.disabled = !st.running;
-    el.btnPlay.disabled = st.running;
-    el.btnPlay.textContent = st.running ? '朗读中…' : '开始朗读';
-    el.btnPause.textContent = st.paused ? '继续' : '暂停';
+    var total = units.length || 1;
+    el.fill.style.width = (Math.min(st.idx, total) / total * 100) + '%';
+    el.btnPlay.disabled = !units.length;
+    el.btnPlay.textContent = st.running ? (st.paused ? '▶' : '⏸') : '▶';
+    el.btnPlay.title = st.running ? (st.paused ? '继续' : '暂停') : '开始朗读';
+    el.btnPrev.disabled = !units.length || st.idx <= 0;
+    el.btnNext.disabled = !units.length || st.idx >= units.length - 1;
+    el.btnStop.disabled = !st.running && !st.paused;
   }
 
   function abort(reason, canRetryLocal) {
@@ -206,105 +316,119 @@
     st.paused = false;
     clearWatchdog();
     try { synth && synth.cancel(); } catch (e) {}
-    banner('err', '<b>' + esc(reason) + '</b>' + (canRetryLocal ? ' —— 可以点“开始朗读”换本地音色重试。' : ''));
+    banner('err', reason + (canRetryLocal ? '　可以点「▶」换本地音色重试。' : ''));
     var local = pickLocalVoice();
     if (canRetryLocal && local && selectVoice(local)) {
-      banner('warn', '<b>' + esc(reason) + '</b><br>已自动选用本地音色「' + esc(local.name) + '」，点“开始朗读”即可。');
+      banner('warn', reason + '　已自动选用本地音色「' + local.name + '」，点「▶」即可。');
     }
     paint();
   }
 
-  function speakCurrent(fromChar) {
-    if (st.stop || st.idx >= units.length) return;
-    var unit = units[st.idx] || {};
-    var text = String(unit.text || '');
-    if (!text) { st.idx++; speakCurrent(0); return; }
-    var base = Math.max(0, Math.min(fromChar || 0, text.length - 1));
-    var utter = new Utter(text.slice(base));
-    var voice = currentVoice();
-    if (voice) { utter.voice = voice; utter.lang = voice.lang; }
-    utter.rate = st.rate;
-    utter.pitch = 1;
-    utter.volume = 1;
-
+  /** One utterance per paragraph, all queued now: the engine never waits on us. */
+  function speakFrom(from, skip) {
+    if (!units.length) return;
+    var start = Math.max(0, Math.min(from, units.length - 1));
+    var base = Math.max(0, Math.min(skip || 0, Math.max(0, paragraphText(start).length - 1)));
     var gen = ++st.gen;
     var started = false;
+    st.stop = false;
     st.paused = false;
     st.running = true;
+    st.idx = start;
     st.boundary = base;
-    renderUnit(text, base, 1);
+    st.attempted = false;
+    clearWatchdog();
+    try { synth.cancel(); } catch (e) {}
+    paintPara(start);
+    paintWord(start, base, 1);
+    follow(start);
     paint();
 
-    utter.onstart = function () {
-      if (gen !== st.gen) return;
-      started = true;
-      clearWatchdog();
-      if (!st.startedAt) st.startedAt = performance.now();
-      setMeta('第 ' + (st.idx + 1) + '/' + units.length + ' 段 · ' + fmt(text.length) + ' 字 · ' +
-        (voice ? voice.name : '浏览器默认') + ' · ' + st.rate.toFixed(2) + '×');
-      try { if (!synth.paused) return; synth.resume(); } catch (e) {}
-    };
-    utter.onboundary = function (e) {
-      if (gen !== st.gen || typeof e.charIndex !== 'number') return;
-      st.boundary = base + e.charIndex;
-      renderUnit(text, st.boundary, e.charLength || 1);
-    };
-    utter.onend = function () {
-      if (gen !== st.gen) return;
-      clearWatchdog();
-      st.boundary = 0;
-      if (st.stop) return;
-      if (st.idx + 1 >= units.length) { finish(); return; }
-      st.idx++;
-      setTimeout(function () { if (!st.stop) speakCurrent(0); }, 40);
-    };
-    utter.onerror = function (e) {
-      if (gen !== st.gen) return;
-      var err = (e && e.error) || 'unknown';
-      if (err === 'interrupted' || err === 'canceled') return;
-      clearWatchdog();
-      if (err === 'not-allowed') {
-        // Autoplay policy: a page opened without any interaction may not speak.
-        // This is not a failure, it is a request for one click.
-        st.running = false;
-        st.paused = false;
-        st.gen++;
-        el.now.textContent = '点「开始朗读」开始（浏览器要求先有一次点击才允许发声）。';
-        el.now.className = 'sub';
-        paint();
-        banner('warn', '<b>浏览器要求先点一下。</b>自动播放策略不允许页面在没有交互时发声，点「开始朗读」即可。');
-        return;
-      }
-      abort('第 ' + (st.idx + 1) + ' 段朗读失败：' + err, false);
-    };
+    var voice = currentVoice();
+    var items = [];
+    for (var i = start; i < units.length; i++) {
+      var text = String((units[i] && units[i].text) || '');
+      var begin = i === start ? base : 0;
+      var rest = text.slice(begin);
+      if (rest) items.push({ index: i, begin: begin, rest: rest });
+    }
 
     clearWatchdog();
     st.watchdog = setTimeout(function () {
       st.watchdog = 0;
       if (started || st.stop) return;
       var local = pickLocalVoice();
-      if (voice && isCloud(voice)) {
-        abort('这个音色在 ' + (FIRST_SOUND_TIMEOUT / 1000) + ' 秒内没有出声（多半是连不上厂商服务器）', !!local);
-      } else {
-        abort('浏览器 ' + (FIRST_SOUND_TIMEOUT / 1000) + ' 秒内没有出声，可能需要先在本页点一下才开始朗读', false);
-      }
+      abort('这个音色在 ' + (FIRST_SOUND_TIMEOUT / 1000) + ' 秒内没有出声（多半连不上厂商服务器）', !!local);
     }, FIRST_SOUND_TIMEOUT);
 
-    try {
-      synth.speak(utter);
-      st.attempted = true;
-    } catch (e) {
-      abort('浏览器拒绝朗读：' + (e && e.message ? e.message : String(e)), false);
-    }
+    // Chrome drops speak() calls issued in the same tick as cancel().
+    setTimeout(function () {
+      if (gen !== st.gen) return;
+      items.forEach(function (item) {
+        var utter = new Utter(item.rest);
+        if (voice) { utter.voice = voice; utter.lang = voice.lang; }
+        utter.rate = st.rate;
+        utter.pitch = 1;
+        utter.volume = 1;
+
+        utter.onstart = function () {
+          if (gen !== st.gen) return;
+          started = true;
+          clearWatchdog();
+          if (!st.startedAt) st.startedAt = performance.now();
+          st.idx = item.index;
+          st.boundary = item.begin;
+          paintPara(item.index);
+          paintWord(item.index, item.begin, 1);
+          follow(item.index);
+          paint();
+          try { if (synth.paused && !st.paused) synth.resume(); } catch (e) {}
+        };
+        utter.onboundary = function (e) {
+          if (gen !== st.gen || typeof e.charIndex !== 'number') return;
+          st.boundary = item.begin + e.charIndex;
+          paintWord(item.index, st.boundary, e.charLength || 1);
+        };
+        utter.onend = function () {
+          if (gen !== st.gen) return;
+          if (item.index + 1 < units.length) return;
+          clearWatchdog();
+          finish();
+        };
+        utter.onerror = function (e) {
+          if (gen !== st.gen) return;
+          var err = (e && e.error) || 'unknown';
+          if (err === 'interrupted' || err === 'canceled') return;
+          clearWatchdog();
+          if (err === 'not-allowed') {
+            // Autoplay policy: not a failure, a request for one click.
+            st.running = false;
+            st.paused = false;
+            st.gen++;
+            banner('warn', '浏览器要求先点一下「▶」才允许发声。');
+            paint();
+            return;
+          }
+          abort('第 ' + (item.index + 1) + ' 段朗读失败：' + err, false);
+        };
+
+        try {
+          synth.speak(utter);
+          st.attempted = true;
+        } catch (e) {
+          abort('浏览器拒绝朗读：' + (e && e.message ? e.message : String(e)), false);
+        }
+      });
+    }, 30);
   }
 
   function finish() {
     st.running = false;
     st.paused = false;
     clearWatchdog();
-    el.fill.style.width = '100%';
     st.idx = units.length;
-    setMeta('已读完 ' + units.length + ' 段' + (st.startedAt ? ' · 用时 ' + fmt(performance.now() - st.startedAt) : ''));
+    el.fill.style.width = '100%';
+    if (st.startedAt) setStatus('已读完 ' + units.length + ' 段 · 用时 ' + fmt(performance.now() - st.startedAt));
     paint();
   }
 
@@ -312,10 +436,8 @@
     if (!units.length) return;
     if (!currentVoice()) { banner('err', '这台浏览器没有可用的语音，无法朗读。'); return; }
     clearBanner();
-    st.stop = false;
     st.startedAt = 0;
-    st.idx = 0;
-    speakCurrent(0);
+    speakFrom(0, 0);
   }
 
   function stop() {
@@ -326,14 +448,12 @@
     clearWatchdog();
     try { synth.cancel(); } catch (e) {}
     el.fill.style.width = '0%';
-    el.now.textContent = '已停止。';
-    el.now.className = 'sub';
-    setMeta('已停止');
+    setStatus('已停止');
     paint();
   }
 
-  function togglePause() {
-    if (!st.running) return;
+  function toggle() {
+    if (!st.running && !st.paused) { start(); return; }
     if (st.paused) {
       try { synth.resume(); } catch (e) {}
       st.paused = false;
@@ -345,81 +465,73 @@
   }
 
   function step(delta) {
-    if (!st.running && !units.length) return;
+    if (!units.length) return;
     var target = st.idx + delta;
     if (target < 0 || target >= units.length) return;
-    st.stop = false;
-    st.running = true;
-    st.idx = target;
-    st.gen++;
-    clearWatchdog();
-    try { synth.cancel(); } catch (e) {}
-    setTimeout(function () { speakCurrent(0); }, 40);
+    speakFrom(target, 0);
+  }
+
+  /* ---------- header text ---------- */
+
+  function setStatus(text) { el.sub.textContent = text; }
+
+  function renderHead() {
+    el.title.textContent = data.title || '';
+    el.title.style.display = data.title ? '' : 'none';
+    var chars = units.reduce(function (a, u) { return a + String(u.text || '').length; }, 0);
+    setStatus(units.length ? units.length + ' 段 · 共 ' + chars + ' 字' : '等待 DSH 推送…');
   }
 
   /* ---------- wiring ---------- */
 
-  function renderSub() {
-    el.sub.textContent = (data.title ? data.title + ' · ' : '') + units.length + ' 段 · 共 ' +
-      units.reduce(function (a, u) { return a + String(u.text || '').length; }, 0) + ' 字';
-  }
-
-  el.sub.textContent = ''
   st.rate = Math.min(2, Math.max(0.5, Number(el.rate.value) || 1));
   el.rateVal.textContent = st.rate.toFixed(2) + '×';
   applySpeed(data.speed);
 
-  el.btnPlay.addEventListener('click', start);
-  el.btnPause.addEventListener('click', togglePause);
+  el.btnPlay.addEventListener('click', toggle);
   el.btnStop.addEventListener('click', stop);
   el.btnPrev.addEventListener('click', function () { step(-1); });
   el.btnNext.addEventListener('click', function () { step(1); });
   el.voiceSel.addEventListener('change', function () {
     var v = currentVoice();
-    if (v) { st.savedUri = v.voiceURI; try { localStorage.setItem('dsh-tts-bridge:voice-v2', v.voiceURI || ''); } catch (e) {} }
+    if (!v) return;
+    st.savedUri = v.voiceURI;
+    try { localStorage.setItem(VOICE_KEY, v.voiceURI || ''); } catch (e) {}
   });
   el.onlyLocal.addEventListener('change', function () { rebuildVoices(); paint(); });
   el.rate.addEventListener('input', function () {
     st.rate = Math.min(2, Math.max(0.5, Number(el.rate.value) || 1));
     el.rateVal.textContent = st.rate.toFixed(2) + '×';
-    // A running utterance keeps its old rate; restart the current paragraph
-    // from the last word boundary so the change is audible immediately.
-    if (st.running) {
-      var keep = st.boundary || 0;
-      st.gen++;
-      clearWatchdog();
-      try { synth.cancel(); } catch (e) {}
-      setTimeout(function () { speakCurrent(keep); }, 40);
-    }
+    // A queued utterance keeps its old rate: re-queue from the word being read
+    // so the change is audible right away.
+    if (st.running) speakFrom(st.idx, st.boundary || 0);
   });
 
+  renderDoc();
+  renderHead();
+  paint();
+
   if (!synth || typeof Utter !== 'function') {
-    banner('err', '<b>这个浏览器不支持 Web Speech 语音合成。</b>');
+    banner('err', '这个浏览器不支持 Web Speech 语音合成。');
     el.btnPlay.disabled = true;
     return;
   }
 
-  try { st.savedUri = localStorage.getItem('dsh-tts-bridge:voice-v2') || ''; } catch (e) {}
-
+  try { st.savedUri = localStorage.getItem(VOICE_KEY) || ''; } catch (e) {}
   rebuildVoices();
   if (synth.addEventListener) synth.addEventListener('voiceschanged', rebuildVoices);
   [300, 900, 2000].forEach(function (ms) {
     setTimeout(function () {
       rebuildVoices();
-      if (ms === 2000) {
-        if (!st.visible.length && !el.onlyLocal.checked) {
-          banner('err', '<b>这个内核没有暴露任何语音。</b>');
-        } else if (!st.visible.length) {
-          banner('warn', '本机没有离线音色；取消勾选“只看本地音色”可以用云端音色（需要联网）。');
-        }
+      if (ms === 2000 && !st.visible.length) {
+        banner(el.onlyLocal.checked ? 'warn' : 'err', el.onlyLocal.checked
+          ? '本机没有离线音色；取消勾选「本地」可以用云端音色（需要联网）。'
+          : '这个内核没有暴露任何语音。');
       }
     }, ms);
   });
 
-  paint();
-  renderSub();
-
-  /* ---------- 长期连接：DSH 把新的朗读内容推到这一页 ---------- */
+  /* ---------- DSH pushes new text to this page ---------- */
 
   function receiveUnits(payload) {
     var next = Array.isArray(payload.units) ? payload.units : [];
@@ -431,9 +543,10 @@
     st.idx = 0;
     st.startedAt = 0;
     applySpeed(payload.speed);
-    renderSub();
-    // The page already saw a click earlier, so this usually just plays; if not,
-    // the not-allowed path asks for one click instead of failing.
+    renderDoc();
+    renderHead();
+    // The page usually already saw a click, so this just plays; otherwise the
+    // not-allowed path asks for one click instead of failing.
     start();
   }
 
@@ -445,7 +558,8 @@
     var everOpen = false;
     source.onopen = function () {
       everOpen = true;
-      setMeta('已连接 DSH：新的朗读会自动送到这一页');
+      el.dot.className = 'dot ok';
+      el.dot.title = '已连接 DSH';
     };
     source.onmessage = function (event) {
       var payload = null;
@@ -454,19 +568,21 @@
       receiveUnits(payload);
     };
     source.onerror = function () {
-      if (everOpen) { setMeta('与 DSH 的连接断开，正在重连…'); return; }
+      el.dot.className = 'dot warn';
+      el.dot.title = everOpen ? '与 DSH 的连接断开，正在重连…' : '还没连上 DSH';
+      if (everOpen) return;
       // A tab left over from before a Host restart can never reconnect; say so
       // instead of waiting silently for a push that will not arrive.
       setTimeout(function () {
-        if (!everOpen) setMeta('还没连上 DSH：Host 重启后请刷新本页');
+        if (!everOpen) el.dot.title = '还没连上 DSH：Host 重启后请刷新本页';
       }, 2000);
     };
   }
 
   connectBridgeStream();
 
-  // Chrome/Edge often allow speech before any gesture; when they do not the
-  // watchdog above turns it into an actionable message instead of a hang.
+  // Chrome/Edge usually allow speech before any gesture; when they do not, the
+  // not-allowed path asks for one click instead of failing.
   var autoTries = 0;
   function autoStart() {
     if (st.attempted || !units.length) return;
