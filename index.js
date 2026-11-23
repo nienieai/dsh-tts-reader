@@ -2190,6 +2190,23 @@ export function apply(ctx, config) {
       while (bridgeStates.size > BRIDGE_STATE_MAX) bridgeStates.delete(bridgeStates.keys().next().value)
     }
 
+    // A closed tab never says good-bye: the last listener dropping is the only
+    // sign that whatever it was reading is over. The short grace keeps a refresh
+    // (which reconnects at once) from clearing the state it is about to send.
+    const BRIDGE_CLOSE_GRACE_MS = 1200
+    let bridgeCloseTimer = 0
+    const LIVE_BRIDGE_PHASES = new Set(['playing', 'paused', 'queued', 'blocked'])
+    const closeBridgeLiveness = () => {
+      bridgeCloseTimer = 0
+      const now = Date.now()
+      for (const [key, item] of bridgeStates) {
+        if (!item || !LIVE_BRIDGE_PHASES.has(item.phase)) continue
+        const next = { ...item, at: now, phase: 'stopped', queued: 0 }
+        bridgeStates.set(key, next)
+        broadcast({ type: 'bridge-state', key, messageId: '', ...next })
+      }
+    }
+
     const addBridge = (payload) => {
       pruneBridges()
       const id = crypto.randomUUID()
@@ -2389,9 +2406,16 @@ export function apply(ctx, config) {
         })
         response.write(': bridge connected\n\n')
         bridgeClients.add(response)
+        // A listener is back (a refresh looks like this): nothing to clear.
+        clearTimeout(bridgeCloseTimer)
+        bridgeCloseTimer = 0
         const cleanup = () => {
           clearInterval(heartbeat)
           bridgeClients.delete(response)
+          if (bridgeClients.size === 0) {
+            clearTimeout(bridgeCloseTimer)
+            bridgeCloseTimer = setTimeout(closeBridgeLiveness, BRIDGE_CLOSE_GRACE_MS)
+          }
         }
         const heartbeat = setInterval(() => {
           if (response.destroyed || response.writableEnded) { cleanup(); return }

@@ -321,6 +321,28 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     });
   }
 
+  /** A closed tab cannot say good-bye later, so say it now: the app drops the wave. */
+  function reportGone() {
+    var pushes = [];
+    if (st.active) pushes.push(st.active);
+    for (var i = 0; i < st.queue.length; i += 1) if (st.queue[i]) pushes.push(st.queue[i]);
+    pushes.forEach(function (push) {
+      if (!push || !push.id) return;
+      ack(push.id, 'state', push.messageId, undefined, {
+        key: push.key || '',
+        phase: 'stopped',
+        unit: 0,
+        total: (push.units || []).length,
+        queued: 0
+      });
+    });
+  }
+  // `persisted` means the page goes to the back/forward cache and comes back.
+  window.addEventListener('pagehide', function (event) {
+    if (event && event.persisted) return;
+    reportGone();
+  });
+
   /**
    * The page's own copy in the eight languages DSH ships. The language arrives
    * with the text (and again on every prefs push), because this page cannot see
