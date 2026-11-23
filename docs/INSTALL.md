@@ -31,6 +31,16 @@ dsh plugin --profile desktop add link:C:\Embedded\dsh-tts-reader
 
 安装后同样需要刷新页面；`index.js` 的改动必须重启 DSH 才生效。
 
+### 从 npm
+
+```bash
+dsh plugin --profile desktop add dsh-tts-reader
+```
+
+`dsh plugin` 只是把参数转发给 profile 目录里的 pnpm，所以这条等价于 `pnpm add dsh-tts-reader`：包会装好，但**启用状态由 插件 页决定**——装完去确认它是打开的。
+
+npm 上的版本与 Git 标签一一对应（`0.5.3` 就是 `v0.5.3`）；要锁版本写 `dsh-tts-reader@0.5.3`。注意 `npm publish` 后 npm 会先写一个 `0.0.0-stage` 占位版本，几分钟后正式版本才成为 `latest`，这期间 `npm view` 看到的是占位版本，装的时候带上版本号即可。
+
 ## 第一次使用
 
 1. 点任意助手回复下面的 🔊；

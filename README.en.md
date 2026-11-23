@@ -7,6 +7,7 @@ English · [中文](README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4b8bf5)](https://github.com/topics/dsh-plugin)
 [![version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
+[![npm](https://img.shields.io/npm/v/dsh-tts-reader?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-tts-reader)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-8a8a8a)](#install)
 [![languages](https://img.shields.io/badge/UI-8%20languages-9cf)](docs/TECHNICAL.md)
 [![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-reader?style=social)](https://github.com/nienieai/dsh-tts-reader)
@@ -63,6 +64,14 @@ You need **DeepSeek Harness** installed (desktop or web; the speech bridge only 
 git clone https://github.com/nienieai/dsh-tts-reader.git
 dsh plugin --profile desktop add link:./dsh-tts-reader
 ```
+
+**Option 3 — from npm (no clone needed)**
+
+```bash
+dsh plugin --profile desktop add dsh-tts-reader
+```
+
+Pin a version with `dsh-tts-reader@0.5.3`. Refresh afterwards; if the plugin is listed but switched off, turn it on.
 
 > Refresh the page to load the client half; changes to the Host half (`index.js`) need a DSH restart.
 

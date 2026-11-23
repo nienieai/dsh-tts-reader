@@ -7,6 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4b8bf5)](https://github.com/topics/dsh-plugin)
 [![version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
+[![npm](https://img.shields.io/npm/v/dsh-tts-reader?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-tts-reader)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-8a8a8a)](#安装)
 [![languages](https://img.shields.io/badge/UI-8%20languages-9cf)](docs/TECHNICAL.md#语言与主题)
 [![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-reader?style=social)](https://github.com/nienieai/dsh-tts-reader)
@@ -63,6 +64,14 @@
 git clone https://github.com/nienieai/dsh-tts-reader.git
 dsh plugin --profile desktop add link:./dsh-tts-reader
 ```
+
+**方式三：从 npm（不用克隆仓库）**
+
+```bash
+dsh plugin --profile desktop add dsh-tts-reader
+```
+
+要固定版本就写 `dsh-tts-reader@0.5.3`。装完刷新页面；如果插件列表里它还是关着的，把开关打开。
 
 > 装完要**刷新页面**让界面部分加载；Host 部分（`index.js`）的改动需要重启 DSH 才生效。
 

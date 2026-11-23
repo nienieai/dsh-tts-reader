@@ -152,6 +152,7 @@ git merge --no-ff dev -m "release: v0.5.4"
 git tag -a v0.5.4 -m "dsh-tts-reader 0.5.4"
 git checkout dev
 git push origin dev main --tags
+npm publish              # 在 main 上，走 npm 动态码；先出 0.0.0-stage 占位，几分钟后才有 0.5.3
 ```
 
 约定：
@@ -159,4 +160,5 @@ git push origin dev main --tags
 - 版本号语义化：新能力升次版本号，修复升修订号；
 - tag 一律 annotated；
 - 只给确认稳定的版本打 tag；
-- GitHub 仓库保持 `dsh-plugin` topic，插件市场靠它索引。
+- GitHub 仓库保持 `dsh-plugin` topic，插件市场靠它索引；
+- npm 包名固定为 `dsh-tts-reader`，版本号必须与 tag 一致；npm 不允许同一版本发两次，重发前先升版本。

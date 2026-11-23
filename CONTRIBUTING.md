@@ -55,7 +55,8 @@ dsh plugin --profile desktop add link:$(pwd)
 2. 合并到 `main`：`git merge --no-ff dev -m "release: vX.Y.Z"`；
 3. 打 annotated tag：`git tag -a vX.Y.Z -m "dsh-tts-reader X.Y.Z"`；
 4. 推分支与标签：`git push origin dev main --tags`；
-5. 确认仓库仍带 `dsh-plugin` topic（插件市场靠它索引）。
+5. 发布到 npm：在 `main` 上执行 `npm publish`（账号开了双因素认证，会要动态码；npm 先写 `0.0.0-stage` 占位，几分钟后正式版本才成为 `latest`），用 `npm view dsh-tts-reader version` 核对；
+6. 确认仓库仍带 `dsh-plugin` topic（插件市场靠它索引）。
 
 ## 文档规则
 
