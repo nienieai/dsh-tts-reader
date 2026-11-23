@@ -11,7 +11,7 @@ English · [中文](README.md)
 [![languages](https://img.shields.io/badge/UI-8%20languages-9cf)](docs/TECHNICAL.md)
 [![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-reader?style=social)](https://github.com/nienieai/dsh-tts-reader)
 
-![A reply being read aloud: the current paragraph is tinted blue, the word being spoken is amber, and the floating player sits on the right](docs/preview.svg)
+![A reply being read aloud: the paragraph being read is tinted blue, the current word is amber, and the floating player sits bottom right](docs/screenshots/player-en-dark.png)
 
 ## In one sentence
 
@@ -75,6 +75,18 @@ Detailed install, uninstall and offline (Piper) steps: **[docs/INSTALL.md](docs/
 - **Floating player**: appears bottom-right while reading, draggable and position-remembered. Previous / pause-resume / next, drag the speed slider for instant change, click a tick for 0.5×–3×, × stops and clears the queue.
 - **Auto-read**: enable "Read replies" in settings to read the final reply of each turn; "Read mid-turn output" reads streamed chunks too. Questions and approvals are read separately and can be turned off.
 - **Speech bridge** (desktop): switch the engine to "Speech bridge" and the reply is handed to a dedicated page in your browser with a voice list, click-to-read paragraphs, paragraph/word highlighting and richer playback controls.
+
+## What it looks like
+
+**Settings**: engines, voices, paragraph size, auto-read and the audio cache all live on one page.
+
+![The Read aloud settings page: synthesis engine, reading, auto-read and audio cache](docs/screenshots/settings-dark.png)
+
+*The settings panel is shown in Chinese here; its wording follows your DSH language.*
+
+**Speech bridge**: on desktop the reply is handed to a dedicated reading page in your browser — title, paragraphs, progress, and clicking any paragraph reads from there.
+
+![The speech bridge page: voice and 2.00x at the top, the paragraph being read tinted blue with the current word in amber](docs/screenshots/bridge-en-dark.png)
 
 ## Privacy and data
 

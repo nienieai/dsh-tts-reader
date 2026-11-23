@@ -11,7 +11,7 @@
 [![languages](https://img.shields.io/badge/UI-8%20languages-9cf)](docs/TECHNICAL.md#语言与主题)
 [![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-reader?style=social)](https://github.com/nienieai/dsh-tts-reader)
 
-![一段回复正在朗读：当前段落是淡蓝色底，正在读的词是黄色，右侧是悬浮播放窗](docs/preview.svg)
+![一段回复正在朗读：正在读的第二段是浅蓝底，当前词「标蓝」是黄色，右下角是悬浮播放窗（2.00×）](docs/screenshots/player-zh-dark.png)
 
 ## 一句话
 
@@ -75,6 +75,16 @@ dsh plugin --profile desktop add link:./dsh-tts-reader
 - **悬浮窗**：朗读时右下角出现，可拖动、记住位置。上一段 / 暂停·继续 / 下一段，拖滑条立刻变速，点刻度直接切 0.5×–3×，× 停止并清空队列。
 - **自动朗读**：设置里打开「读回复」，每个回合结束时自动念完最后一条回答；再开「读中途输出」可以边生成边念。提问和授权请求会单独念，且可以各自关掉。
 - **朗读桥**（桌面端）：设置里把引擎换成「朗读桥」，回复会交给默认浏览器里一个专门的朗读页——那里有音色列表、逐段点读、段落和字词高亮、以及更细的播放控制。
+
+## 长什么样
+
+**设置页**：引擎、音色、每段字数、自动朗读、音频缓存，都在这一页里。
+
+![语音朗读的设置页：合成引擎、朗读、自动朗读、音频缓存四块](docs/screenshots/settings-dark.png)
+
+**朗读桥**：桌面端把回复交给浏览器里一个专门的朗读页，标题、段落、进度都在，点哪段就从哪段读。
+
+![朗读桥：顶部是音色和 2.00× 速度，正在读的一段是蓝底、当前词「进度条」是黄色](docs/screenshots/bridge-zh-dark.png)
 
 ## 隐私与数据
 

@@ -13,7 +13,7 @@
 | `bridge.html` | 独立浏览器页面 | 「朗读桥」：用浏览器语音朗读、自己的工具栏与高亮 |
 | `cordis.patch.yml` | 安装时 | 把插件插入 Loader |
 | `locale/*.json` | 插件列表/详情 | 标题、描述、详情文档路径 |
-| `docs/` | 打包资源 | 本文、安装说明、详情页配图 |
+| `docs/` | 打包资源 | 本文、安装说明、详情页配图、`screenshots/` 界面截图 |
 
 构建：没有构建步骤，`node --check` 通过即可加载。分发靠 `package.json` 的 `files`，`docs` 整个目录会随包发布。
 
