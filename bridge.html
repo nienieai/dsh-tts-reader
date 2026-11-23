@@ -75,8 +75,10 @@
     width:30px;height:30px;font:inherit;font-size:13px;line-height:1;cursor:pointer;padding:0;
     display:inline-flex;align-items:center;justify-content:center}
   button svg{width:16px;height:16px;display:block;pointer-events:none}
-  /* The play button holds all three glyphs; data-icon picks one. */
-  #btnPlay svg{display:none}
+  /* The play button holds all three glyphs; data-icon picks one. It is the one
+     button bigger than the rest: it is the one you aim for. */
+  #btnPlay{width:36px;height:36px;border-radius:8px}
+  #btnPlay svg{display:none;width:19px;height:19px}
   #btnPlay[data-icon=play] .i-play,
   #btnPlay[data-icon=pause] .i-pause,
   #btnPlay[data-icon=replay] .i-replay{display:block}
