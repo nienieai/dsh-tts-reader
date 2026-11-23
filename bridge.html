@@ -200,7 +200,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     listOpen: false, filter: '', hover: -1,
     // Pushes that arrived while something was playing wait here, in order: a
     // newer push must never cut off the paragraph being spoken.
-    queue: [], active: null, done: false,
+    queue: [], active: null, lastActive: null, done: false,
     dotState: 'idle', dotTitle: '未连接 DSH',
     // Progress: characters already finished, plus where this paragraph started.
     charStarts: [], totalChars: 0, baseChars: 0, paraStart: 0, paraLen: 0,
@@ -1068,6 +1068,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   /** One utterance per paragraph, all queued now: the engine never waits on us. */
   function speakFrom(from, skip) {
     if (!units.length) return;
+    // Replaying or stepping after a read finished: the push is still the same
+    // one, so adopt it again — otherwise the app has nothing to put the wave on.
+    if (!st.active && st.lastActive) st.active = st.lastActive;
     var start = Math.max(0, Math.min(from, units.length - 1));
     var base = Math.max(0, Math.min(skip || 0, Math.max(0, paragraphText(start).length - 1)));
     var gen = ++st.gen;
@@ -1335,6 +1338,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       key: String(data.key || ''),
       units: units.length
     };
+    st.lastActive = st.active;
     ack(st.active.id, 'read', st.active.messageId);
   }
 
@@ -1386,6 +1390,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       key: payload.key ? String(payload.key) : '',
       units: next.length
     };
+    // Kept after finishing so a replay can report the same push again.
+    st.lastActive = st.active;
     units = next.map(function (u, i) { return { index: i, text: String((u && u.text) || '') }; });
     data.title = String(payload.title || '');
     if (payload.scheme) applyScheme(payload.scheme);
