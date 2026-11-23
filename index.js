@@ -870,12 +870,16 @@ export function stripMarkdown(markdown) {
   text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
   // HTML: keep the words, drop the tags.
   text = text.replace(/<\/?[a-zA-Z][^>\n]*>/g, '')
-  // Block markers at the start of a line.
-  text = text.replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
+  // Block markers at the start of a line. A heading keeps its text verbatim:
+  // "### 3. 5V 输出开关" renders the "3." inside the heading, so it is text and
+  // not a list marker the browser draws. The sentinel keeps the strips below
+  // from eating it, and comes off right after them.
+  text = text.replace(/^[ \t]*#{1,6}[ \t]*(.*)$/gm, (_full, body) => '\u0002' + body)
   text = text.replace(/^[ \t]*>[ \t]?/gm, '')
   text = text.replace(/^[ \t]*[-*+][ \t]+/gm, '')
   text = text.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, '')
   text = text.replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, '')
+  text = text.replace(/\u0002/g, '')
   // Tables go before the pipe cleanup, or their cells become words.
   text = replaceTables(text, blockKeep)
   // Any remaining mid-line pipes become spaces.
