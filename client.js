@@ -4737,17 +4737,19 @@ window.__ModuleLoader__.load({
       '@keyframes dsh-tts-wave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}',
       '.dsh-tts-spin{animation:dsh-tts-spin .9s linear infinite;transform-origin:center}',
       '@keyframes dsh-tts-spin{to{transform:rotate(360deg)}}',
-      // One slider look for the settings row and the floating window: drawn
-      // track, 14px thumb, and a thumb that grows under the pointer.
-      '.dsh-tts-range{flex:1 1 auto;min-width:80px;box-sizing:border-box;height:18px;margin:0;'
-        + 'appearance:none;-webkit-appearance:none;background:transparent;outline:none;cursor:pointer}',
-      '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;'
-        + 'background:var(--dsw-alias-bg-layer-3,#3a3a3a)}',
+      // One slider look for the settings row and the floating window. The bar is
+      // painted on the input itself: the platform track pseudo is easy for a host
+      // stylesheet to override, and on a white card the layer token vanished.
+      '.dsh-tts-range{flex:1 1 auto;min-width:80px;box-sizing:border-box;height:18px;margin:0;padding:0;'
+        + 'appearance:none;-webkit-appearance:none;outline:none;cursor:pointer;'
+        + 'background:linear-gradient(var(--dsw-alias-border-l2,#3a3a3a),var(--dsw-alias-border-l2,#3a3a3a))'
+        + ' center/100% 4px no-repeat}',
+      '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;background:transparent}',
       '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;box-sizing:border-box;width:14px;height:14px;'
         + 'margin-top:-5px;border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);border-radius:50%;'
         + 'background:var(--dsw-alias-state-business-primary,#3b82f6);transition:transform .12s ease}',
       '.dsh-tts-range:hover::-webkit-slider-thumb{transform:scale(1.4)}',
-      '.dsh-tts-range::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-3,#3a3a3a)}',
+      '.dsh-tts-range::-moz-range-track{height:4px;background:transparent}',
       '.dsh-tts-range::-moz-range-thumb{box-sizing:border-box;width:14px;height:14px;border-radius:50%;'
         + 'border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);background:var(--dsw-alias-state-business-primary,#3b82f6);'
         + 'transition:transform .12s ease}',
