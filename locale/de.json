@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Vorlesen",
+    "description": "Liest Antworten des Assistenten mit der DeepSeek-TTS-API vor. Das Audio wird auf diesem Rechner zwischengespeichert und beim nächsten Klick aus dem Cache abgespielt; der API-Schlüssel bleibt im Host-Prozess.",
+    "detail": "docs/DETAIL.md"
+  }
+}
