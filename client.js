@@ -48,6 +48,19 @@ window.__ModuleLoader__.load({
     }
     const t = (zh, en) => (currentLang() === 'zh' ? zh : en)
 
+    // The bridge is a separate page: it cannot see the app's theme, so the
+    // colours have to travel with the text. `ctx.theme` is wired in apply().
+    let themeCtx = null
+    function currentScheme() {
+      try {
+        const snapshot = themeCtx && typeof themeCtx.getTheme === 'function' ? themeCtx.getTheme() : null
+        const active = snapshot && snapshot.active
+        const scheme = active && typeof active.colorScheme === 'string' ? active.colorScheme : ''
+        if (scheme === 'light' || scheme === 'dark') return scheme
+      } catch {}
+      return 'dark'
+    }
+
     // Re-render a component when the app language changes.
     function useLocaleTick() {
       const [, force] = React.useReducer((value) => value + 1, 0)
@@ -220,6 +233,8 @@ window.__ModuleLoader__.load({
       payload.speed = Number(speed) || 1
       // Its voice list is ordered by the app's language, not the browser's.
       payload.lang = currentLang()
+      // The bridge paints itself in the app's palette, not the OS preference.
+      payload.scheme = currentScheme()
       try {
         const response = await fetch(BRIDGE_PATH, {
           method: 'POST',
@@ -3361,6 +3376,12 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
         localeCtx = ctx.locale
+        // Optional: a DSH without the theme service just means "dark".
+        try {
+          themeCtx = (typeof ctx.get === 'function' ? ctx.get('theme') : null) || null
+        } catch {
+          themeCtx = null
+        }
         watchLocale(ctx)
         loadConfigOnce()
         ensureEvents(ctx)

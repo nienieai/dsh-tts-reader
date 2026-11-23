@@ -10,13 +10,14 @@
     --dim-text:rgba(230,233,239,.52); --bar:rgba(15,17,21,.82); --field:#0c0e12;
     --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
+    color-scheme: dark;
   }
-  @media (prefers-color-scheme: light) {
-    :root{
-      --bg:#fbfbfa; --line:#e3e4e8; --fg:#1f2329; --dim:#6b7280;
-      --dim-text:rgba(31,35,41,.55); --bar:rgba(251,251,250,.84); --field:#ffffff;
-      --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
-    }
+  /* The palette follows DSH, not the OS: the Host sends its scheme with the text. */
+  :root[data-theme="light"]{
+    --bg:#fbfbfa; --line:#e3e4e8; --fg:#1f2329; --dim:#6b7280;
+    --dim-text:rgba(31,35,41,.55); --bar:rgba(251,251,250,.84); --field:#ffffff;
+    --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
+    color-scheme: light;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -132,6 +133,13 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
 (function () {
   'use strict';
   var data = window.__BRIDGE__ || {};
+  /** Keep the page in the app's palette; opened from disk it stays dark. */
+  function applyScheme(scheme) {
+    try {
+      document.documentElement.setAttribute('data-theme', scheme === 'light' ? 'light' : 'dark');
+    } catch (e) {}
+  }
+  applyScheme(data.scheme);
   // ?demo=1 fills the page with a sample so it can be tried without DSH. The
   // hash works too, because some browsers drop the query on file:// URLs.
   var demo = /[?&]demo=1/.test(window.location.search || '') || /demo/.test(window.location.hash || '');
@@ -836,6 +844,7 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     stop();
     units = next.map(function (u, i) { return { index: i, text: String((u && u.text) || '') }; });
     data.title = String(payload.title || '');
+    if (payload.scheme) applyScheme(payload.scheme);
     st.stop = false;
     st.idx = 0;
     st.startedAt = 0;
