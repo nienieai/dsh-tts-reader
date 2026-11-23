@@ -127,6 +127,7 @@ window.__ModuleLoader__.load({
         'Speech bridge (read in a browser)': '読み上げページ（ブラウザで読み上げ）',
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': '既定のブラウザで読み上げます（読み上げページ経由）。キー不要・キャッシュなし。ページは DSH のテーマと言語に従います。',
         'desktop only': 'デスクトップ版のみ',
+        'first time: click ▶ on the bridge page (browsers block audio until a click)': '初回はブラウザのページで ▶ を一度クリックしてください（クリックなしの再生はブロックされます）',
         'Install Piper offline': 'Piper をオフラインで導入',
         Close: '閉じる',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'このプラグインは音声を再生するだけで、Piper 本体と音声モデルは含みません。一度用意すれば合成はオフライン・無料のまま使えます。',
@@ -280,6 +281,7 @@ window.__ModuleLoader__.load({
         'Speech bridge (read in a browser)': 'Puente de lectura (leer en un navegador)',
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': 'Lee en tu navegador predeterminado mediante la página del puente: sin clave, sin caché; sigue el tema y el idioma de la app.',
         'desktop only': 'solo en escritorio',
+        'first time: click ▶ on the bridge page (browsers block audio until a click)': 'la primera vez, haz clic en ▶ en la página del puente (sin un clic el navegador bloquea el audio)',
         'Install Piper offline': 'Instalar Piper sin conexión',
         Close: 'Cerrar',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'Este plugin solo reproduce audio; el programa Piper y los modelos de voz no están incluidos. Configúralos una vez y la síntesis seguirá sin conexión y gratis.',
@@ -433,6 +435,7 @@ window.__ModuleLoader__.load({
         "Speech bridge (read in a browser)": "Pont de lecture (lire dans un navigateur)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lit dans votre navigateur par défaut via la page du pont : sans clé, sans cache ; elle suit le thème et la langue de l’application.",
         "desktop only": "bureau uniquement",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "la première fois, cliquez sur ▶ sur la page du pont (sans clic, le navigateur bloque l’audio)",
         "Install Piper offline": "Installer Piper hors ligne",
         Close: "Fermer",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Ce plugin ne fait que lire l’audio ; le programme Piper et les modèles de voix ne sont pas fournis. Configurez-les une fois : la synthèse reste hors ligne et gratuite.",
@@ -586,6 +589,7 @@ window.__ModuleLoader__.load({
         "Speech bridge (read in a browser)": "Lese-Brücke (im Browser lesen)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Liest im Standardbrowser über die Brückenseite: kein Schlüssel, kein Cache; die Seite folgt Thema und Sprache der App.",
         "desktop only": "nur Desktop",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "beim ersten Mal auf ▶ auf der Brückenseite klicken (ohne Klick blockiert der Browser den Ton)",
         "Install Piper offline": "Piper offline installieren",
         Close: "Schließen",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Dieses Plugin spielt nur Audio ab; Piper-Programm und Stimmmodelle sind nicht enthalten. Einmal eingerichtet, bleibt die Synthese offline und kostenlos.",
@@ -739,6 +743,7 @@ window.__ModuleLoader__.load({
         "Speech bridge (read in a browser)": "Мост чтения (читать в браузере)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Читает в браузере по умолчанию через страницу моста: без ключа, без кэша; страница следует теме и языку приложения.",
         "desktop only": "только для десктопа",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "в первый раз нажмите ▶ на странице моста (без клика браузер не воспроизводит звук)",
         "Install Piper offline": "Установить Piper офлайн",
         Close: "Закрыть",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Этот плагин только воспроизводит звук; программа Piper и голосовые модели не входят в комплект. Настройте их один раз — синтез останется офлайн и бесплатным.",
@@ -892,6 +897,7 @@ window.__ModuleLoader__.load({
         "Speech bridge (read in a browser)": "Modo de leitura (ler num navegador)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lê no navegador padrão através da página do modo de leitura: sem chave, sem cache; a página segue o tema e o idioma do app.",
         "desktop only": "só no desktop",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "na primeira vez, clique em ▶ na página do modo de leitura (sem clique o navegador bloqueia o áudio)",
         "Install Piper offline": "Instalar o Piper offline",
         Close: "Fechar",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Este plugin só reproduz áudio; o programa Piper e os modelos de voz não são incluídos. Configure uma vez e a síntese continua offline e gratuita.",
@@ -1193,7 +1199,7 @@ window.__ModuleLoader__.load({
     // and auto-read has no click to carry one, so it is kept for later lookups.
     const actionAnchors = new Map()
     let current = null // { key, controller, context }
-    let playback = { key: null, phase: 'idle', error: '', queued: null }
+    let playback = { key: null, phase: 'idle', error: '', tone: '', queued: null }
     const listeners = new Set()
 
     // Speech waiting for the audio before it, in arrival order: [{ key, speak }].
@@ -1361,6 +1367,7 @@ window.__ModuleLoader__.load({
         const value = body.value || {}
         // From here on theme/language changes are worth pushing to it.
         bridgeUsed = true
+        markBridgeSeen()
         lastPrefs = { scheme: payload.scheme, lang: payload.lang }
         if (value.delivered > 0) {
           // A bridge tab was already listening: nothing new was opened. It also
@@ -1537,7 +1544,7 @@ window.__ModuleLoader__.load({
     function stopCurrentOnly() {
       playerStop()
       current = null
-      setPlayback({ key: null, phase: 'idle', error: '' })
+      setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
     }
 
     // A user stop: silence now AND drop everything waiting.
@@ -2163,7 +2170,7 @@ window.__ModuleLoader__.load({
 
     function playerFinish() {
       playerStop()
-      setPlayback({ key: null, phase: 'idle', error: '' })
+      setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
       drainQueue()
     }
 
@@ -2795,14 +2802,16 @@ window.__ModuleLoader__.load({
         if (isDesktopShell) rememberSpeechVoice(LEGACY_BRIDGE_TARGET)
         // Persist the switch, or the next read starts the same dead engine again.
         if (isDesktopShell) void saveEngine('bridge')
-        fail(session.key, new Error(cloud
+        const silentRead = new Error(cloud
           ? t('这个云端音色 8 秒内没有出声（多半连不上厂商服务器），请换成 ⌂ 本地音色',
             'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice')
           : isDesktopShell
             ? t('这个桌面外壳没能出声，已切换到朗读桥：再点一次朗读会在浏览器里读',
               'this desktop shell stayed silent; it now uses the bridge — press read again')
             : t('浏览器 8 秒内没有出声，可能被自动播放策略挡住，请再点一次朗读',
-              'no sound in 8 s; the browser may be blocking autoplay — press read again')))
+              'no sound in 8 s; the browser may be blocking autoplay — press read again'))
+        silentRead.tone = 'warn'
+        fail(session.key, silentRead)
       }, SPEECH_FIRST_TIMEOUT_MS)
 
       // Chrome drops speak() calls issued in the same tick as cancel(): yield,
@@ -2861,8 +2870,10 @@ window.__ModuleLoader__.load({
             // Autoplay policy: speech driven by an event (auto-read) may be
             // blocked until the page sees a click. Say so instead of "failed".
             if (reason === 'not-allowed') {
-              fail(session.key, new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
-                'the browser needs one click on this page before it may speak; press read')))
+              const blocked = new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
+                'the browser needs one click on this page before it may speak; press read'))
+              blocked.tone = 'warn'
+              fail(session.key, blocked)
               return
             }
             fail(session.key, new Error(t('浏览器朗读失败：', 'browser speech failed: ') + reason))
@@ -2890,7 +2901,7 @@ window.__ModuleLoader__.load({
       player = session
       current = { key: stateKey }
       playedMessages.add(stateKey)
-      setPlayback({ key: stateKey, phase: 'loading', error: '' })
+      setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
       updatePlayerWindow()
       try {
         const response = await fetch(PLAN_PATH, {
@@ -2904,7 +2915,9 @@ window.__ModuleLoader__.load({
         const payload = await response.json().catch(() => null)
         if (player !== session) return
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          const failure = new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          if (payload && payload.code === 'NO_TEXT') failure.tone = 'warn'
+          throw failure
         }
         const units = Array.isArray(payload.value && payload.value.units) ? payload.value.units : []
         if (units.length === 0) throw new Error(t('这条消息没有可朗读的文字', 'nothing to read here'))
@@ -2932,7 +2945,7 @@ window.__ModuleLoader__.load({
       // The bridge engine hands the text to a real browser; a desktop shell has
       // no voices of its own, so this path needs no voice list at all.
       if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
-        setPlayback({ key: null, phase: 'idle', error: '' })
+        setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
         // A selection read has no message id, so the text itself goes along.
         void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
         return
@@ -2940,7 +2953,7 @@ window.__ModuleLoader__.load({
       if (engineMode === 'browser') {
         refreshSpeechVoices()
         if (!speechCapable() && isDesktopShell) {
-          setPlayback({ key: null, phase: 'idle', error: '' })
+          setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
           void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
           return
         }
@@ -2974,7 +2987,7 @@ window.__ModuleLoader__.load({
       player = session
       current = { key: stateKey, controller, context }
       playedMessages.add(stateKey)
-      setPlayback({ key: stateKey, phase: 'loading', error: '' })
+      setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
       updatePlayerWindow()
       try {
         const response = await fetch(PLAN_PATH, {
@@ -2988,7 +3001,9 @@ window.__ModuleLoader__.load({
         })
         const payload = await response.json().catch(() => null)
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          const failure = new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          if (payload && payload.code === 'NO_TEXT') failure.tone = 'warn'
+          throw failure
         }
         if (player !== session) return
         const value = payload.value || {}
@@ -3218,18 +3233,18 @@ window.__ModuleLoader__.load({
     function fail(key, error, auto) {
       if (!player || player.key !== key) return
       // Auto-read speaks a whole turn; most of its steps (thinking, tool calls)
-      // carry no prose at all. Those are not failures, so they must not toast
-      // and must not leave an error behind on the read button.
+      // carry no prose at all. Those are not failures, so they must not mark the
+      // button and must not leave an error behind on it.
       const silent = auto === true || player.auto === true
       const message = (error && error.message) || String(error)
+      // Warnings are recoverable (a click is needed, a voice stayed silent);
+      // anything else is a real failure. The button and its tip share this.
+      const tone = (error && error.tone === 'warn') ? 'warn' : 'error'
       playerStop()
-      setPlayback({ key, phase: 'idle', error: silent ? '' : message })
-      if (!silent) {
-        // The button only keeps the text in a tooltip, which is gone as soon as
-        // the pointer moves; put the failure where it can be read and copied.
-        console.warn('[dsh-tts-reader] playback failed:', message)
-        showFailureToast(message)
-      }
+      setPlayback({ key, phase: 'idle', error: silent ? '' : message, tone: silent ? '' : tone })
+      // No popup for a failed read: the exclamation mark and the coloured tip on
+      // the button carry it now.
+      if (!silent) console.warn('[dsh-tts-reader] playback failed:', message)
       drainQueue()
     }
 
@@ -3237,6 +3252,65 @@ window.__ModuleLoader__.load({
     // modals and transforms, the same trick the request-card button uses.
     let toastEl = null
     let toastTimer = 0
+
+    // ------------------------------------------------------ custom tooltips
+    // The read button's hover text (and the first-click note) are drawn here, in
+    // the page, instead of the native `title` box: the tone colour has to match
+    // the warning/error state of the button.
+    const BRIDGE_SEEN_KEY = 'dsh-tts-reader:bridge-seen'
+    let hoverTip = null
+
+    function hideHoverTip() {
+      const node = hoverTip
+      hoverTip = null
+      if (!node) return
+      try { node.remove() } catch {}
+    }
+
+    function markBridgeSeen() {
+      try { window.localStorage.setItem(BRIDGE_SEEN_KEY, '1') } catch {}
+    }
+
+    function bridgeSeenBefore() {
+      try { return window.localStorage.getItem(BRIDGE_SEEN_KEY) === '1' } catch { return true }
+    }
+
+    /** The one-time "click ▶ on the bridge page" note, while it is still true. */
+    function firstClickNote() {
+      if (bridgeSeenBefore()) return ''
+      if (!isDesktopShell && engineMode !== 'bridge' && engineMode !== 'browser') return ''
+      return t('首次需要在朗读桥页面点一下 ▶（浏览器不允许页面自己发声）',
+        'first time: click ▶ on the bridge page (browsers block audio until a click)')
+    }
+
+    function showHoverTip(anchor, text, tone) {
+      if (!text || typeof document === 'undefined' || !document.body || !anchor) return
+      hideHoverTip()
+      const node = document.createElement('div')
+      node.setAttribute('role', 'tooltip')
+      const warn = tone === 'warn'
+      node.style.cssText = 'position:fixed;z-index:2147483647;max-width:280px;padding:7px 10px;'
+        + 'border-radius:8px;font:12px/1.55 inherit;white-space:pre-wrap;pointer-events:none;'
+        + 'background:var(--dsw-alias-bg-overlay,#1c1c1c);'
+        + 'color:' + (tone ? (warn ? '#f0b429' : '#f87171') : 'var(--dsw-alias-label-primary,#eee)') + ';'
+        + 'border:1px solid ' + (tone ? (warn ? '#b45309' : '#e5484d') : 'var(--dsw-alias-border-l2,#3a3a3a)') + ';'
+        + 'box-shadow:0 6px 20px rgba(0,0,0,.28)'
+      node.textContent = text
+      document.body.appendChild(node)
+      let rect
+      try { rect = anchor.getBoundingClientRect() } catch { rect = null }
+      if (!rect) return
+      const width = node.offsetWidth
+      const height = node.offsetHeight
+      const viewWidth = window.innerWidth || 0
+      let left = rect.left + rect.width / 2 - width / 2
+      left = Math.max(8, Math.min(left, Math.max(8, viewWidth - width - 8)))
+      let top = rect.top - height - 8
+      if (top < 8) top = rect.bottom + 8
+      node.style.left = Math.round(left) + 'px'
+      node.style.top = Math.round(top) + 'px'
+      hoverTip = node
+    }
 
     function hideFailureToast() {
       if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0 }
@@ -3774,24 +3848,33 @@ window.__ModuleLoader__.load({
       // here. Finished reads just go back to the plain speaker.
       const remote = liveBridgeState(key)
       const phase = remote ? remote.phase : localPhase
+      const tone = mine ? (state.tone || '') : ''
 
-      const title = error
-        ? error
-        : phase === 'loading' || phase === 'queued'
-          ? t('正在合成…', 'Synthesizing…')
-          : phase === 'playing'
-            ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
-            : phase === 'paused'
-              ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
-              : cached
-                ? t('再次播放（本地缓存）', 'Play again (cached)')
-                : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+      const action = phase === 'loading' || phase === 'queued'
+        ? t('正在合成…', 'Synthesizing…')
+        : phase === 'playing'
+          ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
+          : phase === 'paused'
+            ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
+            : cached
+              ? t('再次播放（本地缓存）', 'Play again (cached)')
+              : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+      // Failures stay on the button: exclamation mark, tone colour, coloured
+      // hover tip. No popup any more.
+      const tipText = () => {
+        const base = error || action
+        const note = firstClickNote()
+        return note ? base + '\n' + note : base
+      }
 
       return h('button', {
         type: 'button',
         ref: anchorRef,
-        title,
-        'aria-label': title,
+        'aria-label': error || action,
+        onMouseEnter: (event) => showHoverTip(event.currentTarget, tipText(), error ? tone : ''),
+        onMouseLeave: hideHoverTip,
+        onFocus: (event) => showHoverTip(event.currentTarget, tipText(), error ? tone : ''),
+        onBlur: hideHoverTip,
         // Capture the selection before mousedown clears it.
         onMouseDown: () => {
           try { selectionRef.current = String(window.getSelection() || '').trim() } catch { selectionRef.current = '' }
@@ -3811,12 +3894,12 @@ window.__ModuleLoader__.load({
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           height: '24px', minWidth: '22px', padding: '0 3px', border: 'none',
           background: 'transparent', cursor: 'pointer', borderRadius: '4px',
-          color: error ? '#e5484d' : 'var(--dsw-alias-label-secondary)',
-          opacity: phase === 'idle' && !cached ? 0.9 : 1,
+          color: error ? (tone === 'warn' ? '#b45309' : '#e5484d') : 'var(--dsw-alias-label-secondary)',
+          opacity: phase === 'idle' && !cached && !error ? 0.9 : 1,
         },
         children: [
           phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingIcon, { mode: phase, key: 'bars' }),
-          error ? h('span', { key: 'mark' }, '!') : null,
+          error ? h('span', { key: 'mark', style: { fontWeight: 700, marginLeft: '1px' } }, '!') : null,
         ],
       })
     }
@@ -4400,6 +4483,12 @@ window.__ModuleLoader__.load({
             h('button', {
               key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,
               onClick: () => { if (previewState === 'idle') void playPreview(); else stopPreview() },
+              // The sample opens the bridge too, so it carries the same
+              // first-click note (and nothing else).
+              onMouseEnter: (event) => { const note = firstClickNote(); if (note) showHoverTip(event.currentTarget, note, '') },
+              onMouseLeave: hideHoverTip,
+              onFocus: (event) => { const note = firstClickNote(); if (note) showHoverTip(event.currentTarget, note, '') },
+              onBlur: hideHoverTip,
               children: previewState === 'loading'
                 ? t('停止（正在合成）', 'Stop (synthesizing)')
                 : previewState === 'playing'
