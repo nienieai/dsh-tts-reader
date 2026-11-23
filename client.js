@@ -128,6 +128,7 @@ window.__ModuleLoader__.load({
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': '既定のブラウザで読み上げます（読み上げページ経由）。キー不要・キャッシュなし。ページは DSH のテーマと言語に従います。',
         'desktop only': 'デスクトップ版のみ',
         'first time: click ▶ on the bridge page (browsers block audio until a click)': '初回はブラウザのページで ▶ を一度クリックしてください（クリックなしの再生はブロックされます）',
+        'the browser needs one click on ▶ in the bridge page': 'ブラウザのページで ▶ を一度クリックすると発声できます',
         'Install Piper offline': 'Piper をオフラインで導入',
         Close: '閉じる',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'このプラグインは音声を再生するだけで、Piper 本体と音声モデルは含みません。一度用意すれば合成はオフライン・無料のまま使えます。',
@@ -282,6 +283,7 @@ window.__ModuleLoader__.load({
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': 'Lee en tu navegador predeterminado mediante la página del puente: sin clave, sin caché; sigue el tema y el idioma de la app.',
         'desktop only': 'solo en escritorio',
         'first time: click ▶ on the bridge page (browsers block audio until a click)': 'la primera vez, haz clic en ▶ en la página del puente (sin un clic el navegador bloquea el audio)',
+        'the browser needs one click on ▶ in the bridge page': 'haz clic en ▶ en la página del puente para que el navegador hable',
         'Install Piper offline': 'Instalar Piper sin conexión',
         Close: 'Cerrar',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'Este plugin solo reproduce audio; el programa Piper y los modelos de voz no están incluidos. Configúralos una vez y la síntesis seguirá sin conexión y gratis.',
@@ -436,6 +438,7 @@ window.__ModuleLoader__.load({
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lit dans votre navigateur par défaut via la page du pont : sans clé, sans cache ; elle suit le thème et la langue de l’application.",
         "desktop only": "bureau uniquement",
         "first time: click ▶ on the bridge page (browsers block audio until a click)": "la première fois, cliquez sur ▶ sur la page du pont (sans clic, le navigateur bloque l’audio)",
+        "the browser needs one click on ▶ in the bridge page": "cliquez sur ▶ dans la page du pont pour que le navigateur parle",
         "Install Piper offline": "Installer Piper hors ligne",
         Close: "Fermer",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Ce plugin ne fait que lire l’audio ; le programme Piper et les modèles de voix ne sont pas fournis. Configurez-les une fois : la synthèse reste hors ligne et gratuite.",
@@ -590,6 +593,7 @@ window.__ModuleLoader__.load({
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Liest im Standardbrowser über die Brückenseite: kein Schlüssel, kein Cache; die Seite folgt Thema und Sprache der App.",
         "desktop only": "nur Desktop",
         "first time: click ▶ on the bridge page (browsers block audio until a click)": "beim ersten Mal auf ▶ auf der Brückenseite klicken (ohne Klick blockiert der Browser den Ton)",
+        "the browser needs one click on ▶ in the bridge page": "klicke ▶ auf der Brückenseite, damit der Browser spricht",
         "Install Piper offline": "Piper offline installieren",
         Close: "Schließen",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Dieses Plugin spielt nur Audio ab; Piper-Programm und Stimmmodelle sind nicht enthalten. Einmal eingerichtet, bleibt die Synthese offline und kostenlos.",
@@ -744,6 +748,7 @@ window.__ModuleLoader__.load({
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Читает в браузере по умолчанию через страницу моста: без ключа, без кэша; страница следует теме и языку приложения.",
         "desktop only": "только для десктопа",
         "first time: click ▶ on the bridge page (browsers block audio until a click)": "в первый раз нажмите ▶ на странице моста (без клика браузер не воспроизводит звук)",
+        "the browser needs one click on ▶ in the bridge page": "нажмите ▶ на странице моста, чтобы браузер говорил",
         "Install Piper offline": "Установить Piper офлайн",
         Close: "Закрыть",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Этот плагин только воспроизводит звук; программа Piper и голосовые модели не входят в комплект. Настройте их один раз — синтез останется офлайн и бесплатным.",
@@ -898,6 +903,7 @@ window.__ModuleLoader__.load({
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lê no navegador padrão através da página do modo de leitura: sem chave, sem cache; a página segue o tema e o idioma do app.",
         "desktop only": "só no desktop",
         "first time: click ▶ on the bridge page (browsers block audio until a click)": "na primeira vez, clique em ▶ na página do modo de leitura (sem clique o navegador bloqueia o áudio)",
+        "the browser needs one click on ▶ in the bridge page": "clique em ▶ na página do modo de leitura para o navegador falar",
         "Install Piper offline": "Instalar o Piper offline",
         Close: "Fechar",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Este plugin só reproduz áudio; o programa Piper e os modelos de voz não são incluídos. Configure uma vez e a síntese continua offline e gratuita.",
@@ -1096,7 +1102,9 @@ window.__ModuleLoader__.load({
         bridgeStates.delete(key)
       } else {
         bridgeStates.set(key, {
-          phase: phase === 'paused' ? 'paused' : phase === 'queued' ? 'queued' : 'playing',
+          phase: phase === 'paused' ? 'paused'
+            : phase === 'queued' ? 'queued'
+              : phase === 'blocked' ? 'blocked' : 'playing',
           unit: Number(payload.unit) || 0,
           total: Number(payload.total) || 0,
           queued: Number(payload.queued) || 0,
@@ -3847,8 +3855,14 @@ window.__ModuleLoader__.load({
       // The bridge reads in a separate browser; its live state decides the icon
       // here. Finished reads just go back to the plain speaker.
       const remote = liveBridgeState(key)
-      const phase = remote ? remote.phase : localPhase
-      const tone = mine ? (state.tone || '') : ''
+      // The bridge page may need one click before the browser speaks; the app
+      // shows that as a warning rather than pretending it is reading.
+      const blocked = !!(remote && remote.phase === 'blocked')
+      const phase = remote ? (blocked ? 'idle' : remote.phase) : localPhase
+      const tone = blocked ? 'warn' : (mine ? (state.tone || '') : '')
+      const warning = blocked
+        ? t('需要在朗读桥页面点一下 ▶ 才能发声', 'the browser needs one click on ▶ in the bridge page')
+        : error
 
       const action = phase === 'loading' || phase === 'queued'
         ? t('正在合成…', 'Synthesizing…')
@@ -3862,7 +3876,7 @@ window.__ModuleLoader__.load({
       // Failures stay on the button: exclamation mark, tone colour, coloured
       // hover tip. No popup any more.
       const tipText = () => {
-        const base = error || action
+        const base = warning || action
         const note = firstClickNote()
         return note ? base + '\n' + note : base
       }
@@ -3870,10 +3884,10 @@ window.__ModuleLoader__.load({
       return h('button', {
         type: 'button',
         ref: anchorRef,
-        'aria-label': error || action,
-        onMouseEnter: (event) => showHoverTip(event.currentTarget, tipText(), error ? tone : ''),
+        'aria-label': warning || action,
+        onMouseEnter: (event) => showHoverTip(event.currentTarget, tipText(), warning ? tone : ''),
         onMouseLeave: hideHoverTip,
-        onFocus: (event) => showHoverTip(event.currentTarget, tipText(), error ? tone : ''),
+        onFocus: (event) => showHoverTip(event.currentTarget, tipText(), warning ? tone : ''),
         onBlur: hideHoverTip,
         // Capture the selection before mousedown clears it.
         onMouseDown: () => {
@@ -3894,12 +3908,12 @@ window.__ModuleLoader__.load({
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           height: '24px', minWidth: '22px', padding: '0 3px', border: 'none',
           background: 'transparent', cursor: 'pointer', borderRadius: '4px',
-          color: error ? (tone === 'warn' ? '#b45309' : '#e5484d') : 'var(--dsw-alias-label-secondary)',
-          opacity: phase === 'idle' && !cached && !error ? 0.9 : 1,
+          color: warning ? (tone === 'warn' ? '#b45309' : '#e5484d') : 'var(--dsw-alias-label-secondary)',
+          opacity: phase === 'idle' && !cached && !warning ? 0.9 : 1,
         },
         children: [
           phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingIcon, { mode: phase, key: 'bars' }),
-          error ? h('span', { key: 'mark', style: { fontWeight: 700, marginLeft: '1px' } }, '!') : null,
+          warning ? h('span', { key: 'mark', style: { fontWeight: 700, marginLeft: '1px' } }, '!') : null,
         ],
       })
     }

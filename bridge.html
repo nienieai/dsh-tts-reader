@@ -93,7 +93,7 @@
   #banner.err{background:#c0392b;color:#fff}
   #banner .banner-cta{border:1px solid currentColor;border-radius:999px;background:transparent;
     color:inherit;font:inherit;font-weight:600;padding:3px 14px;cursor:pointer;
-    white-space:nowrap;flex:0 0 auto}
+    white-space:nowrap;flex:0 0 auto;width:auto;height:auto;line-height:1.4}
   #banner .banner-cta:hover{background:rgba(0,0,0,.12)}
 
   /* Custom tooltip: the native title box is a black box that ignores the theme. */
@@ -1252,10 +1252,12 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
           if (err === 'interrupted' || err === 'canceled') return;
           clearWatchdog();
           if (err === 'not-allowed') {
-            // Autoplay policy: not a failure, a request for one click.
+            // Autoplay policy: not a failure, a request for one click. Tell the
+            // app too, so its speaker shows the same warning.
             st.running = false;
             st.paused = false;
             st.gen++;
+            reportState('blocked');
             banner('warn', tr('needsClick'), true);
             paint();
             return;

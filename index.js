@@ -2429,7 +2429,7 @@ export function apply(ctx, config) {
             ? body.key.slice(0, 200)
             : messageId.slice(0, 200)
           if (!key) return writeJson(response, 200, { ok: true, value: { kind } })
-          const phases = new Set(['playing', 'paused', 'queued', 'finished', 'stopped'])
+          const phases = new Set(['playing', 'paused', 'queued', 'blocked', 'finished', 'stopped'])
           const phase = phases.has(body?.phase) ? body.phase : 'playing'
           const count = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0)
           const state = {
