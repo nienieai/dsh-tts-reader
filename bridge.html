@@ -65,9 +65,13 @@
   input[type=range]{width:88px;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
   input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--line)}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;
-    border:0;border-radius:50%;background:var(--accent)}
+    border:0;border-radius:50%;background:var(--accent);transition:transform .12s ease}
   input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--line)}
-  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent);
+    transition:transform .12s ease}
+  /* A 12px dot is a small target: the thumb grows while the pointer is on it. */
+  input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.4)}
+  input[type=range]:hover::-moz-range-thumb{transform:scale(1.4)}
   input[type=range]:focus{outline:none}
   input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
 

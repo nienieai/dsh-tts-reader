@@ -124,6 +124,11 @@ window.__ModuleLoader__.load({
         'Paused — resume from the floating window': '一時停止中。小窓から再開してください',
         'Play again (cached)': 'もう一度再生（キャッシュ）',
         'Read this reply aloud (the paragraphs around the selection)': 'この返信を読み上げ（選択中ならその段落）',
+        'Opening the bridge…': 'ブリッジを開いています…',
+        'The bridge is reading — click to stop': 'ブリッジが読み上げ中 — クリックで停止',
+        'Paused in the bridge page — resume there': 'ブリッジ側で一時停止中（再開はあちらで）',
+        'Read this reply in the bridge page (a selection reads its paragraph)': 'ブリッジでこの返信を読み上げ（選択中ならその段落）',
+        'the bridge did not answer (is its page open?)': 'ブリッジから応答がありません（ページは開いていますか？）',
         'Speech bridge (read in a browser)': '読み上げページ（ブラウザで読み上げ）',
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': '既定のブラウザで読み上げます（読み上げページ経由）。キー不要・キャッシュなし。ページは DSH のテーマと言語に従います。',
         'desktop only': 'デスクトップ版のみ',
@@ -279,6 +284,11 @@ window.__ModuleLoader__.load({
         'Paused — resume from the floating window': 'En pausa: reanuda desde la ventana flotante',
         'Play again (cached)': 'Reproducir de nuevo (en caché)',
         'Read this reply aloud (the paragraphs around the selection)': 'Leer esta respuesta (los párrafos junto a la selección)',
+        'Opening the bridge…': 'Abriendo el puente…',
+        'The bridge is reading — click to stop': 'El puente está leyendo: haz clic para detener',
+        'Paused in the bridge page — resume there': 'En pausa en el puente: reanuda allí',
+        'Read this reply in the bridge page (a selection reads its paragraph)': 'Leer esta respuesta en el puente (la selección lee su párrafo)',
+        'the bridge did not answer (is its page open?)': 'el puente no respondió (¿está abierta su página?)',
         'Speech bridge (read in a browser)': 'Puente de lectura (leer en un navegador)',
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': 'Lee en tu navegador predeterminado mediante la página del puente: sin clave, sin caché; sigue el tema y el idioma de la app.',
         'desktop only': 'solo en escritorio',
@@ -434,6 +444,11 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "En pause — reprenez depuis la fenêtre flottante",
         "Play again (cached)": "Relire (cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Lire cette réponse (les paragraphes autour de la sélection)",
+        "Opening the bridge…": "Ouverture du pont…",
+        "The bridge is reading — click to stop": "Le pont lit — cliquez pour arrêter",
+        "Paused in the bridge page — resume there": "En pause dans le pont — reprenez-y",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Lire cette réponse dans le pont (une sélection lit son paragraphe)",
+        "the bridge did not answer (is its page open?)": "le pont n'a pas répondu (sa page est-elle ouverte ?)",
         "Speech bridge (read in a browser)": "Pont de lecture (lire dans un navigateur)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lit dans votre navigateur par défaut via la page du pont : sans clé, sans cache ; elle suit le thème et la langue de l’application.",
         "desktop only": "bureau uniquement",
@@ -589,6 +604,11 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "Pausiert – im schwebenden Fenster fortsetzen",
         "Play again (cached)": "Erneut abspielen (Cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Diese Antwort vorlesen (die Absätze um die Auswahl)",
+        "Opening the bridge…": "Brücke wird geöffnet…",
+        "The bridge is reading — click to stop": "Die Brücke liest — zum Stoppen klicken",
+        "Paused in the bridge page — resume there": "Im Brückendokument pausiert – dort fortsetzen",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Diese Antwort in der Brücke lesen (eine Auswahl liest ihren Absatz)",
+        "the bridge did not answer (is its page open?)": "die Brücke hat nicht geantwortet (ist ihre Seite offen?)",
         "Speech bridge (read in a browser)": "Lese-Brücke (im Browser lesen)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Liest im Standardbrowser über die Brückenseite: kein Schlüssel, kein Cache; die Seite folgt Thema und Sprache der App.",
         "desktop only": "nur Desktop",
@@ -744,6 +764,11 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "Пауза — продолжите из плавающего окна",
         "Play again (cached)": "Повторить (из кэша)",
         "Read this reply aloud (the paragraphs around the selection)": "Прочитать этот ответ (абзацы вокруг выделения)",
+        "Opening the bridge…": "Открываю мост…",
+        "The bridge is reading — click to stop": "Мост читает — нажмите, чтобы остановить",
+        "Paused in the bridge page — resume there": "Пауза в документе моста — продолжите там",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Прочитать этот ответ в мосте (выделение читает свой абзац)",
+        "the bridge did not answer (is its page open?)": "мост не ответил (его страница открыта?)",
         "Speech bridge (read in a browser)": "Мост чтения (читать в браузере)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Читает в браузере по умолчанию через страницу моста: без ключа, без кэша; страница следует теме и языку приложения.",
         "desktop only": "только для десктопа",
@@ -899,6 +924,11 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "Pausado — continue pela janela flutuante",
         "Play again (cached)": "Reproduzir de novo (cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Ler esta resposta (os parágrafos em torno da seleção)",
+        "Opening the bridge…": "Abrindo a ponte…",
+        "The bridge is reading — click to stop": "A ponte está lendo — clique para parar",
+        "Paused in the bridge page — resume there": "Em pausa na ponte — retome ali",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Ler esta resposta na ponte (a seleção lê o parágrafo dela)",
+        "the bridge did not answer (is its page open?)": "a ponte não respondeu (a página está aberta?)",
         "Speech bridge (read in a browser)": "Modo de leitura (ler num navegador)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lê no navegador padrão através da página do modo de leitura: sem chave, sem cache; a página segue o tema e o idioma do app.",
         "desktop only": "só no desktop",
@@ -1092,10 +1122,45 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
+    // A bridge read is handed to a page that takes a moment to answer. The
+    // button spins until that page says what it is doing, and stops spinning by
+    // itself if no answer ever comes; otherwise a click looks like nothing.
+    const BRIDGE_START_TIMEOUT_MS = 12000
+    const bridgePending = { key: '', timer: 0 }
+
+    /** Give up the spinner: the page answered (or never will). */
+    function clearBridgePending(key) {
+      if (key && bridgePending.key !== key) return
+      if (bridgePending.timer) { clearTimeout(bridgePending.timer); bridgePending.timer = 0 }
+      bridgePending.key = ''
+      if (key && playback.key === key && playback.phase === 'loading') {
+        setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
+      }
+    }
+
+    /** The text is on its way to the bridge page: spin until it answers. */
+    function beginBridgePending(key) {
+      if (bridgePending.timer) clearTimeout(bridgePending.timer)
+      bridgePending.key = key
+      bridgePending.timer = setTimeout(() => {
+        bridgePending.timer = 0
+        if (bridgePending.key !== key) return
+        bridgePending.key = ''
+        if (playback.key === key && playback.phase === 'loading') {
+          setPlayback({
+            key, phase: 'idle', tone: 'warn',
+            error: t('朗读桥没有回应（页面打开了吗？）', 'the bridge did not answer (is its page open?)'),
+          })
+        }
+      }, BRIDGE_START_TIMEOUT_MS)
+    }
+
     // The bridge reports what it is doing; the app mirrors it on the buttons.
     function noteBridgeState(payload) {
       const key = String(payload.key || '')
       if (!key) return
+      // Any word from the page is the answer the spinner was waiting for.
+      clearBridgePending(key)
       const phase = String(payload.phase || '')
       if (phase === 'finished' || phase === 'stopped') {
         if (!bridgeStates.has(key)) return
@@ -1144,6 +1209,9 @@ window.__ModuleLoader__.load({
           const next = currentScheme()
           if (next === last) return
           last = next
+          // The reading highlight uses the bridge page's two washes, so it has
+          // to be repainted when the palette changes.
+          try { ensureHighlightStyle() } catch {}
           schedulePrefsPush()
         }
         const onChange = () => {
@@ -1552,6 +1620,8 @@ window.__ModuleLoader__.load({
     function stopCurrentOnly() {
       playerStop()
       current = null
+      // A spinning "starting the bridge" state belongs to a read that is over.
+      clearBridgePending('')
       setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
     }
 
@@ -2420,19 +2490,29 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // The bridge page's own wash, so both ways of reading look the same: 30%
+    // blue on the dark palette, a deeper 26% on the light one.
+    const PARA_TINT = { dark: 'rgba(96,165,250,.30)', light: 'rgba(37,99,235,.26)' }
+
     function ensureHighlightStyle() {
       if (typeof document === 'undefined' || !document.head) return false
-      if (!document.getElementById(HIGHLIGHT_STYLE_ID)) {
-        const style = document.createElement('style')
+      let style = document.getElementById(HIGHLIGHT_STYLE_ID)
+      if (!style) {
+        style = document.createElement('style')
         style.id = HIGHLIGHT_STYLE_ID
+        document.head.appendChild(style)
+      }
+      const scheme = currentScheme() === 'light' ? 'light' : 'dark'
+      if (style.dataset.scheme !== scheme) {
+        const tint = PARA_TINT[scheme]
+        style.dataset.scheme = scheme
         style.textContent = [
-          '::highlight(' + PARA_HIGHLIGHT + '){background-color:rgba(88,140,255,.15)}',
+          '::highlight(' + PARA_HIGHLIGHT + '){background-color:' + tint + '}',
           // Yellow, the way a highlighter pen works: the word has to stand out
           // from the blue paragraph wash, on both light and dark surfaces.
           '::highlight(' + WORD_HIGHLIGHT + '){background-color:#f5c542;color:#241a00}',
-          '.' + PARA_FALLBACK_CLASS + '{background-color:rgba(88,140,255,.15);border-radius:4px}',
+          '.' + PARA_FALLBACK_CLASS + '{background-color:' + tint + ';border-radius:4px}',
         ].join('')
-        document.head.appendChild(style)
       }
       installScrollWatch()
       return true
@@ -2953,16 +3033,27 @@ window.__ModuleLoader__.load({
       // The bridge engine hands the text to a real browser; a desktop shell has
       // no voices of its own, so this path needs no voice list at all.
       if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
-        setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
+        // Nothing is audible yet, but the click has to show: spin while the
+        // browser is being handed the text, or the button looks stuck.
+        setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
+        beginBridgePending(stateKey)
         // A selection read has no message id, so the text itself goes along.
         void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
+          .then((value) => {
+            // A failed hand-off (or a link copied to the clipboard) ends the spin.
+            if (!value || (Number(value.delivered) <= 0 && !value.launched)) clearBridgePending(stateKey)
+          })
         return
       }
       if (engineMode === 'browser') {
         refreshSpeechVoices()
         if (!speechCapable() && isDesktopShell) {
-          setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
+          setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
+          beginBridgePending(stateKey)
           void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
+            .then((value) => {
+              if (!value || (Number(value.delivered) <= 0 && !value.launched)) clearBridgePending(stateKey)
+            })
           return
         }
         if (!speechCapable()) {
@@ -3055,14 +3146,31 @@ window.__ModuleLoader__.load({
       try { window.localStorage.setItem(PLAYER_POS_KEY, JSON.stringify({ left, top })) } catch {}
     }
 
-    function makePlayerButton(text, title) {
+    // The floating window's controls are drawn, not typed: the text glyphs sat
+    // beside the app's own SVG icons like a font accident.
+    const PLAYER_ICON = {
+      prev: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<path d="M19 5v14a1 1 0 0 1-1.6.8L9 13.5V19a1 1 0 0 1-2 0V5a1 1 0 0 1 2 0v5.5l8.4-6.3A1 1 0 0 1 19 5z"/></svg>',
+      next: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<path d="M5 5v14a1 1 0 0 0 1.6.8l8.4-6.3V19a1 1 0 0 0 2 0V5a1 1 0 0 0-2 0v5.5L6.6 4.2A1 1 0 0 0 5 5z"/></svg>',
+      pause: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>',
+      play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<path d="M7 4.6c0-1 1.1-1.6 1.9-1L19 11c.8.5.8 1.5 0 2L8.9 20.4c-.8.6-1.9 0-1.9-1z"/></svg>',
+    }
+
+    function makePlayerButton(icon, title, big) {
       const button = document.createElement('button')
       button.type = 'button'
-      button.textContent = text
+      button.innerHTML = icon
       button.title = title
-      button.style.cssText = 'box-sizing:border-box;height:26px;min-width:30px;padding:0 6px;'
-        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);border-radius:8px;background:transparent;'
-        + 'color:inherit;font-size:13px;line-height:1;font-family:inherit;cursor:pointer'
+      // Pause/resume is the one you reach for, so it is the bigger control.
+      button.style.cssText = 'box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;'
+        + (big
+          ? 'height:32px;min-width:38px;padding:0 10px;border-radius:9px;'
+          : 'height:26px;min-width:30px;padding:0 6px;border-radius:8px;')
+        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);background:transparent;color:inherit;'
+        + 'font-size:13px;line-height:1;font-family:inherit;cursor:pointer'
       return button
     }
 
@@ -3098,9 +3206,9 @@ window.__ModuleLoader__.load({
       progressTrack.appendChild(progressFill)
       const controls = document.createElement('div')
       controls.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 10px'
-      const prev = makePlayerButton('⏮', t('上一段', 'Previous paragraph'))
-      const play = makePlayerButton('⏸', t('暂停 / 继续', 'Pause / resume'))
-      const next = makePlayerButton('⏭', t('下一段', 'Next paragraph'))
+      const prev = makePlayerButton(PLAYER_ICON.prev, t('上一段', 'Previous paragraph'), false)
+      const play = makePlayerButton(PLAYER_ICON.pause, t('暂停 / 继续', 'Pause / resume'), true)
+      const next = makePlayerButton(PLAYER_ICON.next, t('下一段', 'Next paragraph'), false)
       prev.onclick = () => playerStep(-1)
       next.onclick = () => playerStep(1)
       play.onclick = () => playerTogglePause()
@@ -3222,7 +3330,7 @@ window.__ModuleLoader__.load({
       parts.progressFill.parentElement.title = view.total > 1
         ? (Math.min(view.unit + 1, view.total) + '/' + view.total + (view.preview ? ' · ' + view.preview : ''))
         : (view.preview || '')
-      parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
+      parts.play.innerHTML = view.phase === 'paused' ? PLAYER_ICON.play : PLAYER_ICON.pause
       parts.play.title = view.phase === 'paused' ? t('继续', 'Resume') : t('暂停', 'Pause')
       parts.play.disabled = view.phase === 'loading'
       parts.prev.disabled = view.unit <= 0
@@ -3864,22 +3972,32 @@ window.__ModuleLoader__.load({
         ? t('需要在朗读桥页面点一下 ▶ 才能发声', 'the browser needs one click on ▶ in the bridge page')
         : error
 
-      const action = phase === 'loading' || phase === 'queued'
-        ? t('正在合成…', 'Synthesizing…')
-        : phase === 'playing'
-          ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
+      // The tooltip has to describe what this click actually does: the bridge
+      // reads in another window, so its wording differs from a local engine.
+      const bridgeMode = engineMode === 'bridge'
+      const action = phase === 'loading'
+        ? (bridgeMode
+          ? t('正在打开朗读桥…', 'Opening the bridge…')
+          : t('正在合成…', 'Synthesizing…'))
+        : phase === 'queued'
+          ? t('等待上条朗读完成', 'Waiting for the current read')
+          : phase === 'playing'
+          ? (bridgeMode
+            ? t('朗读桥正在朗读，点击停止', 'The bridge is reading — click to stop')
+            : t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)'))
           : phase === 'paused'
-            ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
+            ? (bridgeMode
+              ? t('已在朗读桥暂停（在桥页继续）', 'Paused in the bridge page — resume there')
+              : t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window'))
             : cached
               ? t('再次播放（本地缓存）', 'Play again (cached)')
-              : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+              : bridgeMode
+                ? t('在朗读桥里朗读这条回复（选中文字则读它所在的整段）',
+                  'Read this reply in the bridge page (a selection reads its paragraph)')
+                : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
       // Failures stay on the button: exclamation mark, tone colour, coloured
       // hover tip. No popup any more.
-      const tipText = () => {
-        const base = warning || action
-        const note = firstClickNote()
-        return note ? base + '\n' + note : base
-      }
+      const tipText = () => warning || action
 
       return h('button', {
         type: 'button',
@@ -4619,14 +4737,21 @@ window.__ModuleLoader__.load({
       '@keyframes dsh-tts-wave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}',
       '.dsh-tts-spin{animation:dsh-tts-spin .9s linear infinite;transform-origin:center}',
       '@keyframes dsh-tts-spin{to{transform:rotate(360deg)}}',
-      '.dsh-tts-range{appearance:none;-webkit-appearance:none;background:transparent;height:18px;cursor:pointer}',
+      // One slider look for the settings row and the floating window: drawn
+      // track, 14px thumb, and a thumb that grows under the pointer.
+      '.dsh-tts-range{flex:1 1 auto;min-width:80px;box-sizing:border-box;height:18px;margin:0;'
+        + 'appearance:none;-webkit-appearance:none;background:transparent;outline:none;cursor:pointer}',
       '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;'
-        + 'background:var(--dsw-alias-border-l2,#3a3a3a)}',
-      '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;'
-        + 'border:0;border-radius:50%;background:var(--dsw-alias-state-business-primary,#3b82f6)}',
-      '.dsh-tts-range::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2,#3a3a3a)}',
-      '.dsh-tts-range::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;'
-        + 'background:var(--dsw-alias-state-business-primary,#3b82f6)}',
+        + 'background:var(--dsw-alias-bg-layer-3,#3a3a3a)}',
+      '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;box-sizing:border-box;width:14px;height:14px;'
+        + 'margin-top:-5px;border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);border-radius:50%;'
+        + 'background:var(--dsw-alias-state-business-primary,#3b82f6);transition:transform .12s ease}',
+      '.dsh-tts-range:hover::-webkit-slider-thumb{transform:scale(1.4)}',
+      '.dsh-tts-range::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-3,#3a3a3a)}',
+      '.dsh-tts-range::-moz-range-thumb{box-sizing:border-box;width:14px;height:14px;border-radius:50%;'
+        + 'border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);background:var(--dsw-alias-state-business-primary,#3b82f6);'
+        + 'transition:transform .12s ease}',
+      '.dsh-tts-range:hover::-moz-range-thumb{transform:scale(1.4)}',
       // ---- settings page ----
       // One rhythm: card head (title + status + one hint) over rows built from a
       // fixed label gutter and one control column that every control fills, so
@@ -4654,10 +4779,7 @@ window.__ModuleLoader__.load({
       '.dsh-tts-area:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input[type=number]::-webkit-inner-spin-button,.dsh-tts-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}',
       '.dsh-tts-select{flex:1 1 auto;width:auto;min-width:0;max-width:100%;cursor:pointer}',
-      '.dsh-tts-range{flex:1 1 auto;min-width:80px;height:4px;margin:0;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',
-      '.dsh-tts-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
-      '.dsh-tts-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
-      '.dsh-tts-range:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}',
+      '.dsh-tts-range:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px;border-radius:4px}',
       '.dsh-tts-value{flex:0 0 46px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}',
       '.dsh-tts-btn{box-sizing:border-box;height:30px;margin:0;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;font-family:inherit;cursor:pointer}',
       '.dsh-tts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}',
