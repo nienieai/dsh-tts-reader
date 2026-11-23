@@ -127,6 +127,11 @@ DeepSeek 云按官方 TTS 计费；浏览器语音、系统语音、本地 Piper
 
 如果这个插件帮你省了时间，给个 ⭐ 就是最好的支持。
 
+## 声明
+
+- **开发方式**：代码与文档由 **AI Agent 工具**辅助完成，人类负责方向、取舍与验收。
+- **翻译**：中文以外的七种界面文案（English / 日本語 / Español / Français / Deutsch / Русский / Português）由 AI Agent 翻译，可能有用词偏差或不自然之处；发现不准确欢迎提 Issue 或 PR（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+
 ## 许可证
 
 [MIT](LICENSE) © dsh-tts-reader contributors

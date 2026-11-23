@@ -129,6 +129,11 @@ Issues and pull requests are welcome. `main` holds released versions only; `dev`
 
 If this plugin saves you time, a ⭐ is the best thanks.
 
+## Notes
+
+- **How it was built**: the code and documentation were written with the help of **AI agent tooling**; a human set the direction and signed off on it.
+- **Translations**: the interface copy in the seven non-Chinese languages (English, 日本語, Español, Français, Deutsch, Русский, Português) was translated by AI agents and may read awkwardly or be imprecise. Fixes are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [MIT](LICENSE) © dsh-tts-reader contributors

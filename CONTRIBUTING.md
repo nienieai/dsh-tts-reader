@@ -62,6 +62,7 @@ dsh plugin --profile desktop add link:$(pwd)
 - 用户向内容（README、安装）写人话，不堆术语；实现细节放 `docs/TECHNICAL.md`。
 - 插件详情页文档（`docs/DETAIL.*.md`）只放一张配图，功能与限制写在 `locale/*.json` 的 `meta.description` 里 —— 这是 DSH 的约定：详情页不渲染 HTML，相对链接会显示成纯文本。
 - 新增或改名 `locale` 里的 `meta.detail` 时，确认文件真实存在（缺文件会让详情页直接报错）。
+- 中文以外的界面文案由 AI Agent 翻译。改翻译直接编辑 `locale/*.json`；朗读桥页面另有一套文案，在 `bridge.html` 的 `I18N` 里同步。
 
 ## 许可证
 
