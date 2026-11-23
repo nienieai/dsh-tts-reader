@@ -32,6 +32,12 @@ const PENDING_PATH = PREFIX + '/pending'
 const RECENT_PATH = PREFIX + '/recent'
 const BRIDGE_PATH = PREFIX + '/bridge'
 const BRIDGE_STREAM_PATH = BRIDGE_PATH + '/stream'
+// The bridge reports back on its own channel: reading and finishing are
+// separate facts from "text was handed over", and theme/language changes have
+// nothing to do with the text at all.
+const BRIDGE_ACK_PATH = BRIDGE_PATH + '/ack'
+const BRIDGE_PREFS_PATH = BRIDGE_PATH + '/prefs'
+const BRIDGE_STATE_PATH = BRIDGE_PATH + '/state'
 
 const API_BASE = 'https://api.deepseek.com'
 const KEY_REF = 'DEEPSEEK_API_KEY'
@@ -2164,16 +2170,53 @@ export function apply(ctx, config) {
       while (bridgeEntries.size > BRIDGE_MAX) bridgeEntries.delete(bridgeEntries.keys().next().value)
     }
 
+    // What the bridge reported. `done` is keyed by message id so the page can
+    // mark a reply as read; the entries expire because a stale check mark on a
+    // reply from an hour ago means nothing.
+    const BRIDGE_DONE_TTL_MS = 30 * 60 * 1000
+    const BRIDGE_DONE_MAX = 64
+    const bridgeDone = new Map()
+    // Push id -> a request waiting for the page to confirm it received the text.
+    const bridgeWaiters = new Map()
+    const BRIDGE_ACK_WAIT_MS = 1200
+    // The last theme/language the app announced: a tab opened later starts from
+    // these, and a prefs push only carries what actually changed.
+    const bridgePrefs = { scheme: 'dark', lang: '' }
+
+    const pruneBridgeDone = () => {
+      const now = Date.now()
+      for (const [id, item] of bridgeDone) {
+        if (now - item.at > BRIDGE_DONE_TTL_MS) bridgeDone.delete(id)
+      }
+      while (bridgeDone.size > BRIDGE_DONE_MAX) bridgeDone.delete(bridgeDone.keys().next().value)
+    }
+
     const addBridge = (payload) => {
       pruneBridges()
       const id = crypto.randomUUID()
-      bridgeEntries.set(id, { at: Date.now(), title: payload.title, units: payload.units, speed: payload.speed, lang: payload.lang, scheme: payload.scheme })
+      bridgeEntries.set(id, {
+        at: Date.now(),
+        pushId: payload.id || '',
+        messageId: payload.messageId || '',
+        title: payload.title,
+        units: payload.units,
+        speed: payload.speed,
+        lang: payload.lang,
+        scheme: payload.scheme,
+      })
       return id
     }
 
     const renderBridge = (entry) => {
-      const payload = JSON.stringify({ title: entry.title, units: entry.units, speed: entry.speed, lang: entry.lang, scheme: entry.scheme })
-        .replace(/</g, '\\u003c')
+      const payload = JSON.stringify({
+        id: entry.pushId || '',
+        messageId: entry.messageId || '',
+        title: entry.title,
+        units: entry.units,
+        speed: entry.speed,
+        lang: entry.lang,
+        scheme: entry.scheme,
+      }).replace(/</g, '\\u003c')
       return bridgeSource().replace('__BRIDGE_DATA__', payload)
     }
 
@@ -2193,6 +2236,36 @@ export function apply(ctx, config) {
       }
       return 0
     }
+
+    /**
+     * Theme and language are not text: they apply to every listening tab and
+     * arrive on their own event, so switching the app theme updates the page
+     * without re-reading a single paragraph.
+     */
+    const deliverBridgePrefs = (prefs) => {
+      if (bridgeClients.size === 0) return 0
+      const line = 'data: ' + JSON.stringify({ type: 'prefs', ...prefs }) + '\n\n'
+      let sent = 0
+      for (const response of [...bridgeClients]) {
+        if (response.destroyed || response.writableEnded) { bridgeClients.delete(response); continue }
+        try { response.write(line); sent += 1 } catch { bridgeClients.delete(response) }
+      }
+      return sent
+    }
+
+    /**
+     * Resolve true when the page confirms it received the push. A page that is
+     * gone (or an old cached page without the ack script) simply times out
+     * false; the text is still delivered either way.
+     */
+    const waitForBridgeAck = (id, ms) => new Promise((resolve) => {
+      if (!id) { resolve(false); return }
+      const timer = setTimeout(() => {
+        bridgeWaiters.delete(id)
+        resolve(false)
+      }, ms)
+      bridgeWaiters.set(id, { timer, resolve: (value) => resolve(value) })
+    })
 
     /** Launch the OS default browser on a loopback URL. */
     const openExternal = (url) => {
@@ -2266,14 +2339,26 @@ export function apply(ctx, config) {
           : current.speed
         const lang = typeof body?.lang === 'string' ? body.lang.toLowerCase().slice(0, 12) : ''
         const scheme = body?.scheme === 'light' ? 'light' : 'dark'
-        const payload = { title, units, speed: bridgeSpeed, lang, scheme }
+        if (scheme) bridgePrefs.scheme = scheme
+        if (lang) bridgePrefs.lang = lang
+        // The push id lets the page confirm this exact hand-off instead of the
+        // request guessing whether the tab is really there.
+        const pushId = crypto.randomUUID()
+        const payload = {
+          id: pushId,
+          messageId,
+          title, units, speed: bridgeSpeed,
+          lang: lang || bridgePrefs.lang,
+          scheme,
+        }
         // A bridge tab that is still open — possibly from hours ago — gets the
         // text directly. Opening another tab every time would pile them up.
         const delivered = deliverToBridge(payload)
         if (delivered > 0) {
+          const acked = await waitForBridgeAck(pushId, BRIDGE_ACK_WAIT_MS)
           return writeJson(response, 200, {
             ok: true,
-            value: { delivered, launched: false, reclaimed: true, url: '', units: units.length },
+            value: { delivered, acked, id: pushId, launched: false, reclaimed: true, url: '', units: units.length },
           })
         }
         const id = addBridge(payload)
@@ -2281,7 +2366,7 @@ export function apply(ctx, config) {
         const link = /^[A-Za-z0-9.\-\[\]:]+$/.test(host) ? 'http://' + host + BRIDGE_PATH + '?id=' + id : ''
         return writeJson(response, 200, {
           ok: true,
-          value: { url: link, launched: link ? openExternal(link) : false, delivered: 0, units: units.length },
+          value: { url: link, launched: link ? openExternal(link) : false, delivered: 0, acked: false, id: pushId, units: units.length },
         })
       }),
     }), 'dsh-tts-reader: bridge')
@@ -2313,6 +2398,74 @@ export function apply(ctx, config) {
         response.on('error', cleanup)
       }),
     }), 'dsh-tts-reader: bridge stream')
+
+    // The page's side of the conversation: "got it", "finished it", "stopped".
+    // `done` is also what turns a reply's read button into a check mark.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: BRIDGE_ACK_PATH,
+      handler: routeHandler(log, async (request, response) => {
+        if (!guard(request, response)) return
+        if ((request.method ?? '') !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(request)
+        const id = typeof body?.id === 'string' ? body.id.slice(0, 64) : ''
+        if (!id) return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '缺少 id' })
+        const kind = body?.kind === 'done' ? 'done' : body?.kind === 'stop' ? 'stop' : 'read'
+        const waiter = bridgeWaiters.get(id)
+        if (waiter) {
+          clearTimeout(waiter.timer)
+          bridgeWaiters.delete(id)
+          waiter.resolve(true)
+        }
+        if (kind === 'done') {
+          const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
+          const units = Number(body?.units)
+          if (messageId) {
+            const safeUnits = Number.isFinite(units) && units > 0 ? Math.floor(units) : 0
+            bridgeDone.set(messageId, { at: Date.now(), units: safeUnits })
+            pruneBridgeDone()
+            // The page that owns the reply is not the bridge: tell the app.
+            broadcast({ type: 'bridge-done', messageId, units: safeUnits })
+          }
+        }
+        return writeJson(response, 200, { ok: true, value: { kind } })
+      }),
+    }), 'dsh-tts-reader: bridge ack')
+
+    // Theme and language, sent when they change rather than with every text.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: BRIDGE_PREFS_PATH,
+      handler: routeHandler(log, async (request, response) => {
+        if (!guard(request, response)) return
+        if ((request.method ?? '') !== 'POST') return writeJson(response, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(request)
+        const scheme = body?.scheme === 'light' ? 'light' : body?.scheme === 'dark' ? 'dark' : ''
+        const lang = typeof body?.lang === 'string' ? body.lang.toLowerCase().slice(0, 12) : ''
+        if (!scheme && !lang) return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '需要 scheme 或 lang' })
+        if (scheme) bridgePrefs.scheme = scheme
+        if (lang) bridgePrefs.lang = lang
+        const delivered = deliverBridgePrefs({ ...(scheme ? { scheme } : {}), ...(lang ? { lang } : {}) })
+        return writeJson(response, 200, { ok: true, value: { delivered } })
+      }),
+    }), 'dsh-tts-reader: bridge prefs')
+
+    // What the page already finished: painted on the read buttons at startup,
+    // so a check mark survives a page reload.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: BRIDGE_STATE_PATH,
+      handler: routeHandler(log, (request, response) => {
+        if (!guard(request, response)) return
+        pruneBridgeDone()
+        return writeJson(response, 200, {
+          ok: true,
+          value: {
+            done: [...bridgeDone].map(([messageId, item]) => ({ messageId, units: item.units, at: item.at })),
+          },
+        })
+      }),
+    }), 'dsh-tts-reader: bridge state')
 
     // The floating player asks for the paragraph list first: it needs the count
     // and each paragraph's opening words, and `unit` on /read addresses this list.

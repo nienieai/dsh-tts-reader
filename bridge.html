@@ -82,6 +82,8 @@
   .doc p{margin:0 0 1.15em;font-size:17px;line-height:1.85;color:var(--dim-text);
     transition:color .18s ease}
   .doc p.on{color:var(--fg)}
+  /* What is already behind you: read paragraphs fade, the current one stays bright. */
+  .doc p.read{opacity:.42}
   .doc p.mark{background:rgba(96,165,250,.14);border-radius:4px}
   .doc p.empty{color:var(--dim);font-size:15px}
   ::highlight(bridge-para){background-color:rgba(96,165,250,.14)}
@@ -172,10 +174,47 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     gen: 0, watchdog: 0, boundary: 0, attempted: false, startedAt: 0,
     rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0,
     listOpen: false, filter: '', hover: -1,
+    // Pushes that arrived while something was playing wait here, in order: a
+    // newer push must never cut off the paragraph being spoken.
+    queue: [], active: null, done: false,
+    dotState: 'idle', dotTitle: '未连接 DSH',
     // Progress: characters already finished, plus where this paragraph started.
     charStarts: [], totalChars: 0, baseChars: 0, paraStart: 0, paraLen: 0,
     paraBoundary: 0, sawBoundary: false
   };
+
+  /** Where the bridge's own API lives, or null when this page has no Host. */
+  function apiBase() {
+    try {
+      if (!/^https?:$/.test(window.location.protocol || '')) return null;
+      return String(window.location.pathname || '').replace(/\/[^/]*$/, '');
+    } catch (e) { return null; }
+  }
+
+  /** Tell the Host what happened to one push: received, finished, stopped. */
+  function ack(id, kind, messageId, units) {
+    if (!id) return;
+    var dir = apiBase();
+    if (dir === null) return;
+    var body = { id: String(id), kind: String(kind) };
+    if (messageId) body.messageId = String(messageId);
+    if (typeof units === 'number') body.units = units;
+    var json = JSON.stringify(body);
+    try {
+      if (navigator.sendBeacon) {
+        var blob = new Blob([json], { type: 'application/json' });
+        if (navigator.sendBeacon(dir + '/bridge/ack', blob)) return;
+      }
+    } catch (e) {}
+    try {
+      fetch(dir + '/bridge/ack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: json,
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
 
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
   /**
@@ -249,6 +288,7 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
       if (i === index) p.classList.add('on');
       else p.classList.remove('on');
     });
+    markRead(index);
     // The word layer belongs to the paragraph that just ended.
     paintWordClear();
     if (supportsHighlight()) {
@@ -267,6 +307,11 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     try {
       if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-word');
     } catch (e) {}
+  }
+
+  /** Paragraphs before `upTo` are read: they fade instead of staying unread. */
+  function markRead(upTo) {
+    st.paragraphs.forEach(function (p, i) { p.classList.toggle('read', i < upTo); });
   }
 
   function paintWord(index, from, length) {
@@ -548,15 +593,31 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   }
 
   function paint() {
+    var done = st.done && !st.running && !st.paused;
     el.btnPlay.disabled = !units.length;
-    el.btnPlay.textContent = st.running ? (st.paused ? '▶' : '⏸') : '▶';
-    el.btnPlay.title = st.running ? (st.paused ? '继续' : '暂停') : '开始朗读';
+    el.btnPlay.textContent = st.running ? (st.paused ? '▶' : '⏸') : (done ? '↻' : '▶');
+    el.btnPlay.title = st.running
+      ? (st.paused ? '继续' : '暂停')
+      : (done ? '重读（全部 ' + units.length + ' 段已读完）' : '开始朗读');
     el.btnPrev.disabled = !units.length || st.idx <= 0;
     el.btnNext.disabled = !units.length || st.idx >= units.length - 1;
     el.btnStop.disabled = !st.running && !st.paused;
+    paintDot();
+  }
+
+  /** Connection state plus how many pushes are waiting behind the current one. */
+  function paintDot() {
+    var queued = st.queue.length;
+    el.dot.className = 'dot' + (st.dotState === 'ok' ? ' ok' : st.dotState === 'warn' ? ' warn' : '');
+    el.dot.title = st.dotTitle + (queued ? ' · 已排队 ' + queued + ' 段' : '');
   }
 
   function abort(reason, canRetryLocal) {
+    var played = st.active;
+    st.active = null;
+    st.done = false;
+    // A failing voice would fail the whole queue the same way: drop it.
+    st.queue.length = 0;
     st.stop = true;
     st.running = false;
     st.paused = false;
@@ -568,6 +629,7 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     if (canRetryLocal && local && selectVoice(local)) {
       banner('warn', reason + '　已自动选用本地音色「' + local.name + '」，点「▶」即可。');
     }
+    if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
 
@@ -684,10 +746,18 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     clearWatchdog();
     stopProgress();
     st.idx = units.length;
+    st.done = true;
     paintWordClear();
+    markRead(units.length);
     el.fill.style.width = '100%';
     if (st.startedAt) setStatus('已读完 ' + units.length + ' 段 · 用时 ' + fmt(performance.now() - st.startedAt));
+    var played = st.active;
+    st.active = null;
+    // The app shows this as the reply's check mark, so it must carry the
+    // message id, not just the push id.
+    if (played) ack(played.id, 'done', played.messageId, units.length);
     paint();
+    drainQueue();
   }
 
   function start() {
@@ -695,10 +765,16 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     if (!currentVoice()) { banner('err', '这台浏览器没有可用的语音，无法朗读。'); return; }
     clearBanner();
     st.startedAt = 0;
+    st.done = false;
     speakFrom(0, 0);
   }
 
   function stop() {
+    var played = st.active;
+    st.active = null;
+    st.done = false;
+    // Stop is the only "drop it" gesture: everything waiting goes too.
+    st.queue.length = 0;
     st.stop = true;
     st.running = false;
     st.paused = false;
@@ -714,6 +790,7 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
       if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
     } catch (e) {}
     st.paragraphs.forEach(function (p) { p.classList.remove('on'); p.classList.remove('mark'); });
+    if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
 
@@ -816,6 +893,18 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   renderHead();
   paint();
 
+  // A page opened for a fresh push starts from __BRIDGE_DATA__ and never saw a
+  // receiveUnits call, so it adopts that push here — and confirms it — or the
+  // Host would never hear about this tab.
+  if (data.id && units.length) {
+    st.active = {
+      id: String(data.id),
+      messageId: String(data.messageId || ''),
+      units: units.length
+    };
+    ack(st.active.id, 'read', st.active.messageId);
+  }
+
   if (!synth || typeof Utter !== 'function') {
     banner('err', '这个浏览器不支持 Web Speech 语音合成。');
     el.btnPlay.disabled = true;
@@ -841,11 +930,32 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
   function receiveUnits(payload) {
     var next = Array.isArray(payload.units) ? payload.units : [];
     if (!next.length) return;
-    stop();
+    // Confirm receipt before this page can spend minutes speaking it.
+    if (payload.id) ack(payload.id, 'read', payload.messageId);
+    // Reading or waiting: this push goes to the back of the line. Cutting off
+    // the paragraph being spoken is exactly what the queue exists to prevent.
+    if (st.running || st.paused || st.queue.length) {
+      st.queue.push(payload);
+      paintDot();
+      return;
+    }
+    playPayload(payload);
+  }
+
+  /** Make one push the current text, then read it from the top. */
+  function playPayload(payload) {
+    var next = Array.isArray(payload.units) ? payload.units : [];
+    if (!next.length) return;
+    st.active = {
+      id: payload.id ? String(payload.id) : '',
+      messageId: payload.messageId ? String(payload.messageId) : '',
+      units: next.length
+    };
     units = next.map(function (u, i) { return { index: i, text: String((u && u.text) || '') }; });
     data.title = String(payload.title || '');
     if (payload.scheme) applyScheme(payload.scheme);
     st.stop = false;
+    st.done = false;
     st.idx = 0;
     st.startedAt = 0;
     applySpeed(payload.speed);
@@ -856,6 +966,23 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     start();
   }
 
+  /** Next push in line, only once nothing is being read. */
+  function drainQueue() {
+    if (st.running || st.paused || !st.queue.length) return;
+    playPayload(st.queue.shift());
+  }
+
+  /** Theme and language arrive on their own channel, without any text. */
+  function applyPrefs(prefs) {
+    if (!prefs) return;
+    if (prefs.scheme === 'light' || prefs.scheme === 'dark') applyScheme(prefs.scheme);
+    if (typeof prefs.lang === 'string' && prefs.lang && prefs.lang !== data.lang) {
+      data.lang = prefs.lang;
+      rebuildVoices();
+      paint();
+    }
+  }
+
   function connectBridgeStream() {
     if (typeof EventSource !== 'function') return;
     var dir = String(location.pathname || '').replace(/\/[^/]*$/, '');
@@ -864,25 +991,30 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     var everOpen = false;
     source.onopen = function () {
       everOpen = true;
-      el.dot.className = 'dot ok';
-      el.dot.title = '已连接 DSH';
+      st.dotState = 'ok';
+      st.dotTitle = '已连接 DSH';
+      paintDot();
     };
     source.onmessage = function (event) {
       var payload = null;
       try { payload = JSON.parse(event.data); } catch (e) { return; }
-      if (!payload || payload.type !== 'read') return;
+      if (!payload) return;
+      if (payload.type === 'prefs') { applyPrefs(payload); return; }
+      if (payload.type !== 'read') return;
       receiveUnits(payload);
     };
     source.onerror = function () {
-      el.dot.className = 'dot warn';
-      el.dot.title = everOpen ? '与 DSH 的连接断开，正在重连…' : '还没连上 DSH';
+      st.dotState = 'warn';
+      st.dotTitle = everOpen ? '与 DSH 的连接断开，正在重连…' : '还没连上 DSH';
+      paintDot();
       if (everOpen) return;
       // A tab left over from before a Host restart — or one opened from a file
       // or a plain static server — can never reconnect. Say it out loud: a
       // waiting page with no explanation looks like the page is broken.
       setTimeout(function () {
         if (everOpen) return;
-        el.dot.title = '还没连上 DSH：Host 重启后请刷新本页';
+        st.dotTitle = '还没连上 DSH：Host 重启后请刷新本页';
+        paintDot();
         banner('warn', '这一页没有连上 DSH（它可能是从文件/静态服务打开的，或 Host 重启过）。'
           + '在 DSH 里点一次「朗读」会自动打开新的桥页面。');
       }, 2000);

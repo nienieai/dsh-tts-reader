@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
     const CLEAR_PATH = '/api/dsh-tts/cache/clear'
     const EVENTS_PATH = '/api/dsh-tts/events'
     const RECENT_PATH = '/api/dsh-tts/recent'
+    const BRIDGE_PREFS_PATH = '/api/dsh-tts/bridge/prefs'
+    const BRIDGE_STATE_PATH = '/api/dsh-tts/bridge/state'
 
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
@@ -49,16 +51,150 @@ window.__ModuleLoader__.load({
     const t = (zh, en) => (currentLang() === 'zh' ? zh : en)
 
     // The bridge is a separate page: it cannot see the app's theme, so the
-    // colours have to travel with the text. `ctx.theme` is wired in apply().
-    let themeCtx = null
+    // palette is read here and pushed there. `ctx` is kept for a lazy lookup —
+    // the theme service may mount after this plugin, and a one-shot read in
+    // apply() would then answer "dark" forever.
+    let appCtx = null
+    /** The colour DSH actually paints. Reads the service first, the pixels second. */
     function currentScheme() {
       try {
-        const snapshot = themeCtx && typeof themeCtx.getTheme === 'function' ? themeCtx.getTheme() : null
+        const theme = appCtx && typeof appCtx.get === 'function' ? appCtx.get('theme') : null
+        const snapshot = theme && typeof theme.getTheme === 'function' ? theme.getTheme() : null
         const active = snapshot && snapshot.active
         const scheme = active && typeof active.colorScheme === 'string' ? active.colorScheme : ''
         if (scheme === 'light' || scheme === 'dark') return scheme
       } catch {}
+      // No service (older Host): the painted background is the truth, and it is
+      // the only signal that also follows a theme the service does not report.
+      const painted = paintedScheme()
+      if (painted) return painted
       return 'dark'
+    }
+
+    /** light/dark from the first opaque background between <body> and <html>. */
+    function paintedScheme() {
+      if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return ''
+      const parse = (value) => {
+        const match = /^rgba?\(([^)]+)\)$/.exec(String(value || ''))
+        if (!match) return null
+        const parts = match[1].split(/[,\s/]+/).filter(Boolean).map(Number)
+        if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return null
+        const alpha = parts.length > 3 && Number.isFinite(parts[3]) ? parts[3] : 1
+        return { r: parts[0], g: parts[1], b: parts[2], a: alpha }
+      }
+      let node = document.body || document.documentElement
+      while (node) {
+        let color = null
+        try { color = parse(getComputedStyle(node).backgroundColor) } catch {}
+        if (color && color.a >= 0.5) {
+          const luminance = (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255
+          return luminance > 0.5 ? 'light' : 'dark'
+        }
+        node = node.parentElement
+      }
+      return ''
+    }
+
+    // Theme and language are pushed on their own, and only once the bridge has
+    // been used: a page that never opened one does not need the traffic.
+    let bridgeUsed = false
+    let lastPrefs = { scheme: '', lang: '' }
+    let prefsTimer = 0
+
+    function schedulePrefsPush() {
+      if (!bridgeUsed) return
+      if (prefsTimer) clearTimeout(prefsTimer)
+      // One push per burst: a theme switch can repaint several times.
+      prefsTimer = setTimeout(() => {
+        prefsTimer = 0
+        void sendPrefs()
+      }, 150)
+    }
+
+    async function sendPrefs() {
+      if (!bridgeUsed) return
+      const scheme = currentScheme()
+      const lang = currentLang()
+      const body = {}
+      if (scheme !== lastPrefs.scheme) body.scheme = scheme
+      if (lang !== lastPrefs.lang) body.lang = lang
+      if (!body.scheme && !body.lang) return
+      lastPrefs = { scheme, lang }
+      try {
+        await fetch(BRIDGE_PREFS_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          keepalive: true,
+        })
+      } catch {}
+    }
+
+    // The bridge reports what it finished; the Host remembers it. Pulling the
+    // record once at startup paints the check marks a reload would forget.
+    function loadBridgeState() {
+      fetch(BRIDGE_STATE_PATH, { headers: { accept: 'application/json' } })
+        .then((res) => res.json())
+        .then((body) => {
+          const done = body && body.ok && body.value && Array.isArray(body.value.done) ? body.value.done : []
+          let added = false
+          for (const item of done) {
+            const messageId = item && typeof item.messageId === 'string' ? item.messageId : ''
+            if (messageId && !bridgeDone.has(messageId)) { bridgeDone.add(messageId); added = true }
+          }
+          if (added) setPlayback({})
+        })
+        .catch(() => {})
+    }
+
+    /** Theme/language changes, plus a DOM fallback for a Host without the service. */
+    function watchBridgePrefs(ctx) {
+      ctx.effect(() => {
+        const offTheme = typeof ctx.on === 'function' ? ctx.on('theme/change', () => schedulePrefsPush()) : null
+        const offLocale = typeof ctx.on === 'function' ? ctx.on('locale/change', () => schedulePrefsPush()) : null
+        return () => {
+          try { offTheme && offTheme() } catch {}
+          try { offLocale && offLocale() } catch {}
+        }
+      }, 'dsh-tts-reader: bridge prefs')
+      ctx.effect(() => {
+        if (typeof window === 'undefined' || typeof document === 'undefined') return
+        let last = currentScheme()
+        let pending = 0
+        const check = () => {
+          pending = 0
+          const next = currentScheme()
+          if (next === last) return
+          last = next
+          schedulePrefsPush()
+        }
+        const onChange = () => {
+          if (pending) return
+          pending = setTimeout(check, 120)
+        }
+        let observer = null
+        try {
+          if (typeof MutationObserver === 'function') {
+            observer = new MutationObserver(onChange)
+            observer.observe(document.documentElement, {
+              attributes: true,
+              attributeFilter: ['class', 'style', 'data-theme', 'data-color-scheme'],
+            })
+          }
+        } catch { observer = null }
+        let media = null
+        try {
+          media = window.matchMedia('(prefers-color-scheme: dark)')
+          if (media && typeof media.addEventListener === 'function') media.addEventListener('change', onChange)
+        } catch { media = null }
+        return () => {
+          if (pending) clearTimeout(pending)
+          try { observer && observer.disconnect() } catch {}
+          try {
+            if (media && typeof media.removeEventListener === 'function') media.removeEventListener('change', onChange)
+          } catch {}
+        }
+      }, 'dsh-tts-reader: scheme watch')
     }
 
     // Re-render a component when the app language changes.
@@ -86,6 +222,9 @@ window.__ModuleLoader__.load({
     // Messages that have been read at least once: the speaker button uses this
     // only to know it can offer "play again (cached)".
     const playedMessages = new Set()
+    // Replies the browser bridge finished reading: their buttons show a check.
+    // The Host owns the record (it survives a reload); this is the page's copy.
+    const bridgeDone = new Set()
     // The rendered read button per message: the only handle on the message DOM,
     // and auto-read has no click to carry one, so it is kept for later lookups.
     const actionAnchors = new Map()
@@ -226,6 +365,9 @@ window.__ModuleLoader__.load({
      */
     async function openBridge(target) {
       const payload = {}
+      // Auto-read stays quiet: a toast per auto-sent paragraph would bury the
+      // conversation, and a failed auto hand-off is not the user's problem.
+      const quiet = !!(target && target.quiet)
       if (target && target.sessionId) payload.sessionId = target.sessionId
       if (target && target.messageId) payload.messageId = target.messageId
       if (target && target.text) payload.text = target.text
@@ -246,16 +388,27 @@ window.__ModuleLoader__.load({
           throw new Error((body && body.error) || t('朗读桥失败', 'the bridge failed'))
         }
         const value = body.value || {}
+        // From here on theme/language changes are worth pushing to it.
+        bridgeUsed = true
+        lastPrefs = { scheme: payload.scheme, lang: payload.lang }
         if (value.delivered > 0) {
-          // A bridge tab was already listening: nothing new was opened.
-          showFailureToast(t('已发送到浏览器里那个朗读页', 'sent to the bridge tab you already have open'), 'ok')
+          // A bridge tab was already listening: nothing new was opened. It also
+          // confirms receipt, so "sent" and "received" are no longer the same
+          // claim: an unconfirmed hand-off usually means the tab was closed.
+          if (!quiet) {
+            showFailureToast(value.acked
+              ? t('浏览器已确认收到', 'the browser confirmed receipt')
+              : t('已发到那个朗读页，但没等到它的确认（多半是页面已关或是旧版页面）',
+                'sent to the bridge tab, but no confirmation came back (closed tab, or an older page)'),
+            value.acked ? 'ok' : undefined)
+          }
         } else if (!value.launched && value.url) {
           try { await navigator.clipboard.writeText(value.url) } catch {}
-          showFailureToast(t('没能自动打开浏览器，链接已复制到剪贴板：', 'could not open a browser; the link is copied: ') + value.url)
+          if (!quiet) showFailureToast(t('没能自动打开浏览器，链接已复制到剪贴板：', 'could not open a browser; the link is copied: ') + value.url)
         }
         return value
       } catch (error) {
-        showFailureToast((error && error.message) || String(error))
+        if (!quiet) showFailureToast((error && error.message) || String(error))
         return null
       }
     }
@@ -315,6 +468,15 @@ window.__ModuleLoader__.load({
               if (current && current.key === key) stopCurrentOnly()
               dropQueued(key)
             }
+          }
+          return
+        }
+        if (payload.type === 'bridge-done') {
+          // The bridge finished reading a reply: its read button gets a check.
+          const messageId = String(payload.messageId || '')
+          if (messageId && !bridgeDone.has(messageId)) {
+            bridgeDone.add(messageId)
+            setPlayback({})
           }
           return
         }
@@ -442,7 +604,10 @@ window.__ModuleLoader__.load({
       const key = sessionId + ':' + messageId
       if (autoPlayed.has(key)) return
       autoPlayed.add(key)
-      const speak = () => { void startReadAloud(sessionId, messageId, key) }
+      // `auto` keeps a no-text mid-turn chunk (thinking, tool calls) silent: the
+      // user asked for the whole turn to be spoken, not for a failure report on
+      // every step that has no prose in it.
+      const speak = () => { void startReadAloud(sessionId, messageId, key, { auto: true }) }
       if (current || speechQueue.length > 0) {
         enqueueSpeech(key, speak)
         return
@@ -455,10 +620,10 @@ window.__ModuleLoader__.load({
     function autoReadPrompt(key, text) {
       if (!text) return
       if ((current && current.key !== key) || speechQueue.length > 0) {
-        enqueueSpeech(key, () => { void startReadAloud(null, null, key, { text }) })
+        enqueueSpeech(key, () => { void startReadAloud(null, null, key, { text, auto: true }) })
         return
       }
-      void startReadAloud(null, null, key, { text })
+      void startReadAloud(null, null, key, { text, auto: true })
     }
 
     // A user gesture: cut whatever plays and speak this now.
@@ -1722,15 +1887,16 @@ window.__ModuleLoader__.load({
       }, 30)
     }
 
-    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection, root) {      refreshSpeechVoices()
+    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection, root, auto) {
+      refreshSpeechVoices()
       if (!speechCapable()) {
-        fail(stateKey, new Error(t('这台环境没有浏览器语音', 'no browser voices here')))
+        fail(stateKey, new Error(t('这台环境没有浏览器语音', 'no browser voices here')), auto)
         return
       }
       stopCurrentOnly()
       const session = {
         kind: 'speech',
-        key: stateKey, sessionId, messageId, selection: selection || '',
+        key: stateKey, sessionId, messageId, selection: selection || '', auto,
         units: [], unit: 0, total: 0, phase: 'loading', desiredPaused: false,
         speed, boundary: 0, gen: 0, watchdog: 0, timer: 0,
         skip: 0, root: root || null,
@@ -1772,6 +1938,9 @@ window.__ModuleLoader__.load({
 
     async function startReadAloud(sessionId, messageId, stateKey, options) {
       const selection = options && options.text ? String(options.text) : ''
+      // Auto-read speaks whatever a turn produces; a step with no prose is
+      // normal, so it must not surface as a failure.
+      const auto = !!(options && options.auto)
       // A click carries its own button; auto-read falls back to the one the
       // action registered for that message.
       const root = (options && options.root) || actionAnchors.get(stateKey) || null
@@ -1781,14 +1950,14 @@ window.__ModuleLoader__.load({
         if (usesBridge() || (!speechCapable() && isDesktopShell)) {
           setPlayback({ key: null, phase: 'idle', error: '' })
           // A selection read has no message id, so the text itself goes along.
-          void openBridge({ sessionId, messageId, text: selection || undefined })
+          void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto })
           return
         }
         if (!speechCapable()) {
-          fail(stateKey, new Error(t('这个环境没有浏览器语音', 'no browser voices here')))
+          fail(stateKey, new Error(t('这个环境没有浏览器语音', 'no browser voices here')), auto)
           return
         }
-        await startSpeechReadAloud(sessionId, messageId, stateKey, selection, root)
+        await startSpeechReadAloud(sessionId, messageId, stateKey, selection, root, auto)
         return
       }
       // Only the audible item is replaced: the waiting queue must survive, or
@@ -1803,7 +1972,7 @@ window.__ModuleLoader__.load({
       const controller = new AbortController()
       const session = {
         key: stateKey, sessionId, messageId, selection,
-        context, controller, root,
+        context, controller, root, auto,
         units: [], unit: 0, total: 0, standalone: false,
         phase: 'loading', desiredPaused: false, gen: 0,
         chunks: [], totalSamples: 0, sources: [], last: null,
@@ -2015,6 +2184,13 @@ window.__ModuleLoader__.load({
       }
       const parts = wrap.__parts
       const view = player.view
+      // An auto-read opens before its text is known. Showing the bar for every
+      // mid-turn chunk that turns out to hold only tool calls would flash it on
+      // each step; it appears once there is something to read.
+      if (player.auto && view.total === 0 && view.phase === 'loading') {
+        wrap.style.display = 'none'
+        return
+      }
       wrap.style.display = 'block'
       try {
         if (typeof wrap.showPopover === 'function' && !wrap.matches(':popover-open')) wrap.showPopover()
@@ -2045,15 +2221,21 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function fail(key, error) {
+    function fail(key, error, auto) {
       if (!player || player.key !== key) return
+      // Auto-read speaks a whole turn; most of its steps (thinking, tool calls)
+      // carry no prose at all. Those are not failures, so they must not toast
+      // and must not leave an error behind on the read button.
+      const silent = auto === true || player.auto === true
       const message = (error && error.message) || String(error)
       playerStop()
-      setPlayback({ key, phase: 'idle', error: message })
-      // The button only keeps the text in a tooltip, which is gone as soon as
-      // the pointer moves; put the failure where it can be read and copied.
-      console.warn('[dsh-tts-reader] playback failed:', message)
-      showFailureToast(message)
+      setPlayback({ key, phase: 'idle', error: silent ? '' : message })
+      if (!silent) {
+        // The button only keeps the text in a tooltip, which is gone as soon as
+        // the pointer moves; put the failure where it can be read and copied.
+        console.warn('[dsh-tts-reader] playback failed:', message)
+        showFailureToast(message)
+      }
       drainQueue()
     }
 
@@ -2555,6 +2737,9 @@ window.__ModuleLoader__.load({
       const phase = mine ? state.phase : 'idle'
       const error = mine ? state.error : ''
       const cached = playedMessages.has(key)
+      // The bridge reads in a separate browser and reports back; the check mark
+      // is the only sign here that the text was not just sent but spoken.
+      const finished = bridgeDone.has(String(messageId))
 
       const title = error
         ? error
@@ -2564,9 +2749,11 @@ window.__ModuleLoader__.load({
             ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
             : phase === 'paused'
               ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
-              : cached
-                ? t('再次播放（本地缓存）', 'Play again (cached)')
-                : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+              : finished
+                ? t('朗读桥已读完这条回复；点击重新读', 'the bridge finished this reply — click to read again')
+                : cached
+                  ? t('再次播放（本地缓存）', 'Play again (cached)')
+                  : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
 
       return h('button', {
         type: 'button',
@@ -2598,6 +2785,10 @@ window.__ModuleLoader__.load({
         children: [
           phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingBars, { mode: phase, key: 'bars' }),
           error ? h('span', { key: 'mark' }, '!') : null,
+          finished && !error ? h('span', {
+            key: 'done',
+            style: { color: '#30a46c', fontSize: '10px', lineHeight: 1, marginLeft: '1px' },
+          }, '✓') : null,
         ],
       })
     }
@@ -3376,13 +3567,12 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
         localeCtx = ctx.locale
-        // Optional: a DSH without the theme service just means "dark".
-        try {
-          themeCtx = (typeof ctx.get === 'function' ? ctx.get('theme') : null) || null
-        } catch {
-          themeCtx = null
-        }
+        // Kept for lazy lookups: `theme` may mount after this plugin, and the
+        // bridge is told about theme/language changes as they happen.
+        appCtx = ctx
         watchLocale(ctx)
+        watchBridgePrefs(ctx)
+        loadBridgeState()
         loadConfigOnce()
         ensureEvents(ctx)
 
