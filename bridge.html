@@ -10,6 +10,7 @@
     --dim-text:rgba(230,233,239,.52); --bar:rgba(15,17,21,.82); --field:#0c0e12;
     --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
     --hl-para:rgba(96,165,250,.30);
+    --hl-hover:rgba(96,165,250,.10);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
     color-scheme: dark;
   }
@@ -20,6 +21,7 @@
     --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
     /* A 14% tint of one blue is invisible on this background: deepen it. */
     --hl-para:rgba(37,99,235,.26);
+    --hl-hover:rgba(37,99,235,.07);
     color-scheme: light;
   }
   *{box-sizing:border-box}
@@ -110,10 +112,12 @@
   .doc{margin-top:22px}
   /* Every paragraph reads in the normal foreground: text is never greyed out. */
   .doc p{margin:0 0 1.15em;font-size:17px;line-height:1.85;color:var(--fg);
-    transition:color .18s ease}
+    transition:color .18s ease;border-radius:4px;cursor:pointer}
   /* What is already behind you keeps a hint of distance, but stays readable. */
   .doc p.read{opacity:.72}
   .doc p.mark{background:var(--hl-para);border-radius:4px}
+  /* Hover is its own, lighter layer: it sits behind the reading highlight. */
+  .doc p:hover{background:var(--hl-hover)}
   .doc p.empty{color:var(--dim);font-size:15px}
   ::highlight(bridge-para){background-color:var(--hl-para);color:var(--fg)}
   ::highlight(bridge-word){background-color:#f5c542;color:#241a00}
@@ -305,7 +309,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: '未连接 DSH',
       emptyWaiting: 'DSH 还没有推送朗读内容。在 DSH 里点一次「朗读」，这段文字会自动出现在这一页。',
       noVoicesYet: '（没有可用音色）',
-      doubleClickToRead: '双击从这一段开始朗读',
+      clickToRead: '单击从这一段开始朗读',
       noMatch: '没有匹配的音色',
       moreVoices: '还有 {n} 个，继续滚动或输入筛选',
       queued: ' · 已排队 {n} 段',
@@ -346,7 +350,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Not connected to DSH',
       emptyWaiting: 'DSH has not pushed any text yet. Click “Read aloud” in DSH and it will appear on this page.',
       noVoicesYet: '(no voices available)',
-      doubleClickToRead: 'Double-click to read from here',
+      clickToRead: 'Click to read from here',
       noMatch: 'No matching voices',
       moreVoices: '{n} more — keep scrolling or type to filter',
       queued: ' · {n} queued',
@@ -387,7 +391,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'DSH に未接続',
       emptyWaiting: 'DSH からまだテキストが届いていません。DSH で「読み上げ」を押すと、このページに表示されます。',
       noVoicesYet: '（利用できる音声なし）',
-      doubleClickToRead: 'ダブルクリックでこの段落から読み上げ',
+      clickToRead: 'クリックでこの段落から読み上げ',
       noMatch: '一致する音声がありません',
       moreVoices: 'あと {n} 件。スクロールするか入力で絞り込んでください',
       queued: ' · {n} 件待機中',
@@ -428,7 +432,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Sin conexión con DSH',
       emptyWaiting: 'DSH aún no ha enviado texto. Pulsa «Leer en voz alta» en DSH y aparecerá en esta página.',
       noVoicesYet: '(no hay voces disponibles)',
-      doubleClickToRead: 'Haz doble clic para leer desde aquí',
+      clickToRead: 'Haz clic para leer desde aquí',
       noMatch: 'Ninguna voz coincide',
       moreVoices: '{n} más: sigue desplazándote o escribe para filtrar',
       queued: ' · {n} en cola',
@@ -469,7 +473,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Non connecté à DSH',
       emptyWaiting: 'DSH n’a encore rien envoyé. Cliquez sur « Lire à voix haute » dans DSH et le texte apparaîtra ici.',
       noVoicesYet: '(aucune voix disponible)',
-      doubleClickToRead: 'Double-cliquez pour lire à partir d’ici',
+      clickToRead: 'Cliquez pour lire à partir d’ici',
       noMatch: 'Aucune voix correspondante',
       moreVoices: '{n} de plus — continuez à faire défiler ou tapez pour filtrer',
       queued: ' · {n} en attente',
@@ -510,7 +514,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Nicht mit DSH verbunden',
       emptyWaiting: 'DSH hat noch keinen Text gesendet. Klicke in DSH auf „Vorlesen“, dann erscheint er hier.',
       noVoicesYet: '(keine Stimmen verfügbar)',
-      doubleClickToRead: 'Doppelklick: ab hier vorlesen',
+      clickToRead: 'Klicken: ab hier vorlesen',
       noMatch: 'Keine passende Stimme',
       moreVoices: 'noch {n} – weiter scrollen oder tippen zum Filtern',
       queued: ' · {n} in Warteschlange',
@@ -551,7 +555,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Нет связи с DSH',
       emptyWaiting: 'DSH ещё не отправил текст. Нажмите «Читать вслух» в DSH — текст появится на этой странице.',
       noVoicesYet: '(нет доступных голосов)',
-      doubleClickToRead: 'Двойной щелчок — читать с этого абзаца',
+      clickToRead: 'Щелчок — читать с этого абзаца',
       noMatch: 'Подходящих голосов нет',
       moreVoices: 'ещё {n} — прокрутите или введите запрос',
       queued: ' · в очереди: {n}',
@@ -592,7 +596,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Sem conexão com DSH',
       emptyWaiting: 'O DSH ainda não enviou texto. Clique em «Ler em voz alta» no DSH e ele aparecerá nesta página.',
       noVoicesYet: '(nenhuma voz disponível)',
-      doubleClickToRead: 'Clique duas vezes para ler a partir daqui',
+      clickToRead: 'Clique para ler a partir daqui',
       noMatch: 'Nenhuma voz correspondente',
       moreVoices: 'mais {n} — continue rolando ou digite para filtrar',
       queued: ' · {n} na fila',
@@ -642,7 +646,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     // The empty-state text and the placeholders are rebuilt in this language;
     // keep the read marks so a mid-read language switch does not erase progress.
     renderDoc();
-    if (st.idx > 0) markRead(Math.min(st.idx, units.length));
+    if (st.running && !st.done && st.idx > 0) markRead(Math.min(st.idx, units.length));
     renderHead();
     paint();
   }
@@ -706,6 +710,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
      short delay, keep it inside the viewport. */
   var tipTimer = 0;
   var tipTarget = null;
+  var pointerAt = null;
 
   function hideTip() {
     if (tipTimer) { clearTimeout(tipTimer); tipTimer = 0; }
@@ -719,13 +724,23 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     if (!text) { hideTip(); return; }
     el.tip.textContent = text;
     el.tip.className = 'show';
-    var rect = target.getBoundingClientRect();
     var width = el.tip.offsetWidth;
     var height = el.tip.offsetHeight;
-    var left = rect.left + rect.width / 2 - width / 2;
+    var follow = !!(pointerAt && target.hasAttribute && target.hasAttribute('data-tip-follow'));
+    var left;
+    var top;
+    if (follow) {
+      // Paragraph tips follow the pointer instead of pointing at one spot.
+      left = pointerAt.x + 14;
+      top = pointerAt.y + 18;
+    } else {
+      var rect = target.getBoundingClientRect();
+      left = rect.left + rect.width / 2 - width / 2;
+      top = rect.bottom + 8;
+      if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8);
+    }
     left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
-    var top = rect.bottom + 8;
-    if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8);
+    top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
     el.tip.style.left = Math.round(left) + 'px';
     el.tip.style.top = Math.round(top) + 'px';
   }
@@ -744,6 +759,12 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   document.addEventListener('pointerover', function (event) {
     var target = event.target && event.target.closest ? event.target.closest('[data-tip]') : null;
     if (target) showTipSoon(target);
+  });
+  document.addEventListener('pointermove', function (event) {
+    pointerAt = { x: event.clientX, y: event.clientY };
+    if (tipTarget && tipTarget.hasAttribute && tipTarget.hasAttribute('data-tip-follow') && el.tip.className === 'show') {
+      placeTip(tipTarget);
+    }
   });
   document.addEventListener('pointerout', function (event) {
     var target = event.target && event.target.closest ? event.target.closest('[data-tip]') : null;
@@ -783,9 +804,24 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       var p = document.createElement('p');
       p.textContent = unit.text;
       p.setAttribute('data-i', String(index));
-      // Double-click reads from this paragraph; the tooltip says so once.
-      p.setAttribute('data-tip', tr('doubleClickToRead'));
-      p.addEventListener('dblclick', function () { startFrom(index); });
+      // Click reads from this paragraph; the tip follows the pointer. A
+      // double-click is the browser's text selection, so the click is delayed
+      // and cancelled when a second click arrives.
+      p.setAttribute('data-tip', tr('clickToRead'));
+      p.setAttribute('data-tip-follow', '1');
+      var clickTimer = 0;
+      p.addEventListener('click', function () {
+        if (String(window.getSelection() || '').trim()) return;
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(function () {
+          clickTimer = 0;
+          startFrom(index);
+        }, 240);
+      });
+      p.addEventListener('dblclick', function () {
+        clearTimeout(clickTimer);
+        clickTimer = 0;
+      });
       el.doc.appendChild(p);
       st.paragraphs.push(p);
     });
@@ -836,6 +872,11 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   /** Paragraphs before `upTo` are read: they fade instead of staying unread. */
   function markRead(upTo) {
     st.paragraphs.forEach(function (p, i) { p.classList.toggle('read', i < upTo); });
+  }
+
+  /** Finishing or stopping restores every paragraph to the normal colour. */
+  function clearReadMarks() {
+    st.paragraphs.forEach(function (p) { p.classList.remove('read'); });
   }
 
   function paintWord(index, from, length) {
@@ -1152,6 +1193,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     clearWatchdog();
     stopProgress();
     try { synth && synth.cancel(); } catch (e) {}
+    clearReadMarks();
     banner('err', reason + (canRetryLocal ? tr('retryLocalHint') : ''));
     var local = pickLocalVoice();
     if (canRetryLocal && local && selectVoice(local)) {
@@ -1283,7 +1325,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     st.idx = units.length;
     st.done = true;
     paintWordClear();
-    markRead(units.length);
+    clearReadMarks();
     el.fill.style.width = '100%';
     if (st.startedAt) setStatus(fmt('finished', { n: units.length, time: fmtDuration(performance.now() - st.startedAt) }));
     // "Done" is a state, not a badge: the app goes back to its speaker icon.
@@ -1324,6 +1366,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
     } catch (e) {}
     st.paragraphs.forEach(function (p) { p.classList.remove('on'); p.classList.remove('mark'); });
+    clearReadMarks();
     if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
