@@ -134,7 +134,7 @@ Not word by word. Code blocks, tables, formulas and images each produce one shor
 
 ## Contributing
 
-Issues and pull requests are welcome. `main` holds released versions only; `dev` is the working branch. Run the local checks before sending a change — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome. `main` holds released versions only; `dev` is the working branch. Branch off `dev` and open the PR against `dev` (the base defaults to `main`). Run the local checks before sending a change — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 If this plugin saves you time, a ⭐ is the best thanks.
 

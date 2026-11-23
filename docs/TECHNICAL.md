@@ -145,7 +145,7 @@ dsh plugin --profile desktop add link:C:/path/to/dsh-tts-reader
 
 ```bash
 git checkout dev
-# 改 package.json 的 version、CHANGELOG.md，并同步 README 徽章里的 version
+# 确认要发的改动都已合并到 dev；改 package.json 的 version、CHANGELOG.md，同步 README 徽章里的 version
 git commit -am "chore: release 0.5.4"
 git checkout main
 git merge --no-ff dev -m "release: v0.5.4"

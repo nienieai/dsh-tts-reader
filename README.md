@@ -132,7 +132,7 @@ DeepSeek 云按官方 TTS 计费；浏览器语音、系统语音、本地 Piper
 
 ## 参与
 
-欢迎提 Issue、提 PR。仓库约定：`main` 只放已发布版本，`dev` 是日常开发线；提交前请跑一遍本地检查（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+欢迎提 Issue、提 PR。仓库约定：`main` 只放已发布版本，`dev` 是日常开发线；改动请从 `dev` 拉分支、按 PR 提给 `dev`（默认分支是 `main`，开 PR 时把 base 改成 `dev`）。提交前请跑一遍本地检查（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
 如果这个插件帮你省了时间，给个 ⭐ 就是最好的支持。
 
