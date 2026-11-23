@@ -11,6 +11,8 @@
     --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
     --hl-para:rgba(96,165,250,.30);
     --hl-hover:rgba(96,165,250,.10);
+    /* Hover wash for buttons: a dark slab would be a black box on light. */
+    --hover:rgba(255,255,255,.08);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
     color-scheme: dark;
   }
@@ -22,6 +24,7 @@
     /* A 14% tint of one blue is invisible on this background: deepen it. */
     --hl-para:rgba(37,99,235,.26);
     --hl-hover:rgba(37,99,235,.07);
+    --hover:rgba(0,0,0,.07);
     color-scheme: light;
   }
   *{box-sizing:border-box}
@@ -80,7 +83,7 @@
   #btnPlay[data-icon=play] .i-play,
   #btnPlay[data-icon=pause] .i-pause,
   #btnPlay[data-icon=replay] .i-replay{display:block}
-  button:hover:not(:disabled){background:#222736}
+  button:hover:not(:disabled){background:var(--hover)}
   button:disabled{opacity:.35;cursor:not-allowed}
   button.play{width:36px;border-color:var(--line)}
 
@@ -879,6 +882,20 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     st.paragraphs.forEach(function (p) { p.classList.remove('read'); });
   }
 
+  /** No reading highlight may survive the read: clear the word, paragraph and
+   *  fallback class layers together. */
+  function clearParagraphMarks() {
+    paintWordClear();
+    try {
+      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
+    } catch (e) {}
+    st.paragraphs.forEach(function (p) {
+      p.classList.remove('on');
+      p.classList.remove('mark');
+    });
+    clearReadMarks();
+  }
+
   function paintWord(index, from, length) {
     if (!supportsHighlight()) return;
     var p = st.paragraphs[index];
@@ -1193,7 +1210,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     clearWatchdog();
     stopProgress();
     try { synth && synth.cancel(); } catch (e) {}
-    clearReadMarks();
+    clearParagraphMarks();
     banner('err', reason + (canRetryLocal ? tr('retryLocalHint') : ''));
     var local = pickLocalVoice();
     if (canRetryLocal && local && selectVoice(local)) {
@@ -1324,8 +1341,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     stopProgress();
     st.idx = units.length;
     st.done = true;
-    paintWordClear();
-    clearReadMarks();
+    clearParagraphMarks();
     el.fill.style.width = '100%';
     if (st.startedAt) setStatus(fmt('finished', { n: units.length, time: fmtDuration(performance.now() - st.startedAt) }));
     // "Done" is a state, not a badge: the app goes back to its speaker icon.
@@ -1361,12 +1377,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     el.fill.style.width = '0%';
     setStatus(tr('stopped'));
     // Nothing is being read, so nothing should stay marked.
-    paintWordClear();
-    try {
-      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
-    } catch (e) {}
-    st.paragraphs.forEach(function (p) { p.classList.remove('on'); p.classList.remove('mark'); });
-    clearReadMarks();
+    clearParagraphMarks();
     if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
