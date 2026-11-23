@@ -43,8 +43,9 @@
   /* Voice picker: one searchable field, the list only exists while it is open.
      A system can expose 10 000+ voices (espeak-ng), so a <select> is a trap. */
   .picker{position:relative;flex:1 1 auto;min-width:0;margin-right:auto}
-  #voiceSearch{width:100%;max-width:26rem;background:var(--field);color:var(--fg);
-    border:1px solid var(--line);border-radius:7px;padding:5px 24px 5px 8px;font:inherit;font-size:12.5px;
+  /* The field fills the row: the caret is inside it and the whole width is clickable. */
+  #voiceSearch{width:100%;background:var(--field);color:var(--fg);
+    border:1px solid var(--line);border-radius:7px;padding:5px 26px 5px 8px;font:inherit;font-size:12.5px;
     min-width:0}
   #voiceSearch:focus{outline:none;border-color:var(--accent)}
   /* A plain caret instead of the search box's clear button. */
@@ -94,9 +95,11 @@
   .speed-wrap{position:relative;display:inline-flex}
   #speedBtn{width:auto;min-width:calc(6ch + 14px);padding:0 6px;font-size:12px;font-family:var(--mono);
     border-color:var(--line)}
-  .speed-pop{position:absolute;top:calc(100% + 6px);right:0;z-index:30;display:none;
-    align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
+  .speed-pop{position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:30;
+    display:none;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
     border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.35)}
+  /* An invisible bridge over the 6px gap: the pointer never leaves the hot zone. */
+  .speed-pop::before{content:'';position:absolute;left:0;right:0;top:-6px;height:6px}
   .speed-wrap.open .speed-pop{display:flex}
   .speed-pop input[type=range]{width:120px}
 
@@ -161,7 +164,7 @@
     </button>
     <span class="picker">
       <input id="voiceSearch" type="text" autocomplete="off" spellcheck="false"
-             placeholder="音色：点开或输入筛选" data-tip="音色（可输入筛选）">
+             placeholder="音色：点开或输入筛选">
       <span class="caret" aria-hidden="true">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
@@ -817,6 +820,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function showTipSoon(target) {
     if (!target || !target.getAttribute) return;
     if (!target.getAttribute('data-tip')) return;
+    // The voice field's own tip lands on the list it just opened: hover only.
+    if (target === el.voiceSearch && st.listOpen) return;
     tipTarget = target;
     if (tipTimer) clearTimeout(tipTimer);
     tipTimer = setTimeout(function () {
@@ -1130,6 +1135,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     el.voiceList.textContent = '';
     el.voiceList.hidden = false;
     st.listOpen = true;
+    // Anything the field's tip already put on screen would sit on the list.
+    hideTip();
     if (st.hover >= listShown.items.length) st.hover = 0;
     if (listShown.items.length === 0) {
       var none = document.createElement('div');
@@ -1515,10 +1522,34 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     rebuildVoices();
     paint();
   });
-  // Speed is a hot zone: hovering the button opens the slider underneath.
-  el.speedWrap.addEventListener('pointerenter', function () { el.speedWrap.classList.add('open'); });
-  el.speedWrap.addEventListener('pointerleave', function () { el.speedWrap.classList.remove('open'); });
-  el.speedWrap.addEventListener('focusin', function () { el.speedWrap.classList.add('open'); });
+  // Speed is a hot zone: hovering the button opens the slider underneath. Closing
+  // waits a beat so the pointer can cross the gap into the slider, and dragging
+  // the slider pins it open even when the pointer leaves the popover.
+  var speedClose = 0;
+  var speedHeld = false;
+  function speedOpen() {
+    clearTimeout(speedClose);
+    el.speedWrap.classList.add('open');
+  }
+  function speedCloseSoon() {
+    clearTimeout(speedClose);
+    if (speedHeld) return;
+    speedClose = setTimeout(function () { el.speedWrap.classList.remove('open'); }, 180);
+  }
+  el.speedWrap.addEventListener('pointerenter', speedOpen);
+  el.speedWrap.addEventListener('pointerleave', function () {
+    if (!speedHeld) speedCloseSoon();
+  });
+  el.speedPop.addEventListener('pointerdown', function () {
+    speedHeld = true;
+    speedOpen();
+  });
+  window.addEventListener('pointerup', function () {
+    if (!speedHeld) return;
+    speedHeld = false;
+    if (!el.speedWrap.matches(':hover')) speedCloseSoon();
+  });
+  el.speedWrap.addEventListener('focusin', speedOpen);
   el.speedWrap.addEventListener('focusout', function () {
     // Keep it open while the slider itself still has focus.
     setTimeout(function () {
