@@ -43,7 +43,7 @@ const VOICES = new Set(['stella', 'tide'])
 const HARD_MAX_CHARS = 4000
 const SAMPLE_RATE = 24000
 const MIN_SPEED = 0.5
-const MAX_SPEED = 2
+const MAX_SPEED = 3
 
 const DEFAULTS = {
   // Which synthesizer produces the audio: the DeepSeek API, a local Piper
@@ -870,12 +870,16 @@ export function stripMarkdown(markdown) {
   text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
   // HTML: keep the words, drop the tags.
   text = text.replace(/<\/?[a-zA-Z][^>\n]*>/g, '')
-  // Block markers at the start of a line.
-  text = text.replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
+  // Block markers at the start of a line. A heading keeps its text verbatim:
+  // "### 3. 5V 输出开关" renders the "3." inside the heading, so it is text and
+  // not a list marker the browser draws. The sentinel keeps the strips below
+  // from eating it, and comes off right after them.
+  text = text.replace(/^[ \t]*#{1,6}[ \t]*(.*)$/gm, (_full, body) => '\u0002' + body)
   text = text.replace(/^[ \t]*>[ \t]?/gm, '')
   text = text.replace(/^[ \t]*[-*+][ \t]+/gm, '')
   text = text.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, '')
   text = text.replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, '')
+  text = text.replace(/\u0002/g, '')
   // Tables go before the pipe cleanup, or their cells become words.
   text = replaceTables(text, blockKeep)
   // Any remaining mid-line pipes become spaces.
@@ -2190,6 +2194,23 @@ export function apply(ctx, config) {
       while (bridgeStates.size > BRIDGE_STATE_MAX) bridgeStates.delete(bridgeStates.keys().next().value)
     }
 
+    // A closed tab never says good-bye: the last listener dropping is the only
+    // sign that whatever it was reading is over. The short grace keeps a refresh
+    // (which reconnects at once) from clearing the state it is about to send.
+    const BRIDGE_CLOSE_GRACE_MS = 1200
+    let bridgeCloseTimer = 0
+    const LIVE_BRIDGE_PHASES = new Set(['playing', 'paused', 'queued', 'blocked'])
+    const closeBridgeLiveness = () => {
+      bridgeCloseTimer = 0
+      const now = Date.now()
+      for (const [key, item] of bridgeStates) {
+        if (!item || !LIVE_BRIDGE_PHASES.has(item.phase)) continue
+        const next = { ...item, at: now, phase: 'stopped', queued: 0 }
+        bridgeStates.set(key, next)
+        broadcast({ type: 'bridge-state', key, messageId: '', ...next })
+      }
+    }
+
     const addBridge = (payload) => {
       pruneBridges()
       const id = crypto.randomUUID()
@@ -2389,9 +2410,16 @@ export function apply(ctx, config) {
         })
         response.write(': bridge connected\n\n')
         bridgeClients.add(response)
+        // A listener is back (a refresh looks like this): nothing to clear.
+        clearTimeout(bridgeCloseTimer)
+        bridgeCloseTimer = 0
         const cleanup = () => {
           clearInterval(heartbeat)
           bridgeClients.delete(response)
+          if (bridgeClients.size === 0) {
+            clearTimeout(bridgeCloseTimer)
+            bridgeCloseTimer = setTimeout(closeBridgeLiveness, BRIDGE_CLOSE_GRACE_MS)
+          }
         }
         const heartbeat = setInterval(() => {
           if (response.destroyed || response.writableEnded) { cleanup(); return }
@@ -2429,7 +2457,7 @@ export function apply(ctx, config) {
             ? body.key.slice(0, 200)
             : messageId.slice(0, 200)
           if (!key) return writeJson(response, 200, { ok: true, value: { kind } })
-          const phases = new Set(['playing', 'paused', 'queued', 'finished', 'stopped'])
+          const phases = new Set(['playing', 'paused', 'queued', 'blocked', 'finished', 'stopped'])
           const phase = phases.has(body?.phase) ? body.phase : 'playing'
           const count = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0)
           const state = {

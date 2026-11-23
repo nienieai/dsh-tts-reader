@@ -1,9 +1,18 @@
 {
   "name": "dsh-tts-reader",
-  "version": "0.5.2",
-  "private": true,
-  "description": "Read assistant replies aloud: browser voices, DeepSeek TTS, OS voices or any TTS endpoint; Host-synthesized audio is cached in memory or on disk and replayed on the next click.",
+  "version": "0.5.3",
+  "private": false,
+  "description": "Read assistant replies aloud: browser voices, DeepSeek TTS, local Piper, system voices or any TTS endpoint; Host-synthesized audio is cached in memory or on disk and replayed on the next click.",
   "license": "MIT",
+  "author": "dsh-tts-reader contributors",
+  "homepage": "https://github.com/nienieai/dsh-tts-reader#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nienieai/dsh-tts-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nienieai/dsh-tts-reader/issues"
+  },
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -20,13 +29,21 @@
     "docs",
     "icon.svg",
     "README.md",
-    "THIRD_PARTY.md"
+    "README.en.md",
+    "CHANGELOG.md",
+    "THIRD_PARTY.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE"
   ],
   "keywords": [
     "dsh",
     "dsh-plugin",
+    "deepseek-harness",
     "tts",
     "read-aloud",
+    "speech",
+    "accessibility",
     "deepseek"
   ],
   "dsh": {

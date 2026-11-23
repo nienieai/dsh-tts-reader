@@ -30,6 +30,12 @@ window.__ModuleLoader__.load({
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
 
+    // Playback speed: one range for every engine, and the round numbers the
+    // sliders offer as clickable ticks.
+    const SPEED_MIN = 0.5
+    const SPEED_MAX = 3
+    const SPEED_TICKS = [0.5, 1, 1.5, 2, 3]
+
     // Locale follows the Host's active language (what DSH itself shows), not the
     // browser's: the plugin's copy must switch with the app. `ctx.locale` is
     // wired in apply(); the navigator language is only the pre-injection guess.
@@ -124,9 +130,16 @@ window.__ModuleLoader__.load({
         'Paused — resume from the floating window': '一時停止中。小窓から再開してください',
         'Play again (cached)': 'もう一度再生（キャッシュ）',
         'Read this reply aloud (the paragraphs around the selection)': 'この返信を読み上げ（選択中ならその段落）',
+        'Opening the bridge…': 'ブリッジを開いています…',
+        'The bridge is reading — click to stop': 'ブリッジが読み上げ中 — クリックで停止',
+        'Paused in the bridge page — resume there': 'ブリッジ側で一時停止中（再開はあちらで）',
+        'Read this reply in the bridge page (a selection reads its paragraph)': 'ブリッジでこの返信を読み上げ（選択中ならその段落）',
+        'the bridge did not answer (is its page open?)': 'ブリッジから応答がありません（ページは開いていますか？）',
         'Speech bridge (read in a browser)': '読み上げページ（ブラウザで読み上げ）',
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': '既定のブラウザで読み上げます（読み上げページ経由）。キー不要・キャッシュなし。ページは DSH のテーマと言語に従います。',
         'desktop only': 'デスクトップ版のみ',
+        'first time: click ▶ on the bridge page (browsers block audio until a click)': '初回はブラウザのページで ▶ を一度クリックしてください（クリックなしの再生はブロックされます）',
+        'the browser needs one click on ▶ in the bridge page': 'ブラウザのページで ▶ を一度クリックすると発声できます',
         'Install Piper offline': 'Piper をオフラインで導入',
         Close: '閉じる',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'このプラグインは音声を再生するだけで、Piper 本体と音声モデルは含みません。一度用意すれば合成はオフライン・無料のまま使えます。',
@@ -277,9 +290,16 @@ window.__ModuleLoader__.load({
         'Paused — resume from the floating window': 'En pausa: reanuda desde la ventana flotante',
         'Play again (cached)': 'Reproducir de nuevo (en caché)',
         'Read this reply aloud (the paragraphs around the selection)': 'Leer esta respuesta (los párrafos junto a la selección)',
+        'Opening the bridge…': 'Abriendo el puente…',
+        'The bridge is reading — click to stop': 'El puente está leyendo: haz clic para detener',
+        'Paused in the bridge page — resume there': 'En pausa en el puente: reanuda allí',
+        'Read this reply in the bridge page (a selection reads its paragraph)': 'Leer esta respuesta en el puente (la selección lee su párrafo)',
+        'the bridge did not answer (is its page open?)': 'el puente no respondió (¿está abierta su página?)',
         'Speech bridge (read in a browser)': 'Puente de lectura (leer en un navegador)',
         'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': 'Lee en tu navegador predeterminado mediante la página del puente: sin clave, sin caché; sigue el tema y el idioma de la app.',
         'desktop only': 'solo en escritorio',
+        'first time: click ▶ on the bridge page (browsers block audio until a click)': 'la primera vez, haz clic en ▶ en la página del puente (sin un clic el navegador bloquea el audio)',
+        'the browser needs one click on ▶ in the bridge page': 'haz clic en ▶ en la página del puente para que el navegador hable',
         'Install Piper offline': 'Instalar Piper sin conexión',
         Close: 'Cerrar',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'Este plugin solo reproduce audio; el programa Piper y los modelos de voz no están incluidos. Configúralos una vez y la síntesis seguirá sin conexión y gratis.',
@@ -430,9 +450,16 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "En pause — reprenez depuis la fenêtre flottante",
         "Play again (cached)": "Relire (cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Lire cette réponse (les paragraphes autour de la sélection)",
+        "Opening the bridge…": "Ouverture du pont…",
+        "The bridge is reading — click to stop": "Le pont lit — cliquez pour arrêter",
+        "Paused in the bridge page — resume there": "En pause dans le pont — reprenez-y",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Lire cette réponse dans le pont (une sélection lit son paragraphe)",
+        "the bridge did not answer (is its page open?)": "le pont n'a pas répondu (sa page est-elle ouverte ?)",
         "Speech bridge (read in a browser)": "Pont de lecture (lire dans un navigateur)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lit dans votre navigateur par défaut via la page du pont : sans clé, sans cache ; elle suit le thème et la langue de l’application.",
         "desktop only": "bureau uniquement",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "la première fois, cliquez sur ▶ sur la page du pont (sans clic, le navigateur bloque l’audio)",
+        "the browser needs one click on ▶ in the bridge page": "cliquez sur ▶ dans la page du pont pour que le navigateur parle",
         "Install Piper offline": "Installer Piper hors ligne",
         Close: "Fermer",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Ce plugin ne fait que lire l’audio ; le programme Piper et les modèles de voix ne sont pas fournis. Configurez-les une fois : la synthèse reste hors ligne et gratuite.",
@@ -583,9 +610,16 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "Pausiert – im schwebenden Fenster fortsetzen",
         "Play again (cached)": "Erneut abspielen (Cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Diese Antwort vorlesen (die Absätze um die Auswahl)",
+        "Opening the bridge…": "Brücke wird geöffnet…",
+        "The bridge is reading — click to stop": "Die Brücke liest — zum Stoppen klicken",
+        "Paused in the bridge page — resume there": "Im Brückendokument pausiert – dort fortsetzen",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Diese Antwort in der Brücke lesen (eine Auswahl liest ihren Absatz)",
+        "the bridge did not answer (is its page open?)": "die Brücke hat nicht geantwortet (ist ihre Seite offen?)",
         "Speech bridge (read in a browser)": "Lese-Brücke (im Browser lesen)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Liest im Standardbrowser über die Brückenseite: kein Schlüssel, kein Cache; die Seite folgt Thema und Sprache der App.",
         "desktop only": "nur Desktop",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "beim ersten Mal auf ▶ auf der Brückenseite klicken (ohne Klick blockiert der Browser den Ton)",
+        "the browser needs one click on ▶ in the bridge page": "klicke ▶ auf der Brückenseite, damit der Browser spricht",
         "Install Piper offline": "Piper offline installieren",
         Close: "Schließen",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Dieses Plugin spielt nur Audio ab; Piper-Programm und Stimmmodelle sind nicht enthalten. Einmal eingerichtet, bleibt die Synthese offline und kostenlos.",
@@ -736,9 +770,16 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "Пауза — продолжите из плавающего окна",
         "Play again (cached)": "Повторить (из кэша)",
         "Read this reply aloud (the paragraphs around the selection)": "Прочитать этот ответ (абзацы вокруг выделения)",
+        "Opening the bridge…": "Открываю мост…",
+        "The bridge is reading — click to stop": "Мост читает — нажмите, чтобы остановить",
+        "Paused in the bridge page — resume there": "Пауза в документе моста — продолжите там",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Прочитать этот ответ в мосте (выделение читает свой абзац)",
+        "the bridge did not answer (is its page open?)": "мост не ответил (его страница открыта?)",
         "Speech bridge (read in a browser)": "Мост чтения (читать в браузере)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Читает в браузере по умолчанию через страницу моста: без ключа, без кэша; страница следует теме и языку приложения.",
         "desktop only": "только для десктопа",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "в первый раз нажмите ▶ на странице моста (без клика браузер не воспроизводит звук)",
+        "the browser needs one click on ▶ in the bridge page": "нажмите ▶ на странице моста, чтобы браузер говорил",
         "Install Piper offline": "Установить Piper офлайн",
         Close: "Закрыть",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Этот плагин только воспроизводит звук; программа Piper и голосовые модели не входят в комплект. Настройте их один раз — синтез останется офлайн и бесплатным.",
@@ -889,9 +930,16 @@ window.__ModuleLoader__.load({
         "Paused — resume from the floating window": "Pausado — continue pela janela flutuante",
         "Play again (cached)": "Reproduzir de novo (cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Ler esta resposta (os parágrafos em torno da seleção)",
+        "Opening the bridge…": "Abrindo a ponte…",
+        "The bridge is reading — click to stop": "A ponte está lendo — clique para parar",
+        "Paused in the bridge page — resume there": "Em pausa na ponte — retome ali",
+        "Read this reply in the bridge page (a selection reads its paragraph)": "Ler esta resposta na ponte (a seleção lê o parágrafo dela)",
+        "the bridge did not answer (is its page open?)": "a ponte não respondeu (a página está aberta?)",
         "Speech bridge (read in a browser)": "Modo de leitura (ler num navegador)",
         "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lê no navegador padrão através da página do modo de leitura: sem chave, sem cache; a página segue o tema e o idioma do app.",
         "desktop only": "só no desktop",
+        "first time: click ▶ on the bridge page (browsers block audio until a click)": "na primeira vez, clique em ▶ na página do modo de leitura (sem clique o navegador bloqueia o áudio)",
+        "the browser needs one click on ▶ in the bridge page": "clique em ▶ na página do modo de leitura para o navegador falar",
         "Install Piper offline": "Instalar o Piper offline",
         Close: "Fechar",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Este plugin só reproduz áudio; o programa Piper e os modelos de voz não são incluídos. Configure uma vez e a síntese continua offline e gratuita.",
@@ -1080,17 +1128,54 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
+    // A bridge read is handed to a page that takes a moment to answer. The
+    // button spins until that page says what it is doing, and stops spinning by
+    // itself if no answer ever comes; otherwise a click looks like nothing.
+    const BRIDGE_START_TIMEOUT_MS = 12000
+    const bridgePending = { key: '', timer: 0 }
+
+    /** Give up the spinner: the page answered (or never will). */
+    function clearBridgePending(key) {
+      if (key && bridgePending.key !== key) return
+      if (bridgePending.timer) { clearTimeout(bridgePending.timer); bridgePending.timer = 0 }
+      bridgePending.key = ''
+      if (key && playback.key === key && playback.phase === 'loading') {
+        setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
+      }
+    }
+
+    /** The text is on its way to the bridge page: spin until it answers. */
+    function beginBridgePending(key) {
+      if (bridgePending.timer) clearTimeout(bridgePending.timer)
+      bridgePending.key = key
+      bridgePending.timer = setTimeout(() => {
+        bridgePending.timer = 0
+        if (bridgePending.key !== key) return
+        bridgePending.key = ''
+        if (playback.key === key && playback.phase === 'loading') {
+          setPlayback({
+            key, phase: 'idle', tone: 'warn',
+            error: t('朗读桥没有回应（页面打开了吗？）', 'the bridge did not answer (is its page open?)'),
+          })
+        }
+      }, BRIDGE_START_TIMEOUT_MS)
+    }
+
     // The bridge reports what it is doing; the app mirrors it on the buttons.
     function noteBridgeState(payload) {
       const key = String(payload.key || '')
       if (!key) return
+      // Any word from the page is the answer the spinner was waiting for.
+      clearBridgePending(key)
       const phase = String(payload.phase || '')
       if (phase === 'finished' || phase === 'stopped') {
         if (!bridgeStates.has(key)) return
         bridgeStates.delete(key)
       } else {
         bridgeStates.set(key, {
-          phase: phase === 'paused' ? 'paused' : phase === 'queued' ? 'queued' : 'playing',
+          phase: phase === 'paused' ? 'paused'
+            : phase === 'queued' ? 'queued'
+              : phase === 'blocked' ? 'blocked' : 'playing',
           unit: Number(payload.unit) || 0,
           total: Number(payload.total) || 0,
           queued: Number(payload.queued) || 0,
@@ -1130,6 +1215,9 @@ window.__ModuleLoader__.load({
           const next = currentScheme()
           if (next === last) return
           last = next
+          // The reading highlight uses the bridge page's two washes, so it has
+          // to be repainted when the palette changes.
+          try { ensureHighlightStyle() } catch {}
           schedulePrefsPush()
         }
         const onChange = () => {
@@ -1193,7 +1281,7 @@ window.__ModuleLoader__.load({
     // and auto-read has no click to carry one, so it is kept for later lookups.
     const actionAnchors = new Map()
     let current = null // { key, controller, context }
-    let playback = { key: null, phase: 'idle', error: '', queued: null }
+    let playback = { key: null, phase: 'idle', error: '', tone: '', queued: null }
     const listeners = new Set()
 
     // Speech waiting for the audio before it, in arrival order: [{ key, speak }].
@@ -1361,6 +1449,7 @@ window.__ModuleLoader__.load({
         const value = body.value || {}
         // From here on theme/language changes are worth pushing to it.
         bridgeUsed = true
+        markBridgeSeen()
         lastPrefs = { scheme: payload.scheme, lang: payload.lang }
         if (value.delivered > 0) {
           // A bridge tab was already listening: nothing new was opened. It also
@@ -1392,7 +1481,7 @@ window.__ModuleLoader__.load({
       speakApprovals = value.speakApprovals !== false
       if (typeof value.engine === 'string') engineMode = value.engine
       const nextSpeed = Number(value.speed)
-      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
+      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, nextSpeed)) : 1
       if (resolved === speed) return
       speed = resolved
       // A speed change from settings applies to the audio in flight right away.
@@ -1537,7 +1626,9 @@ window.__ModuleLoader__.load({
     function stopCurrentOnly() {
       playerStop()
       current = null
-      setPlayback({ key: null, phase: 'idle', error: '' })
+      // A spinning "starting the bridge" state belongs to a read that is over.
+      clearBridgePending('')
+      setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
     }
 
     // A user stop: silence now AND drop everything waiting.
@@ -1832,7 +1923,7 @@ window.__ModuleLoader__.load({
       const utter = new window.SpeechSynthesisUtterance(PREVIEW_TEXT)
       const voice = pickSpeechVoice()
       if (voice) { utter.voice = voice; utter.lang = voice.lang }
-      utter.rate = Math.min(2, Math.max(0.5, speed))
+      utter.rate = Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed))
       let started = false
       const done = () => {
         if (preview !== active) return
@@ -1972,7 +2063,7 @@ window.__ModuleLoader__.load({
 
     function playerClampSpeed(value) {
       const number = Number(value)
-      return Number.isFinite(number) ? Math.min(2, Math.max(0.5, Math.round(number * 100) / 100)) : 1
+      return Number.isFinite(number) ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(number * 100) / 100)) : 1
     }
 
     function playerStopSources(session) {
@@ -2163,7 +2254,7 @@ window.__ModuleLoader__.load({
 
     function playerFinish() {
       playerStop()
-      setPlayback({ key: null, phase: 'idle', error: '' })
+      setPlayback({ key: null, phase: 'idle', error: '', tone: '' })
       drainQueue()
     }
 
@@ -2405,19 +2496,29 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // The bridge page's own wash, so both ways of reading look the same: 30%
+    // blue on the dark palette, a deeper 26% on the light one.
+    const PARA_TINT = { dark: 'rgba(96,165,250,.30)', light: 'rgba(37,99,235,.26)' }
+
     function ensureHighlightStyle() {
       if (typeof document === 'undefined' || !document.head) return false
-      if (!document.getElementById(HIGHLIGHT_STYLE_ID)) {
-        const style = document.createElement('style')
+      let style = document.getElementById(HIGHLIGHT_STYLE_ID)
+      if (!style) {
+        style = document.createElement('style')
         style.id = HIGHLIGHT_STYLE_ID
+        document.head.appendChild(style)
+      }
+      const scheme = currentScheme() === 'light' ? 'light' : 'dark'
+      if (style.dataset.scheme !== scheme) {
+        const tint = PARA_TINT[scheme]
+        style.dataset.scheme = scheme
         style.textContent = [
-          '::highlight(' + PARA_HIGHLIGHT + '){background-color:rgba(88,140,255,.15)}',
+          '::highlight(' + PARA_HIGHLIGHT + '){background-color:' + tint + '}',
           // Yellow, the way a highlighter pen works: the word has to stand out
           // from the blue paragraph wash, on both light and dark surfaces.
           '::highlight(' + WORD_HIGHLIGHT + '){background-color:#f5c542;color:#241a00}',
-          '.' + PARA_FALLBACK_CLASS + '{background-color:rgba(88,140,255,.15);border-radius:4px}',
+          '.' + PARA_FALLBACK_CLASS + '{background-color:' + tint + ';border-radius:4px}',
         ].join('')
-        document.head.appendChild(style)
       }
       installScrollWatch()
       return true
@@ -2748,13 +2849,7 @@ window.__ModuleLoader__.load({
       }
       if (session.units.length === 0) return
       // Character offsets per paragraph: what the progress bar measures against.
-      let chars = 0
-      session.charStarts = []
-      for (let index = 0; index < session.units.length; index += 1) {
-        session.charStarts[index] = chars
-        chars += String((session.units[index] && session.units[index].text) || '').length
-      }
-      session.totalChars = chars
+      measureSessionChars(session)
       const from = Math.max(0, Math.min(Number(startUnit) || 0, session.units.length - 1))
       const firstText = String((session.units[from] && session.units[from].text) || '')
       const skip = Math.max(0, Math.min(Number(startSkip) || 0, Math.max(0, firstText.length - 1)))
@@ -2795,14 +2890,16 @@ window.__ModuleLoader__.load({
         if (isDesktopShell) rememberSpeechVoice(LEGACY_BRIDGE_TARGET)
         // Persist the switch, or the next read starts the same dead engine again.
         if (isDesktopShell) void saveEngine('bridge')
-        fail(session.key, new Error(cloud
+        const silentRead = new Error(cloud
           ? t('这个云端音色 8 秒内没有出声（多半连不上厂商服务器），请换成 ⌂ 本地音色',
             'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice')
           : isDesktopShell
             ? t('这个桌面外壳没能出声，已切换到朗读桥：再点一次朗读会在浏览器里读',
               'this desktop shell stayed silent; it now uses the bridge — press read again')
             : t('浏览器 8 秒内没有出声，可能被自动播放策略挡住，请再点一次朗读',
-              'no sound in 8 s; the browser may be blocking autoplay — press read again')))
+              'no sound in 8 s; the browser may be blocking autoplay — press read again'))
+        silentRead.tone = 'warn'
+        fail(session.key, silentRead)
       }, SPEECH_FIRST_TIMEOUT_MS)
 
       // Chrome drops speak() calls issued in the same tick as cancel(): yield,
@@ -2813,7 +2910,7 @@ window.__ModuleLoader__.load({
         for (const item of items) {
           const utter = new window.SpeechSynthesisUtterance(item.rest)
           if (voice) { utter.voice = voice; utter.lang = voice.lang }
-          utter.rate = Math.min(2, Math.max(0.5, Number(session.speed) || 1))
+          utter.rate = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(session.speed) || 1))
           utter.pitch = 1
           utter.volume = 1
           utter.onstart = () => {
@@ -2861,8 +2958,10 @@ window.__ModuleLoader__.load({
             // Autoplay policy: speech driven by an event (auto-read) may be
             // blocked until the page sees a click. Say so instead of "failed".
             if (reason === 'not-allowed') {
-              fail(session.key, new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
-                'the browser needs one click on this page before it may speak; press read')))
+              const blocked = new Error(t('浏览器要求页面上先有一次点击才允许发声：请点一下朗读按钮。',
+                'the browser needs one click on this page before it may speak; press read'))
+              blocked.tone = 'warn'
+              fail(session.key, blocked)
               return
             }
             fail(session.key, new Error(t('浏览器朗读失败：', 'browser speech failed: ') + reason))
@@ -2890,7 +2989,7 @@ window.__ModuleLoader__.load({
       player = session
       current = { key: stateKey }
       playedMessages.add(stateKey)
-      setPlayback({ key: stateKey, phase: 'loading', error: '' })
+      setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
       updatePlayerWindow()
       try {
         const response = await fetch(PLAN_PATH, {
@@ -2904,7 +3003,9 @@ window.__ModuleLoader__.load({
         const payload = await response.json().catch(() => null)
         if (player !== session) return
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          const failure = new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          if (payload && payload.code === 'NO_TEXT') failure.tone = 'warn'
+          throw failure
         }
         const units = Array.isArray(payload.value && payload.value.units) ? payload.value.units : []
         if (units.length === 0) throw new Error(t('这条消息没有可朗读的文字', 'nothing to read here'))
@@ -2932,16 +3033,27 @@ window.__ModuleLoader__.load({
       // The bridge engine hands the text to a real browser; a desktop shell has
       // no voices of its own, so this path needs no voice list at all.
       if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
-        setPlayback({ key: null, phase: 'idle', error: '' })
+        // Nothing is audible yet, but the click has to show: spin while the
+        // browser is being handed the text, or the button looks stuck.
+        setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
+        beginBridgePending(stateKey)
         // A selection read has no message id, so the text itself goes along.
         void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
+          .then((value) => {
+            // A failed hand-off (or a link copied to the clipboard) ends the spin.
+            if (!value || (Number(value.delivered) <= 0 && !value.launched)) clearBridgePending(stateKey)
+          })
         return
       }
       if (engineMode === 'browser') {
         refreshSpeechVoices()
         if (!speechCapable() && isDesktopShell) {
-          setPlayback({ key: null, phase: 'idle', error: '' })
+          setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
+          beginBridgePending(stateKey)
           void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
+            .then((value) => {
+              if (!value || (Number(value.delivered) <= 0 && !value.launched)) clearBridgePending(stateKey)
+            })
           return
         }
         if (!speechCapable()) {
@@ -2974,7 +3086,7 @@ window.__ModuleLoader__.load({
       player = session
       current = { key: stateKey, controller, context }
       playedMessages.add(stateKey)
-      setPlayback({ key: stateKey, phase: 'loading', error: '' })
+      setPlayback({ key: stateKey, phase: 'loading', error: '', tone: '' })
       updatePlayerWindow()
       try {
         const response = await fetch(PLAN_PATH, {
@@ -2988,7 +3100,9 @@ window.__ModuleLoader__.load({
         })
         const payload = await response.json().catch(() => null)
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          const failure = new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          if (payload && payload.code === 'NO_TEXT') failure.tone = 'warn'
+          throw failure
         }
         if (player !== session) return
         const value = payload.value || {}
@@ -2999,6 +3113,8 @@ window.__ModuleLoader__.load({
         session.standalone = value.standalone === true
         session.view.total = units.length
         session.view.preview = previewOf(units[0])
+        // The bar is character-weighted even without word boundaries.
+        measureSessionChars(session)
         updatePlayerWindow()
         highlightAttach(session, session.root, units)
         await playerPlayUnit(session, 0)
@@ -3032,14 +3148,69 @@ window.__ModuleLoader__.load({
       try { window.localStorage.setItem(PLAYER_POS_KEY, JSON.stringify({ left, top })) } catch {}
     }
 
-    function makePlayerButton(text, title) {
+    // The floating window's controls are drawn, not typed: the text glyphs sat
+    // beside the app's own SVG icons like a font accident.
+    const PLAYER_ICON = {
+      prev: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<path d="M19 5v14a1 1 0 0 1-1.6.8L9 13.5V19a1 1 0 0 1-2 0V5a1 1 0 0 1 2 0v5.5l8.4-6.3A1 1 0 0 1 19 5z"/></svg>',
+      next: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<path d="M5 5v14a1 1 0 0 0 1.6.8l8.4-6.3V19a1 1 0 0 0 2 0V5a1 1 0 0 0-2 0v5.5L6.6 4.2A1 1 0 0 0 5 5z"/></svg>',
+      pause: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>',
+      play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        + '<path d="M7 4.6c0-1 1.1-1.6 1.9-1L19 11c.8.5.8 1.5 0 2L8.9 20.4c-.8.6-1.9 0-1.9-1z"/></svg>',
+    }
+
+    /** Where a tick sits along the slider, in percent. */
+    function speedTickPercent(value) {
+      const span = SPEED_MAX - SPEED_MIN
+      if (!(span > 0)) return 0
+      return Math.round(((value - SPEED_MIN) / span) * 10000) / 100
+    }
+
+    /** The round speeds under a slider; clicking one sets exactly that value. */
+    function buildSpeedTicks(options) {
+      const compact = !!(options && options.compact)
+      const onPick = (options && options.onPick) || (() => {})
+      const ticks = document.createElement('div')
+      ticks.className = 'dsh-tts-ticks' + (compact ? ' is-compact' : '')
+      SPEED_TICKS.forEach((value) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'dsh-tts-tick'
+        button.dataset.rate = String(value)
+        button.style.left = speedTickPercent(value) + '%'
+        button.textContent = String(value)
+        button.title = value + '×'
+        button.setAttribute('aria-label', value + '×')
+        button.onclick = () => onPick(value)
+        ticks.appendChild(button)
+      })
+      return ticks
+    }
+
+    /** Mark the tick the current speed sits on. */
+    function paintSpeedTicks(ticks, speed) {
+      if (!ticks) return
+      const current = Number(speed) || 1
+      for (const button of ticks.children) {
+        const value = Number(button.dataset.rate)
+        button.classList.toggle('on', Math.abs(value - current) < 0.001)
+      }
+    }
+
+    function makePlayerButton(icon, title, big) {
       const button = document.createElement('button')
       button.type = 'button'
-      button.textContent = text
+      button.innerHTML = icon
       button.title = title
-      button.style.cssText = 'box-sizing:border-box;height:26px;min-width:30px;padding:0 6px;'
-        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);border-radius:8px;background:transparent;'
-        + 'color:inherit;font-size:13px;line-height:1;font-family:inherit;cursor:pointer'
+      // Pause/resume is the one you reach for, so it is the bigger control.
+      button.style.cssText = 'box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;'
+        + (big
+          ? 'height:32px;min-width:38px;padding:0 10px;border-radius:9px;'
+          : 'height:26px;min-width:30px;padding:0 6px;border-radius:8px;')
+        + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);background:transparent;color:inherit;'
+        + 'font-size:13px;line-height:1;font-family:inherit;cursor:pointer'
       return button
     }
 
@@ -3075,36 +3246,50 @@ window.__ModuleLoader__.load({
       progressTrack.appendChild(progressFill)
       const controls = document.createElement('div')
       controls.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 10px'
-      const prev = makePlayerButton('⏮', t('上一段', 'Previous paragraph'))
-      const play = makePlayerButton('⏸', t('暂停 / 继续', 'Pause / resume'))
-      const next = makePlayerButton('⏭', t('下一段', 'Next paragraph'))
+      const prev = makePlayerButton(PLAYER_ICON.prev, t('上一段', 'Previous paragraph'), false)
+      const play = makePlayerButton(PLAYER_ICON.pause, t('暂停 / 继续', 'Pause / resume'), true)
+      const next = makePlayerButton(PLAYER_ICON.next, t('下一段', 'Next paragraph'), false)
       prev.onclick = () => playerStep(-1)
       next.onclick = () => playerStep(1)
       play.onclick = () => playerTogglePause()
 
       const speedBox = document.createElement('div')
       speedBox.style.cssText = 'display:flex;align-items:center;gap:4px;margin-left:auto'
+      const speedCol = document.createElement('div')
+      speedCol.style.cssText = 'display:flex;flex-direction:column;gap:2px;width:110px'
       const speedInput = document.createElement('input')
       speedInput.type = 'range'
-      speedInput.min = '0.5'
-      speedInput.max = '2'
+      speedInput.min = String(SPEED_MIN)
+      speedInput.max = String(SPEED_MAX)
       speedInput.step = '0.05'
       speedInput.title = t('播放速度', 'Playback speed')
       // A class instead of inline accent-color: the default track is invisible on
       // a light theme, and only stylesheet rules reach the track pseudo-elements.
       speedInput.className = 'dsh-tts-range'
-      speedInput.style.cssText = 'width:88px;margin:0'
+      speedInput.style.cssText = 'width:110px;margin:0'
       const speedValue = document.createElement('span')
       speedValue.style.cssText = 'width:38px;text-align:right;font-variant-numeric:tabular-nums'
       speedInput.oninput = () => {
         // Dragging only previews the number: re-queuing speech on every pixel
         // would stutter, and the window repaints would fight the thumb.
         speedValue.textContent = playerClampSpeed(speedInput.value).toFixed(2) + '×'
+        paintSpeedTicks(speedTicks, speedInput.value)
       }
       speedInput.onchange = () => {
         playerApplySpeed(playerClampSpeed(speedInput.value))
       }
-      speedBox.append(speedInput, speedValue)
+      const speedTicks = buildSpeedTicks({
+        compact: true,
+        onPick: (value) => {
+          // A tick is a shortcut for dragging to that exact value.
+          speedInput.value = String(value)
+          speedValue.textContent = Number(value).toFixed(2) + '×'
+          paintSpeedTicks(speedTicks, value)
+          playerApplySpeed(value)
+        },
+      })
+      speedCol.append(speedInput, speedTicks)
+      speedBox.append(speedCol, speedValue)
       controls.append(prev, play, next, speedBox)
 
       // Drag by the header; the position survives reloads.
@@ -3140,7 +3325,7 @@ window.__ModuleLoader__.load({
         try { wrap.removeAttribute('popover') } catch {}
       }
       playerWindowEl = wrap
-      wrap.__parts = { wrap, title, progressFill, prev, play, next, speedInput, speedValue }
+      wrap.__parts = { wrap, title, progressFill, prev, play, next, speedInput, speedValue, speedTicks }
       const saved = storedPlayerPos()
       if (saved) {
         wrap.style.left = saved.left + 'px'
@@ -3154,17 +3339,38 @@ window.__ModuleLoader__.load({
     /**
      * How much of the reply is behind the ear. A voice that reports word
      * boundaries gives an exact character position; every other engine only
-     * knows which paragraph it is reading, so the bar steps per paragraph.
+     * knows which paragraph it is reading, so paragraphs are measured by how
+     * much text they hold (a 300-character paragraph must move the bar further
+     * than a 10-character one).
      */
+    function measureSessionChars(session) {
+      const units = (session && session.units) || []
+      let chars = 0
+      session.charStarts = []
+      for (let index = 0; index < units.length; index += 1) {
+        session.charStarts[index] = chars
+        chars += String((units[index] && units[index].text) || '').length
+      }
+      session.totalChars = chars
+    }
+
     function playerProgressRatio(session) {
       if (!session) return 0
       const view = session.view || {}
       const totalChars = session.totalChars || 0
-      if (session.kind === 'speech' && session.boundarySeen && totalChars > 0) {
-        const start = (session.charStarts && session.charStarts[session.unit]) || 0
-        return Math.max(0, Math.min(1, (start + (session.skip || 0)) / totalChars))
-      }
+      const starts = session.charStarts || []
       const count = view.total || 0
+      if (totalChars > 0 && starts.length > 0) {
+        const unit = Math.max(0, Math.min(Number(view.unit) || 0, count))
+        if (session.kind === 'speech' && session.boundarySeen) {
+          const start = starts[Math.min(session.unit || 0, starts.length - 1)] || 0
+          return Math.max(0, Math.min(1, (start + (session.skip || 0)) / totalChars))
+        }
+        // Paragraph granularity: what is behind the ear is the text of the
+        // paragraphs already finished, not an equal share per paragraph.
+        const done = count > 0 && unit >= count ? totalChars : (starts[unit] || 0)
+        return Math.max(0, Math.min(1, done / totalChars))
+      }
       if (!count) return 0
       return Math.max(0, Math.min(1, (Math.min(view.unit, count - 1) + 1) / count))
     }
@@ -3199,7 +3405,7 @@ window.__ModuleLoader__.load({
       parts.progressFill.parentElement.title = view.total > 1
         ? (Math.min(view.unit + 1, view.total) + '/' + view.total + (view.preview ? ' · ' + view.preview : ''))
         : (view.preview || '')
-      parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
+      parts.play.innerHTML = view.phase === 'paused' ? PLAYER_ICON.play : PLAYER_ICON.pause
       parts.play.title = view.phase === 'paused' ? t('继续', 'Resume') : t('暂停', 'Pause')
       parts.play.disabled = view.phase === 'loading'
       parts.prev.disabled = view.unit <= 0
@@ -3213,23 +3419,25 @@ window.__ModuleLoader__.load({
         parts.speedInput.value = String(speedText)
         parts.speedValue.textContent = speedText.toFixed(2) + '×'
       }
+      // The tick the current speed sits on, whether it was dragged or pushed.
+      paintSpeedTicks(parts.speedTicks, held ? parts.speedInput.value : speedText)
     }
 
     function fail(key, error, auto) {
       if (!player || player.key !== key) return
       // Auto-read speaks a whole turn; most of its steps (thinking, tool calls)
-      // carry no prose at all. Those are not failures, so they must not toast
-      // and must not leave an error behind on the read button.
+      // carry no prose at all. Those are not failures, so they must not mark the
+      // button and must not leave an error behind on it.
       const silent = auto === true || player.auto === true
       const message = (error && error.message) || String(error)
+      // Warnings are recoverable (a click is needed, a voice stayed silent);
+      // anything else is a real failure. The button and its tip share this.
+      const tone = (error && error.tone === 'warn') ? 'warn' : 'error'
       playerStop()
-      setPlayback({ key, phase: 'idle', error: silent ? '' : message })
-      if (!silent) {
-        // The button only keeps the text in a tooltip, which is gone as soon as
-        // the pointer moves; put the failure where it can be read and copied.
-        console.warn('[dsh-tts-reader] playback failed:', message)
-        showFailureToast(message)
-      }
+      setPlayback({ key, phase: 'idle', error: silent ? '' : message, tone: silent ? '' : tone })
+      // No popup for a failed read: the exclamation mark and the coloured tip on
+      // the button carry it now.
+      if (!silent) console.warn('[dsh-tts-reader] playback failed:', message)
       drainQueue()
     }
 
@@ -3237,6 +3445,65 @@ window.__ModuleLoader__.load({
     // modals and transforms, the same trick the request-card button uses.
     let toastEl = null
     let toastTimer = 0
+
+    // ------------------------------------------------------ custom tooltips
+    // The read button's hover text (and the first-click note) are drawn here, in
+    // the page, instead of the native `title` box: the tone colour has to match
+    // the warning/error state of the button.
+    const BRIDGE_SEEN_KEY = 'dsh-tts-reader:bridge-seen'
+    let hoverTip = null
+
+    function hideHoverTip() {
+      const node = hoverTip
+      hoverTip = null
+      if (!node) return
+      try { node.remove() } catch {}
+    }
+
+    function markBridgeSeen() {
+      try { window.localStorage.setItem(BRIDGE_SEEN_KEY, '1') } catch {}
+    }
+
+    function bridgeSeenBefore() {
+      try { return window.localStorage.getItem(BRIDGE_SEEN_KEY) === '1' } catch { return true }
+    }
+
+    /** The one-time "click ▶ on the bridge page" note, while it is still true. */
+    function firstClickNote() {
+      if (bridgeSeenBefore()) return ''
+      if (!isDesktopShell && engineMode !== 'bridge' && engineMode !== 'browser') return ''
+      return t('首次需要在朗读桥页面点一下 ▶（浏览器不允许页面自己发声）',
+        'first time: click ▶ on the bridge page (browsers block audio until a click)')
+    }
+
+    function showHoverTip(anchor, text, tone) {
+      if (!text || typeof document === 'undefined' || !document.body || !anchor) return
+      hideHoverTip()
+      const node = document.createElement('div')
+      node.setAttribute('role', 'tooltip')
+      const warn = tone === 'warn'
+      node.style.cssText = 'position:fixed;z-index:2147483647;max-width:280px;padding:7px 10px;'
+        + 'border-radius:8px;font:12px/1.55 inherit;white-space:pre-wrap;pointer-events:none;'
+        + 'background:var(--dsw-alias-bg-overlay,#1c1c1c);'
+        + 'color:' + (tone ? (warn ? '#f0b429' : '#f87171') : 'var(--dsw-alias-label-primary,#eee)') + ';'
+        + 'border:1px solid ' + (tone ? (warn ? '#b45309' : '#e5484d') : 'var(--dsw-alias-border-l2,#3a3a3a)') + ';'
+        + 'box-shadow:0 6px 20px rgba(0,0,0,.28)'
+      node.textContent = text
+      document.body.appendChild(node)
+      let rect
+      try { rect = anchor.getBoundingClientRect() } catch { rect = null }
+      if (!rect) return
+      const width = node.offsetWidth
+      const height = node.offsetHeight
+      const viewWidth = window.innerWidth || 0
+      let left = rect.left + rect.width / 2 - width / 2
+      left = Math.max(8, Math.min(left, Math.max(8, viewWidth - width - 8)))
+      let top = rect.top - height - 8
+      if (top < 8) top = rect.bottom + 8
+      node.style.left = Math.round(left) + 'px'
+      node.style.top = Math.round(top) + 'px'
+      hoverTip = node
+    }
 
     function hideFailureToast() {
       if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0 }
@@ -3773,25 +4040,50 @@ window.__ModuleLoader__.load({
       // The bridge reads in a separate browser; its live state decides the icon
       // here. Finished reads just go back to the plain speaker.
       const remote = liveBridgeState(key)
-      const phase = remote ? remote.phase : localPhase
+      // The bridge page may need one click before the browser speaks; the app
+      // shows that as a warning rather than pretending it is reading.
+      const blocked = !!(remote && remote.phase === 'blocked')
+      const phase = remote ? (blocked ? 'idle' : remote.phase) : localPhase
+      const tone = blocked ? 'warn' : (mine ? (state.tone || '') : '')
+      const warning = blocked
+        ? t('需要在朗读桥页面点一下 ▶ 才能发声', 'the browser needs one click on ▶ in the bridge page')
+        : error
 
-      const title = error
-        ? error
-        : phase === 'loading' || phase === 'queued'
-          ? t('正在合成…', 'Synthesizing…')
+      // The tooltip has to describe what this click actually does: the bridge
+      // reads in another window, so its wording differs from a local engine.
+      const bridgeMode = engineMode === 'bridge'
+      const action = phase === 'loading'
+        ? (bridgeMode
+          ? t('正在打开朗读桥…', 'Opening the bridge…')
+          : t('正在合成…', 'Synthesizing…'))
+        : phase === 'queued'
+          ? t('等待上条朗读完成', 'Waiting for the current read')
           : phase === 'playing'
-            ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
-            : phase === 'paused'
-              ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
-              : cached
-                ? t('再次播放（本地缓存）', 'Play again (cached)')
+          ? (bridgeMode
+            ? t('朗读桥正在朗读，点击停止', 'The bridge is reading — click to stop')
+            : t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)'))
+          : phase === 'paused'
+            ? (bridgeMode
+              ? t('已在朗读桥暂停（在桥页继续）', 'Paused in the bridge page — resume there')
+              : t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window'))
+            : cached
+              ? t('再次播放（本地缓存）', 'Play again (cached)')
+              : bridgeMode
+                ? t('在朗读桥里朗读这条回复（选中文字则读它所在的整段）',
+                  'Read this reply in the bridge page (a selection reads its paragraph)')
                 : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+      // Failures stay on the button: exclamation mark, tone colour, coloured
+      // hover tip. No popup any more.
+      const tipText = () => warning || action
 
       return h('button', {
         type: 'button',
         ref: anchorRef,
-        title,
-        'aria-label': title,
+        'aria-label': warning || action,
+        onMouseEnter: (event) => showHoverTip(event.currentTarget, tipText(), warning ? tone : ''),
+        onMouseLeave: hideHoverTip,
+        onFocus: (event) => showHoverTip(event.currentTarget, tipText(), warning ? tone : ''),
+        onBlur: hideHoverTip,
         // Capture the selection before mousedown clears it.
         onMouseDown: () => {
           try { selectionRef.current = String(window.getSelection() || '').trim() } catch { selectionRef.current = '' }
@@ -3811,12 +4103,12 @@ window.__ModuleLoader__.load({
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           height: '24px', minWidth: '22px', padding: '0 3px', border: 'none',
           background: 'transparent', cursor: 'pointer', borderRadius: '4px',
-          color: error ? '#e5484d' : 'var(--dsw-alias-label-secondary)',
-          opacity: phase === 'idle' && !cached ? 0.9 : 1,
+          color: warning ? (tone === 'warn' ? '#b45309' : '#e5484d') : 'var(--dsw-alias-label-secondary)',
+          opacity: phase === 'idle' && !cached && !warning ? 0.9 : 1,
         },
         children: [
           phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingIcon, { mode: phase, key: 'bars' }),
-          error ? h('span', { key: 'mark' }, '!') : null,
+          warning ? h('span', { key: 'mark', style: { fontWeight: 700, marginLeft: '1px' } }, '!') : null,
         ],
       })
     }
@@ -4080,7 +4372,7 @@ window.__ModuleLoader__.load({
         if (raw === null) return
         const parsed = Number(raw)
         if (!Number.isFinite(parsed)) return
-        const next = Math.round(Math.min(2, Math.max(0.5, parsed)) * 100) / 100
+        const next = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, parsed)) * 100) / 100
         if (config && next === config.speed) return
         void save({ speed: next })
       }
@@ -4400,6 +4692,12 @@ window.__ModuleLoader__.load({
             h('button', {
               key: 'btn', className: 'dsh-tts-btn', type: 'button', disabled: busy,
               onClick: () => { if (previewState === 'idle') void playPreview(); else stopPreview() },
+              // The sample opens the bridge too, so it carries the same
+              // first-click note (and nothing else).
+              onMouseEnter: (event) => { const note = firstClickNote(); if (note) showHoverTip(event.currentTarget, note, '') },
+              onMouseLeave: hideHoverTip,
+              onFocus: (event) => { const note = firstClickNote(); if (note) showHoverTip(event.currentTarget, note, '') },
+              onBlur: hideHoverTip,
               children: previewState === 'loading'
                 ? t('停止（正在合成）', 'Stop (synthesizing)')
                 : previewState === 'playing'
@@ -4423,17 +4721,37 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dsh-tts-unit', key: 'unit' }, t('字', 'chars')),
           ]),
           row('speed', t('速度', 'Speed'), [
-            h('input', {
-              key: 'range',
-              className: 'dsh-tts-range', type: 'range', min: 0.5, max: 2, step: 0.05,
-              value: speedDraft === null ? config.speed : speedDraft,
-              disabled: busy,
-              'aria-label': t('朗读速度', 'Playback speed'),
-              onChange: (event) => setSpeedDraft(event.target.value),
-              onPointerUp: commitSpeed,
-              onKeyUp: commitSpeed,
-              onBlur: commitSpeed,
-            }),
+            // The slider and its round numbers share one column, so a tick sits
+            // under the thumb position it stands for.
+            h('div', { className: 'dsh-tts-slider', key: 'slider' },
+              h('input', {
+                key: 'range',
+                className: 'dsh-tts-range', type: 'range', min: SPEED_MIN, max: SPEED_MAX, step: 0.05,
+                value: speedDraft === null ? config.speed : speedDraft,
+                disabled: busy,
+                'aria-label': t('朗读速度', 'Playback speed'),
+                onChange: (event) => setSpeedDraft(event.target.value),
+                onPointerUp: commitSpeed,
+                onKeyUp: commitSpeed,
+                onBlur: commitSpeed,
+              }),
+              h('div', { className: 'dsh-tts-ticks', key: 'ticks' },
+                SPEED_TICKS.map((value) => h('button', {
+                  key: value,
+                  type: 'button',
+                  className: 'dsh-tts-tick' + (Math.abs(value - (Number(speedDraft === null ? config.speed : speedDraft) || 1)) < 0.001 ? ' on' : ''),
+                  style: { left: speedTickPercent(value) + '%' },
+                  disabled: busy,
+                  title: value + '×',
+                  'aria-label': value + '×',
+                  onClick: () => {
+                    if (busy) return
+                    setSpeedDraft(value)
+                    // A tick saves right away: there is no release to wait for.
+                    void save({ speed: value })
+                  },
+                }, String(value)))),
+            ),
             h('span', { className: 'dsh-tts-value', key: 'value' }, (Number(speedDraft === null ? config.speed : speedDraft) || 1).toFixed(2) + '×'),
           ]),
         ),
@@ -4516,14 +4834,41 @@ window.__ModuleLoader__.load({
       '@keyframes dsh-tts-wave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}',
       '.dsh-tts-spin{animation:dsh-tts-spin .9s linear infinite;transform-origin:center}',
       '@keyframes dsh-tts-spin{to{transform:rotate(360deg)}}',
-      '.dsh-tts-range{appearance:none;-webkit-appearance:none;background:transparent;height:18px;cursor:pointer}',
-      '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;'
-        + 'background:var(--dsw-alias-border-l2,#3a3a3a)}',
-      '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;'
-        + 'border:0;border-radius:50%;background:var(--dsw-alias-state-business-primary,#3b82f6)}',
-      '.dsh-tts-range::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2,#3a3a3a)}',
-      '.dsh-tts-range::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;'
-        + 'background:var(--dsw-alias-state-business-primary,#3b82f6)}',
+      // One slider look for the settings row and the floating window. The bar is
+      // painted on the input itself: the platform track pseudo is easy for a host
+      // stylesheet to override, and on a white card the layer token vanished.
+      '.dsh-tts-range{flex:1 1 auto;min-width:80px;box-sizing:border-box;height:18px;margin:0;padding:0;'
+        + 'appearance:none;-webkit-appearance:none;outline:none;cursor:pointer;'
+        + 'background:linear-gradient(var(--dsw-alias-border-l2,#3a3a3a),var(--dsw-alias-border-l2,#3a3a3a))'
+        + ' center/100% 4px no-repeat}',
+      '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;background:transparent}',
+      '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;box-sizing:border-box;width:14px;height:14px;'
+        + 'margin-top:-5px;border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);border-radius:50%;'
+        + 'background:var(--dsw-alias-state-business-primary,#3b82f6);transition:transform .12s ease}',
+      '.dsh-tts-range:hover::-webkit-slider-thumb{transform:scale(1.4)}',
+      '.dsh-tts-range::-moz-range-track{height:4px;background:transparent}',
+      '.dsh-tts-range::-moz-range-thumb{box-sizing:border-box;width:14px;height:14px;border-radius:50%;'
+        + 'border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);background:var(--dsw-alias-state-business-primary,#3b82f6);'
+        + 'transition:transform .12s ease}',
+      '.dsh-tts-range:hover::-moz-range-thumb{transform:scale(1.4)}',
+      // Round speeds under a slider: a small tick mark plus a clickable number,
+      // each sitting where its value is on the track.
+      '.dsh-tts-slider{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}',
+      '.dsh-tts-ticks{position:relative;height:15px}',
+      '.dsh-tts-tick{position:absolute;top:0;transform:translateX(-50%);margin:0;padding:0 2px;border:0;'
+        + 'background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:10px;'
+        + 'line-height:15px;font-variant-numeric:tabular-nums;cursor:pointer}',
+      '.dsh-tts-ticks .dsh-tts-tick:first-child{transform:none;text-align:left}',
+      '.dsh-tts-ticks .dsh-tts-tick:last-child{transform:translateX(-100%);text-align:right}',
+      '.dsh-tts-tick::before{content:"";position:absolute;left:50%;top:-2px;width:1px;height:4px;'
+        + 'background:currentColor;opacity:.45}',
+      '.dsh-tts-ticks .dsh-tts-tick:first-child::before{left:0}',
+      '.dsh-tts-ticks .dsh-tts-tick:last-child::before{left:auto;right:0}',
+      '.dsh-tts-tick:hover:not(:disabled){color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-tts-tick.on{color:var(--dsw-alias-state-business-primary);font-weight:600}',
+      '.dsh-tts-tick:disabled{opacity:.6;cursor:default}',
+      '.dsh-tts-ticks.is-compact{height:13px}',
+      '.dsh-tts-ticks.is-compact .dsh-tts-tick{font-size:9px;line-height:13px;padding:0 1px}',
       // ---- settings page ----
       // One rhythm: card head (title + status + one hint) over rows built from a
       // fixed label gutter and one control column that every control fills, so
@@ -4551,10 +4896,7 @@ window.__ModuleLoader__.load({
       '.dsh-tts-area:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}',
       '.dsh-tts-input[type=number]::-webkit-inner-spin-button,.dsh-tts-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}',
       '.dsh-tts-select{flex:1 1 auto;width:auto;min-width:0;max-width:100%;cursor:pointer}',
-      '.dsh-tts-range{flex:1 1 auto;min-width:80px;height:4px;margin:0;appearance:none;-webkit-appearance:none;border-radius:2px;background:var(--dsw-alias-bg-layer-3);outline:none;cursor:pointer}',
-      '.dsh-tts-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
-      '.dsh-tts-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-state-business-primary);border:2px solid var(--dsw-alias-bg-layer-2);cursor:pointer}',
-      '.dsh-tts-range:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}',
+      '.dsh-tts-range:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px;border-radius:4px}',
       '.dsh-tts-value{flex:0 0 46px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}',
       '.dsh-tts-btn{box-sizing:border-box;height:30px;margin:0;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;font-family:inherit;cursor:pointer}',
       '.dsh-tts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}',

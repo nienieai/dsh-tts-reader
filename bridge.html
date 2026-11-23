@@ -9,6 +9,10 @@
     --bg:#0f1115; --line:#262b36; --fg:#e6e9ef; --dim:#98a2b3;
     --dim-text:rgba(230,233,239,.52); --bar:rgba(15,17,21,.82); --field:#0c0e12;
     --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
+    --hl-para:rgba(96,165,250,.30);
+    --hl-hover:rgba(96,165,250,.10);
+    /* Hover wash for buttons: a dark slab would be a black box on light. */
+    --hover:rgba(255,255,255,.08);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
     color-scheme: dark;
   }
@@ -17,6 +21,10 @@
     --bg:#fbfbfa; --line:#e3e4e8; --fg:#1f2329; --dim:#6b7280;
     --dim-text:rgba(31,35,41,.55); --bar:rgba(251,251,250,.84); --field:#ffffff;
     --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
+    /* A 14% tint of one blue is invisible on this background: deepen it. */
+    --hl-para:rgba(37,99,235,.26);
+    --hl-hover:rgba(37,99,235,.07);
+    --hover:rgba(0,0,0,.07);
     color-scheme: light;
   }
   *{box-sizing:border-box}
@@ -27,16 +35,17 @@
   /* One floating layer: the controls. Everything else is the page itself. */
   .bar{position:sticky;top:0;z-index:10;background:var(--bar);
     -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
-  .bar-inner{max-width:44rem;margin:0 auto;padding:0 16px;height:52px;
-    display:flex;align-items:center;gap:8px}
+  .bar-inner{max-width:52rem;margin:0 auto;padding:0 16px;height:52px;
+    display:flex;align-items:center;gap:4px}
   .progress{height:2px;background:transparent}
   #fill{height:100%;width:0;background:var(--accent);transition:width .25s linear}
 
   /* Voice picker: one searchable field, the list only exists while it is open.
      A system can expose 10 000+ voices (espeak-ng), so a <select> is a trap. */
   .picker{position:relative;flex:1 1 auto;min-width:0;margin-right:auto}
-  #voiceSearch{width:100%;max-width:26rem;background:var(--field);color:var(--fg);
-    border:1px solid var(--line);border-radius:7px;padding:5px 24px 5px 8px;font:inherit;font-size:12.5px;
+  /* The field fills the row: the caret is inside it and the whole width is clickable. */
+  #voiceSearch{width:100%;background:var(--field);color:var(--fg);
+    border:1px solid var(--line);border-radius:7px;padding:5px 26px 5px 8px;font:inherit;font-size:12.5px;
     min-width:0}
   #voiceSearch:focus{outline:none;border-color:var(--accent)}
   /* A plain caret instead of the search box's clear button. */
@@ -52,55 +61,104 @@
   #voiceList .item:hover,#voiceList .item.hover{background:rgba(96,165,250,.18)}
   #voiceList .item.current{color:var(--accent);font-weight:600}
   #voiceList .more{padding:4px 8px;font-size:11.5px;color:var(--dim)}
-  .chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);
-    cursor:pointer;user-select:none;white-space:nowrap}
-  .rate-wrap{display:inline-flex;align-items:center;gap:5px}
   /* A drawn track: the platform default track is white-on-white in light mode. */
   input[type=range]{width:88px;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
   input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--line)}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;
-    border:0;border-radius:50%;background:var(--accent)}
+    border:0;border-radius:50%;background:var(--accent);transition:transform .12s ease}
   input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--line)}
-  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent);
+    transition:transform .12s ease}
+  /* A 12px dot is a small target: the thumb grows while the pointer is on it. */
+  input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.4)}
+  input[type=range]:hover::-moz-range-thumb{transform:scale(1.4)}
   input[type=range]:focus{outline:none}
   input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
-  .val{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:44px}
 
   button{background:transparent;color:var(--fg);border:1px solid transparent;border-radius:7px;
-    width:32px;height:30px;font:inherit;font-size:13px;line-height:1;cursor:pointer;
+    width:30px;height:30px;font:inherit;font-size:13px;line-height:1;cursor:pointer;padding:0;
     display:inline-flex;align-items:center;justify-content:center}
   button svg{width:16px;height:16px;display:block;pointer-events:none}
-  /* The play button holds all three glyphs; data-icon picks one. */
-  #btnPlay svg{display:none}
+  /* The play button holds all three glyphs; data-icon picks one. It is the one
+     button bigger than the rest: it is the one you aim for. */
+  #btnPlay{width:36px;height:36px;border-radius:8px}
+  #btnPlay svg{display:none;width:19px;height:19px}
   #btnPlay[data-icon=play] .i-play,
   #btnPlay[data-icon=pause] .i-pause,
   #btnPlay[data-icon=replay] .i-replay{display:block}
-  button:hover:not(:disabled){background:#222736}
+  button:hover:not(:disabled){background:var(--hover)}
   button:disabled{opacity:.35;cursor:not-allowed}
-  button.play{width:36px;border-color:var(--line)}
+
+  /* Local/cloud is one button: two glyphs swap, the colour names the mode. */
+  #netBtn{color:var(--dim)}
+  #netBtn[data-net=local]{color:var(--ok);background:rgba(74,222,128,.12)}
+  #netBtn[data-net=cloud]{color:var(--accent)}
+  #netBtn svg{display:none}
+  #netBtn[data-net=local] .i-local,
+  #netBtn[data-net=cloud] .i-cloud{display:block}
+
+  /* Speed is a hot-zone button: hover opens the slider right under it. */
+  .speed-wrap{position:relative;display:inline-flex}
+  #speedBtn{width:auto;min-width:calc(6ch + 14px);padding:0 6px;font-size:12px;font-family:var(--mono);
+    border-color:var(--line)}
+  .speed-pop{position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:30;
+    display:none;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
+    border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.35)}
+  /* An invisible bridge over the 6px gap: the pointer never leaves the hot zone. */
+  .speed-pop::before{content:'';position:absolute;left:0;right:0;top:-6px;height:6px}
+  .speed-wrap.open .speed-pop{display:flex}
+  .speed-pop input[type=range]{width:120px}
+  /* The round speeds under the slider: a tick mark plus a clickable number. */
+  .speed-col{display:flex;flex-direction:column;gap:2px}
+  .speed-ticks{position:relative;height:14px}
+  .speed-tick{position:absolute;top:0;transform:translateX(-50%);width:auto;height:auto;padding:0 2px;
+    border:0;border-radius:0;background:transparent;color:var(--dim);font:inherit;font-size:9px;
+    line-height:14px;cursor:pointer}
+  .speed-tick:first-child{transform:none;text-align:left}
+  .speed-tick:last-child{transform:translateX(-100%);text-align:right}
+  .speed-tick::before{content:'';position:absolute;left:50%;top:-2px;width:1px;height:4px;
+    background:currentColor;opacity:.45}
+  .speed-tick:first-child::before{left:0}
+  .speed-tick:last-child::before{left:auto;right:0}
+  .speed-tick:hover{color:var(--accent);background:transparent}
+  .speed-tick.on{color:var(--accent);font-weight:600}
 
   .dot{width:8px;height:8px;border-radius:50%;background:#4b5563;margin-left:4px;flex:none}
   .dot.ok{background:var(--ok)}
   .dot.warn{background:var(--warn)}
 
-  #banner{display:none;max-width:44rem;margin:0 auto;padding:7px 20px;font-size:12.5px;line-height:1.5}
-  #banner.show{display:block}
-  #banner.warn{color:var(--warn)}
-  #banner.err{color:var(--err)}
+  /* The first-click notice: one full-width banner, not a line of small text. */
+  #banner{display:none;width:100%;padding:11px 20px;font-size:13px;line-height:1.5}
+  #banner.show{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+  #banner.warn{background:#f59e0b;color:#20160a}
+  #banner.err{background:#c0392b;color:#fff}
+  #banner .banner-cta{border:1px solid currentColor;border-radius:999px;background:transparent;
+    color:inherit;font:inherit;font-weight:600;padding:3px 14px;cursor:pointer;
+    white-space:nowrap;flex:0 0 auto;width:auto;height:auto;line-height:1.4}
+  #banner .banner-cta:hover{background:rgba(0,0,0,.12)}
+
+  /* Custom tooltip: the native title box is a black box that ignores the theme. */
+  #tip{position:fixed;z-index:60;max-width:280px;padding:6px 9px;border-radius:7px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);
+    box-shadow:0 8px 22px rgba(0,0,0,.28);font-size:12px;line-height:1.5;
+    pointer-events:none;opacity:0;transition:opacity .12s ease;white-space:pre-wrap}
+  #tip.show{opacity:1}
 
   /* Full-page scroll, one readable column: no inner scrollers. */
-  main{max-width:44rem;margin:0 auto;padding:26px 20px 45vh}
+  main{max-width:52rem;margin:0 auto;padding:26px 20px 45vh}
   h1{font-size:19px;margin:0 0 4px;font-weight:600;line-height:1.4}
   .sub{color:var(--dim);font-size:12.5px}
   .doc{margin-top:22px}
-  .doc p{margin:0 0 1.15em;font-size:17px;line-height:1.85;color:var(--dim-text);
-    transition:color .18s ease}
-  .doc p.on{color:var(--fg)}
-  /* What is already behind you: read paragraphs fade, the current one stays bright. */
-  .doc p.read{opacity:.42}
-  .doc p.mark{background:rgba(96,165,250,.14);border-radius:4px}
+  /* Every paragraph reads in the normal foreground: text is never greyed out. */
+  .doc p{margin:0 0 1.15em;font-size:17px;line-height:1.85;color:var(--fg);
+    transition:color .18s ease;border-radius:4px;cursor:pointer}
+  /* What is already behind you keeps a hint of distance, but stays readable. */
+  .doc p.read{opacity:.72}
+  .doc p.mark{background:var(--hl-para);border-radius:4px}
+  /* Hover is its own, lighter layer: it sits behind the reading highlight. */
+  .doc p:hover{background:var(--hl-hover)}
   .doc p.empty{color:var(--dim);font-size:15px}
-  ::highlight(bridge-para){background-color:rgba(96,165,250,.14)}
+  ::highlight(bridge-para){background-color:var(--hl-para);color:var(--fg)}
   ::highlight(bridge-word){background-color:#f5c542;color:#241a00}
   @media (max-width: 600px) {
     .bar-inner{gap:6px;padding:0 12px}
@@ -112,46 +170,64 @@
 <body>
 <div class="bar">
   <div class="bar-inner">
+    <button id="netBtn" type="button" data-net="cloud" aria-pressed="false"
+            data-tip="使用全部音色（点击切换到只使用本地音色）">
+      <svg class="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6.8 18.5a4.3 4.3 0 0 1-.5-8.6A5.8 5.8 0 0 1 17.4 9a3.9 3.9 0 0 1 .8 7.7"/>
+      </svg>
+      <svg class="i-local" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4.5" width="18" height="12" rx="2"/>
+        <path d="M8 20h8M12 16.5V20"/>
+      </svg>
+    </button>
     <span class="picker">
       <input id="voiceSearch" type="text" autocomplete="off" spellcheck="false"
-             placeholder="音色：点开或输入筛选" title="音色（可输入筛选）">
+             placeholder="音色：点开或输入筛选">
       <span class="caret" aria-hidden="true">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
       </span>
       <div id="voiceList" hidden></div>
     </span>
-    <label class="chk" title="只列出离线音色，不连厂商服务器"><input type="checkbox" id="onlyLocal"> <span id="onlyLocalText">本地</span></label>
-    <span class="rate-wrap">
-      <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1" title="语速">
-      <span class="val" id="rateVal">1.00×</span>
+    <span class="speed-wrap" id="speedWrap">
+      <button id="speedBtn" type="button" aria-label="语速"><span id="rateVal">倍速</span></button>
+      <span class="speed-pop" id="speedPop">
+        <span class="speed-col">
+          <input id="rate" type="range" min="0.5" max="3" step="0.05" value="1" aria-label="语速">
+          <span class="speed-ticks" id="speedTicks"></span>
+        </span>
+      </span>
     </span>
-    <button id="btnPrev" title="上一段" disabled aria-label="上一段">
+    <button id="btnPrev" data-tip="上一段" disabled aria-label="上一段">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 5v14a1 1 0 0 1-1.6.8L9 13.5V19a1 1 0 0 1-2 0V5a1 1 0 0 1 2 0v5.5l8.4-6.3A1 1 0 0 1 19 5z"/></svg>
     </button>
-    <button id="btnPlay" class="play" title="开始朗读" data-icon="play" aria-label="开始朗读">
+    <button id="btnPlay" data-tip="开始朗读" data-icon="play" aria-label="开始朗读">
       <svg class="i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.6c0-1 1.1-1.6 1.9-1L19 11c.8.5.8 1.5 0 2L8.9 20.4c-.8.6-1.9 0-1.9-1z"/></svg>
       <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>
       <svg class="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/></svg>
     </button>
-    <button id="btnNext" title="下一段" disabled aria-label="下一段">
+    <button id="btnNext" data-tip="下一段" disabled aria-label="下一段">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 5v14a1 1 0 0 0 1.6.8l8.4-6.3V19a1 1 0 0 0 2 0V5a1 1 0 0 0-2 0v5.5L6.6 4.2A1 1 0 0 0 5 5z"/></svg>
     </button>
-    <button id="btnStop" title="停止" disabled aria-label="停止">
+    <button id="btnStop" data-tip="停止" disabled aria-label="停止">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
     </button>
-    <span id="dot" class="dot" title="未连接 DSH"></span>
+    <span id="dot" class="dot" data-tip="未连接 DSH"></span>
   </div>
   <div class="progress"><div id="fill"></div></div>
 </div>
 
-<div id="banner"></div>
+<div id="banner" role="status"><span id="bannerText"></span><button id="bannerBtn" class="banner-cta" type="button" hidden></button></div>
 
 <main>
   <h1 id="title"></h1>
   <div id="sub" class="sub"></div>
   <div id="doc" class="doc"></div>
 </main>
+
+<div id="tip" role="tooltip"></div>
 
 <script>/* The Host substitutes the text placeholder; opened straight from disk there is none. */
 try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }</script>
@@ -188,15 +264,19 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   var FIRST_SOUND_TIMEOUT = 8000;
   var VOICE_KEY = 'dsh-tts-bridge:voice-v2';
   var FOLLOW_RESUME_MS = 3000;
+  // The speed range lives in one place: the slider, its clamp and the ticks.
+  var RATE_MIN = 0.5;
+  var RATE_MAX = 3;
+  var RATE_TICKS = [0.5, 1, 1.5, 2, 3];
 
   var el = {};
-  ['fill','banner','voiceSearch','voiceList','onlyLocal','onlyLocalText','btnPrev','btnPlay','btnNext','btnStop',
-   'rate','rateVal','dot','title','sub','doc'].forEach(function (id) { el[id] = document.getElementById(id); });
+  ['fill','banner','bannerText','bannerBtn','netBtn','speedWrap','speedBtn','speedPop','speedTicks','voiceSearch','voiceList','btnPrev','btnPlay','btnNext','btnStop',
+   'rate','rateVal','dot','tip','title','sub','doc'].forEach(function (id) { el[id] = document.getElementById(id); });
 
   var st = {
     voices: [], visible: [], idx: 0, running: false, paused: false, stop: false,
     gen: 0, watchdog: 0, boundary: 0, attempted: false, startedAt: 0,
-    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0,
+    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0, localOnly: false,
     listOpen: false, filter: '', hover: -1,
     // Pushes that arrived while something was playing wait here, in order: a
     // newer push must never cut off the paragraph being spoken.
@@ -266,6 +346,28 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     });
   }
 
+  /** A closed tab cannot say good-bye later, so say it now: the app drops the wave. */
+  function reportGone() {
+    var pushes = [];
+    if (st.active) pushes.push(st.active);
+    for (var i = 0; i < st.queue.length; i += 1) if (st.queue[i]) pushes.push(st.queue[i]);
+    pushes.forEach(function (push) {
+      if (!push || !push.id) return;
+      ack(push.id, 'state', push.messageId, undefined, {
+        key: push.key || '',
+        phase: 'stopped',
+        unit: 0,
+        total: (push.units || []).length,
+        queued: 0
+      });
+    });
+  }
+  // `persisted` means the page goes to the back/forward cache and comes back.
+  window.addEventListener('pagehide', function (event) {
+    if (event && event.persisted) return;
+    reportGone();
+  });
+
   /**
    * The page's own copy in the eight languages DSH ships. The language arrives
    * with the text (and again on every prefs push), because this page cannot see
@@ -278,6 +380,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: '音色（可输入筛选）',
       localOnly: '本地',
       localOnlyTitle: '只列出离线音色，不连厂商服务器',
+      speedShort: '倍速',
+      netTipLocal: '只使用离线音色（点击切换到云端音色）',
+      netTipCloud: '使用全部音色，包括云端（点击切换到只使用本地音色）',
       speedTitle: '语速',
       prevPara: '上一段',
       playStart: '开始朗读',
@@ -288,6 +393,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: '未连接 DSH',
       emptyWaiting: 'DSH 还没有推送朗读内容。在 DSH 里点一次「朗读」，这段文字会自动出现在这一页。',
       noVoicesYet: '（没有可用音色）',
+      clickToRead: '单击从这一段开始朗读',
       noMatch: '没有匹配的音色',
       moreVoices: '还有 {n} 个，继续滚动或输入筛选',
       queued: ' · 已排队 {n} 段',
@@ -318,6 +424,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: 'Voice (type to filter)',
       localOnly: 'Local',
       localOnlyTitle: 'List offline voices only (no vendor servers)',
+      speedShort: 'Speed',
+      netTipLocal: 'Offline voices only (click to switch to cloud)',
+      netTipCloud: 'All voices including cloud (click to use offline voices only)',
       speedTitle: 'Speed',
       prevPara: 'Previous paragraph',
       playStart: 'Start reading',
@@ -328,6 +437,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Not connected to DSH',
       emptyWaiting: 'DSH has not pushed any text yet. Click “Read aloud” in DSH and it will appear on this page.',
       noVoicesYet: '(no voices available)',
+      clickToRead: 'Click to read from here',
       noMatch: 'No matching voices',
       moreVoices: '{n} more — keep scrolling or type to filter',
       queued: ' · {n} queued',
@@ -358,6 +468,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: '音声（入力で絞り込み）',
       localOnly: 'ローカル',
       localOnlyTitle: 'オフラインの音声だけを表示（ベンダーのサーバーに接続しない）',
+      speedShort: '速度',
+      netTipLocal: 'オフライン音声のみ（クリックでクラウドに切り替え）',
+      netTipCloud: 'クラウドを含む全音声（クリックでオフラインのみに切り替え）',
       speedTitle: '速度',
       prevPara: '前の段落',
       playStart: '読み上げ開始',
@@ -368,6 +481,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'DSH に未接続',
       emptyWaiting: 'DSH からまだテキストが届いていません。DSH で「読み上げ」を押すと、このページに表示されます。',
       noVoicesYet: '（利用できる音声なし）',
+      clickToRead: 'クリックでこの段落から読み上げ',
       noMatch: '一致する音声がありません',
       moreVoices: 'あと {n} 件。スクロールするか入力で絞り込んでください',
       queued: ' · {n} 件待機中',
@@ -398,6 +512,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: 'Voz (escribe para filtrar)',
       localOnly: 'Local',
       localOnlyTitle: 'Mostrar solo voces sin conexión (sin servidores del fabricante)',
+      speedShort: 'Velocidad',
+      netTipLocal: 'Solo voces sin conexión (clic para cambiar a la nube)',
+      netTipCloud: 'Todas las voces, nube incluida (clic para usar solo sin conexión)',
       speedTitle: 'Velocidad',
       prevPara: 'Párrafo anterior',
       playStart: 'Empezar a leer',
@@ -408,6 +525,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Sin conexión con DSH',
       emptyWaiting: 'DSH aún no ha enviado texto. Pulsa «Leer en voz alta» en DSH y aparecerá en esta página.',
       noVoicesYet: '(no hay voces disponibles)',
+      clickToRead: 'Haz clic para leer desde aquí',
       noMatch: 'Ninguna voz coincide',
       moreVoices: '{n} más: sigue desplazándote o escribe para filtrar',
       queued: ' · {n} en cola',
@@ -438,6 +556,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: 'Voix (tapez pour filtrer)',
       localOnly: 'Local',
       localOnlyTitle: 'Lister uniquement les voix hors ligne (sans serveur du fabricant)',
+      speedShort: 'Vitesse',
+      netTipLocal: 'Voix hors ligne uniquement (cliquez pour passer au cloud)',
+      netTipCloud: 'Toutes les voix, cloud compris (cliquez pour passer au hors ligne)',
       speedTitle: 'Vitesse',
       prevPara: 'Paragraphe précédent',
       playStart: 'Commencer la lecture',
@@ -448,6 +569,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Non connecté à DSH',
       emptyWaiting: 'DSH n’a encore rien envoyé. Cliquez sur « Lire à voix haute » dans DSH et le texte apparaîtra ici.',
       noVoicesYet: '(aucune voix disponible)',
+      clickToRead: 'Cliquez pour lire à partir d’ici',
       noMatch: 'Aucune voix correspondante',
       moreVoices: '{n} de plus — continuez à faire défiler ou tapez pour filtrer',
       queued: ' · {n} en attente',
@@ -478,6 +600,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: 'Stimme (tippen zum Filtern)',
       localOnly: 'Lokal',
       localOnlyTitle: 'Nur Offline-Stimmen anzeigen (keine Herstellerserver)',
+      speedShort: 'Tempo',
+      netTipLocal: 'Nur Offline-Stimmen (Klick wechselt zur Cloud)',
+      netTipCloud: 'Alle Stimmen inkl. Cloud (Klick wechselt auf offline)',
       speedTitle: 'Geschwindigkeit',
       prevPara: 'Vorheriger Absatz',
       playStart: 'Vorlesen starten',
@@ -488,6 +613,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Nicht mit DSH verbunden',
       emptyWaiting: 'DSH hat noch keinen Text gesendet. Klicke in DSH auf „Vorlesen“, dann erscheint er hier.',
       noVoicesYet: '(keine Stimmen verfügbar)',
+      clickToRead: 'Klicken: ab hier vorlesen',
       noMatch: 'Keine passende Stimme',
       moreVoices: 'noch {n} – weiter scrollen oder tippen zum Filtern',
       queued: ' · {n} in Warteschlange',
@@ -518,6 +644,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: 'Голос (ввод для фильтра)',
       localOnly: 'Локальные',
       localOnlyTitle: 'Только офлайн-голоса (без серверов производителя)',
+      speedShort: 'Скорость',
+      netTipLocal: 'Только офлайн-голоса (клик переключает на облако)',
+      netTipCloud: 'Все голоса, включая облачные (клик переключает на офлайн)',
       speedTitle: 'Скорость',
       prevPara: 'Предыдущий абзац',
       playStart: 'Начать чтение',
@@ -528,6 +657,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Нет связи с DSH',
       emptyWaiting: 'DSH ещё не отправил текст. Нажмите «Читать вслух» в DSH — текст появится на этой странице.',
       noVoicesYet: '(нет доступных голосов)',
+      clickToRead: 'Щелчок — читать с этого абзаца',
       noMatch: 'Подходящих голосов нет',
       moreVoices: 'ещё {n} — прокрутите или введите запрос',
       queued: ' · в очереди: {n}',
@@ -558,6 +688,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       voiceFieldTitle: 'Voz (digite para filtrar)',
       localOnly: 'Local',
       localOnlyTitle: 'Listar apenas vozes offline (sem servidores do fabricante)',
+      speedShort: 'Velocidade',
+      netTipLocal: 'Apenas vozes offline (clique para usar a nuvem)',
+      netTipCloud: 'Todas as vozes, incluindo a nuvem (clique para usar apenas offline)',
       speedTitle: 'Velocidade',
       prevPara: 'Parágrafo anterior',
       playStart: 'Começar a ler',
@@ -568,6 +701,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       notConnected: 'Sem conexão com DSH',
       emptyWaiting: 'O DSH ainda não enviou texto. Clique em «Ler em voz alta» no DSH e ele aparecerá nesta página.',
       noVoicesYet: '(nenhuma voz disponível)',
+      clickToRead: 'Clique para ler a partir daqui',
       noMatch: 'Nenhuma voz correspondente',
       moreVoices: 'mais {n} — continue rolando ou digite para filtrar',
       queued: ' · {n} na fila',
@@ -617,7 +751,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     // The empty-state text and the placeholders are rebuilt in this language;
     // keep the read marks so a mid-read language switch does not erase progress.
     renderDoc();
-    if (st.idx > 0) markRead(Math.min(st.idx, units.length));
+    if (st.running && !st.done && st.idx > 0) markRead(Math.min(st.idx, units.length));
     renderHead();
     paint();
   }
@@ -629,18 +763,34 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     var pageTitle = document.querySelector('h1#title');
     if (pageTitle && data.title) pageTitle.textContent = data.title;
     el.voiceSearch.setAttribute('placeholder', tr('voicePlaceholder'));
-    el.voiceSearch.setAttribute('title', tr('voiceFieldTitle'));
-    el.onlyLocal.setAttribute('title', tr('localOnlyTitle'));
-    if (el.onlyLocalText) el.onlyLocalText.textContent = tr('localOnly');
-    el.rate.setAttribute('title', tr('speedTitle'));
-    el.btnPrev.setAttribute('title', tr('prevPara'));
+    el.voiceSearch.setAttribute('data-tip', tr('voiceFieldTitle'));
+    paintNetBtn();
+    el.speedBtn.setAttribute('aria-label', tr('speedTitle'));
+    el.rate.setAttribute('aria-label', tr('speedTitle'));
+    paintSpeedLabel();
+    el.btnPrev.setAttribute('data-tip', tr('prevPara'));
     el.btnPrev.setAttribute('aria-label', tr('prevPara'));
-    el.btnNext.setAttribute('title', tr('nextPara'));
+    el.btnNext.setAttribute('data-tip', tr('nextPara'));
     el.btnNext.setAttribute('aria-label', tr('nextPara'));
-    el.btnStop.setAttribute('title', tr('stopReading'));
+    el.btnStop.setAttribute('data-tip', tr('stopReading'));
     el.btnStop.setAttribute('aria-label', tr('stopReading'));
-    if (!st.running) el.btnPlay.setAttribute('title', st.done ? tr('replay') : tr('playStart'));
+    if (!st.running) el.btnPlay.setAttribute('data-tip', st.done ? tr('replay') : tr('playStart'));
     if (!st.dotState || st.dotState === 'idle') st.dotTitle = tr('notConnected');
+  }
+
+  /** Local/cloud state: one button, two glyphs, the colour names the mode. */
+  function paintNetBtn() {
+    var local = !!st.localOnly;
+    el.netBtn.setAttribute('data-net', local ? 'local' : 'cloud');
+    el.netBtn.setAttribute('aria-pressed', local ? 'true' : 'false');
+    el.netBtn.setAttribute('data-tip', local ? tr('netTipLocal') : tr('netTipCloud'));
+    el.netBtn.setAttribute('aria-label', local ? tr('netTipLocal') : tr('netTipCloud'));
+  }
+
+  /** The speed button reads "speed" until the rate is not 1 any more. */
+  function paintSpeedLabel() {
+    var changed = Math.abs(st.rate - 1) > 0.001;
+    el.rateVal.textContent = changed ? st.rate.toFixed(2) + '×' : tr('speedShort');
   }
 
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
@@ -656,11 +806,99 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   }
   function fmtDuration(ms) { return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
 
-  function banner(kind, text) {
+  /**
+   * One banner for everything: the first-click notice is a full-width orange
+   * bar with its own start button, errors keep the same shape in red.
+   */
+  function banner(kind, text, action) {
     el.banner.className = 'show ' + kind;
-    el.banner.textContent = text;
+    el.bannerText.textContent = text;
+    el.bannerBtn.hidden = !action;
+    if (action) {
+      el.bannerBtn.textContent = tr('playStart');
+      el.bannerBtn.setAttribute('aria-label', tr('playStart'));
+    }
   }
-  function clearBanner() { el.banner.className = ''; el.banner.textContent = ''; }
+  function clearBanner() {
+    el.banner.className = '';
+    el.bannerText.textContent = '';
+    el.bannerBtn.hidden = true;
+  }
+
+  /* ---------- custom tooltip ----------
+     The native title box is a black rectangle that ignores the theme, so every
+     tip is drawn here instead: read the text from [data-tip], show it after a
+     short delay, keep it inside the viewport. */
+  var tipTimer = 0;
+  var tipTarget = null;
+  var pointerAt = null;
+
+  function hideTip() {
+    if (tipTimer) { clearTimeout(tipTimer); tipTimer = 0; }
+    tipTarget = null;
+    el.tip.className = '';
+    el.tip.textContent = '';
+  }
+
+  function placeTip(target) {
+    var text = target && target.getAttribute ? target.getAttribute('data-tip') : '';
+    if (!text) { hideTip(); return; }
+    el.tip.textContent = text;
+    el.tip.className = 'show';
+    var width = el.tip.offsetWidth;
+    var height = el.tip.offsetHeight;
+    var follow = !!(pointerAt && target.hasAttribute && target.hasAttribute('data-tip-follow'));
+    var left;
+    var top;
+    if (follow) {
+      // Paragraph tips follow the pointer instead of pointing at one spot.
+      left = pointerAt.x + 14;
+      top = pointerAt.y + 18;
+    } else {
+      var rect = target.getBoundingClientRect();
+      left = rect.left + rect.width / 2 - width / 2;
+      top = rect.bottom + 8;
+      if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8);
+    }
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+    top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
+    el.tip.style.left = Math.round(left) + 'px';
+    el.tip.style.top = Math.round(top) + 'px';
+  }
+
+  function showTipSoon(target) {
+    if (!target || !target.getAttribute) return;
+    if (!target.getAttribute('data-tip')) return;
+    // The voice field's own tip lands on the list it just opened: hover only.
+    if (target === el.voiceSearch && st.listOpen) return;
+    tipTarget = target;
+    if (tipTimer) clearTimeout(tipTimer);
+    tipTimer = setTimeout(function () {
+      tipTimer = 0;
+      if (tipTarget === target) placeTip(target);
+    }, 240);
+  }
+
+  document.addEventListener('pointerover', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('[data-tip]') : null;
+    if (target) showTipSoon(target);
+  });
+  document.addEventListener('pointermove', function (event) {
+    pointerAt = { x: event.clientX, y: event.clientY };
+    if (tipTarget && tipTarget.hasAttribute && tipTarget.hasAttribute('data-tip-follow') && el.tip.className === 'show') {
+      placeTip(tipTarget);
+    }
+  });
+  document.addEventListener('pointerout', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('[data-tip]') : null;
+    if (target && target === tipTarget) hideTip();
+  });
+  document.addEventListener('focusin', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('[data-tip]') : null;
+    if (target) showTipSoon(target);
+  });
+  document.addEventListener('focusout', hideTip);
+  window.addEventListener('scroll', hideTip, true);
 
   /* ---------- the document ---------- */
 
@@ -689,6 +927,24 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       var p = document.createElement('p');
       p.textContent = unit.text;
       p.setAttribute('data-i', String(index));
+      // Click reads from this paragraph; the tip follows the pointer. A
+      // double-click is the browser's text selection, so the click is delayed
+      // and cancelled when a second click arrives.
+      p.setAttribute('data-tip', tr('clickToRead'));
+      p.setAttribute('data-tip-follow', '1');
+      var clickTimer = 0;
+      p.addEventListener('click', function () {
+        if (String(window.getSelection() || '').trim()) return;
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(function () {
+          clickTimer = 0;
+          startFrom(index);
+        }, 240);
+      });
+      p.addEventListener('dblclick', function () {
+        clearTimeout(clickTimer);
+        clickTimer = 0;
+      });
       el.doc.appendChild(p);
       st.paragraphs.push(p);
     });
@@ -739,6 +995,25 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   /** Paragraphs before `upTo` are read: they fade instead of staying unread. */
   function markRead(upTo) {
     st.paragraphs.forEach(function (p, i) { p.classList.toggle('read', i < upTo); });
+  }
+
+  /** Finishing or stopping restores every paragraph to the normal colour. */
+  function clearReadMarks() {
+    st.paragraphs.forEach(function (p) { p.classList.remove('read'); });
+  }
+
+  /** No reading highlight may survive the read: clear the word, paragraph and
+   *  fallback class layers together. */
+  function clearParagraphMarks() {
+    paintWordClear();
+    try {
+      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
+    } catch (e) {}
+    st.paragraphs.forEach(function (p) {
+      p.classList.remove('on');
+      p.classList.remove('mark');
+    });
+    clearReadMarks();
   }
 
   function paintWord(index, from, length) {
@@ -828,10 +1103,11 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
 
   function rebuildVoices() {
     st.voices = sortVoices(allVoices());
-    st.visible = el.onlyLocal.checked ? st.voices.filter(function (v) { return !isCloud(v); }) : st.voices;
-    if (!st.visible.length && el.onlyLocal.checked && st.voices.length) {
+    st.visible = st.localOnly ? st.voices.filter(function (v) { return !isCloud(v); }) : st.voices;
+    if (!st.visible.length && st.localOnly && st.voices.length) {
       // Firefox labels speechd voices remote; never leave the user with nothing.
-      el.onlyLocal.checked = false;
+      st.localOnly = false;
+      paintNetBtn();
       st.visible = st.voices;
     }
     if (!currentVoice() && st.visible.length) {
@@ -859,7 +1135,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function selectVoice(v) {
     if (!v) return false;
     if (st.visible.indexOf(v) < 0) {
-      el.onlyLocal.checked = false;
+      st.localOnly = false;
+      paintNetBtn();
       rebuildVoices();
       if (st.visible.indexOf(v) < 0) return false;
     }
@@ -907,6 +1184,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     el.voiceList.textContent = '';
     el.voiceList.hidden = false;
     st.listOpen = true;
+    // Anything the field's tip already put on screen would sit on the list.
+    hideTip();
     if (st.hover >= listShown.items.length) st.hover = 0;
     if (listShown.items.length === 0) {
       var none = document.createElement('div');
@@ -931,7 +1210,6 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       item.className = itemClass(i, st.hover);
       item.setAttribute('data-i', String(i));
       item.textContent = voiceLabel(v);
-      item.title = String(v.voiceURI || '');
       (function (voice) {
         item.addEventListener('mousedown', function (event) {
           event.preventDefault();
@@ -981,9 +1259,51 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function applySpeed(value) {
     var next = Number(value);
     if (!isFinite(next) || next <= 0) return;
-    st.rate = Math.min(2, Math.max(0.5, Math.round(next * 100) / 100));
+    st.rate = Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(next * 100) / 100));
     el.rate.value = String(st.rate);
-    el.rateVal.textContent = st.rate.toFixed(2) + '×';
+    paintSpeedLabel();
+    paintSpeedTicks();
+  }
+
+  /* ---------- speed ticks: the round numbers under the slider ---------- */
+
+  function buildSpeedTicks() {
+    if (!el.speedTicks) return;
+    el.speedTicks.textContent = '';
+    RATE_TICKS.forEach(function (value) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'speed-tick';
+      button.setAttribute('data-rate', String(value));
+      button.setAttribute('aria-label', value + '×');
+      button.textContent = String(value);
+      button.style.left = (((value - RATE_MIN) / (RATE_MAX - RATE_MIN)) * 100) + '%';
+      el.speedTicks.appendChild(button);
+    });
+    paintSpeedTicks();
+  }
+
+  /** Mark the tick the current rate sits on. */
+  function paintSpeedTicks() {
+    if (!el.speedTicks) return;
+    var buttons = el.speedTicks.children;
+    for (var i = 0; i < buttons.length; i += 1) {
+      var value = Number(buttons[i].getAttribute('data-rate'));
+      buttons[i].className = 'speed-tick' + (Math.abs(value - st.rate) < 0.001 ? ' on' : '');
+    }
+  }
+
+  /** One rate for the slider, the ticks and the emitted rate. */
+  function setRate(value, restart) {
+    var next = Number(value);
+    if (!isFinite(next) || next <= 0) return;
+    st.rate = Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(next * 100) / 100));
+    el.rate.value = String(st.rate);
+    paintSpeedLabel();
+    paintSpeedTicks();
+    // A queued utterance keeps its old rate: re-queue from the word being read
+    // so the change is audible right away.
+    if (restart && st.running) speakFrom(st.idx, st.boundary || 0);
   }
 
   /* ---------- speaking ---------- */
@@ -1027,7 +1347,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     var playTitle = st.running
       ? (st.paused ? tr('resume') : tr('pause'))
       : (done ? fmt('replay', { n: units.length }) : tr('playStart'));
-    el.btnPlay.title = playTitle;
+    el.btnPlay.setAttribute('data-tip', playTitle);
     el.btnPlay.setAttribute('aria-label', playTitle);
     el.btnPrev.disabled = !units.length || st.idx <= 0;
     el.btnNext.disabled = !units.length || st.idx >= units.length - 1;
@@ -1039,7 +1359,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function paintDot() {
     var queued = st.queue.length;
     el.dot.className = 'dot' + (st.dotState === 'ok' ? ' ok' : st.dotState === 'warn' ? ' warn' : '');
-    el.dot.title = st.dotTitle + (queued ? fmt('queued', { n: queued }) : '');
+    el.dot.setAttribute('data-tip', st.dotTitle + (queued ? fmt('queued', { n: queued }) : ''));
   }
 
   function abort(reason, canRetryLocal) {
@@ -1056,6 +1376,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     clearWatchdog();
     stopProgress();
     try { synth && synth.cancel(); } catch (e) {}
+    clearParagraphMarks();
     banner('err', reason + (canRetryLocal ? tr('retryLocalHint') : ''));
     var local = pickLocalVoice();
     if (canRetryLocal && local && selectVoice(local)) {
@@ -1156,11 +1477,13 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
           if (err === 'interrupted' || err === 'canceled') return;
           clearWatchdog();
           if (err === 'not-allowed') {
-            // Autoplay policy: not a failure, a request for one click.
+            // Autoplay policy: not a failure, a request for one click. Tell the
+            // app too, so its speaker shows the same warning.
             st.running = false;
             st.paused = false;
             st.gen++;
-            banner('warn', tr('needsClick'));
+            reportState('blocked');
+            banner('warn', tr('needsClick'), true);
             paint();
             return;
           }
@@ -1184,8 +1507,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     stopProgress();
     st.idx = units.length;
     st.done = true;
-    paintWordClear();
-    markRead(units.length);
+    clearParagraphMarks();
     el.fill.style.width = '100%';
     if (st.startedAt) setStatus(fmt('finished', { n: units.length, time: fmtDuration(performance.now() - st.startedAt) }));
     // "Done" is a state, not a badge: the app goes back to its speaker icon.
@@ -1221,11 +1543,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     el.fill.style.width = '0%';
     setStatus(tr('stopped'));
     // Nothing is being read, so nothing should stay marked.
-    paintWordClear();
-    try {
-      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
-    } catch (e) {}
-    st.paragraphs.forEach(function (p) { p.classList.remove('on'); p.classList.remove('mark'); });
+    clearParagraphMarks();
     if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
@@ -1250,6 +1568,15 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     speakFrom(target, 0);
   }
 
+  /** Double-clicking a paragraph reads from there. */
+  function startFrom(index) {
+    if (!units.length) return;
+    clearBanner();
+    st.startedAt = 0;
+    st.done = false;
+    speakFrom(index, 0);
+  }
+
   /* ---------- header text ---------- */
 
   function setStatus(text) { el.sub.textContent = text; }
@@ -1263,14 +1590,64 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
 
   /* ---------- wiring ---------- */
 
-  st.rate = Math.min(2, Math.max(0.5, Number(el.rate.value) || 1));
-  el.rateVal.textContent = st.rate.toFixed(2) + '×';
+  st.rate = Math.min(RATE_MAX, Math.max(RATE_MIN, Number(el.rate.value) || 1));
+  buildSpeedTicks();
   applySpeed(data.speed);
+  paintNetBtn();
+  paintSpeedLabel();
 
   el.btnPlay.addEventListener('click', toggle);
   el.btnStop.addEventListener('click', stop);
   el.btnPrev.addEventListener('click', function () { step(-1); });
   el.btnNext.addEventListener('click', function () { step(1); });
+  el.bannerBtn.addEventListener('click', function () { clearBanner(); start(); });
+  // Local/cloud is a two-state button; the tooltip names the next state.
+  el.netBtn.addEventListener('click', function () {
+    st.localOnly = !st.localOnly;
+    // Local mode must not keep a cloud voice selected: the list would show it
+    // as current while it cannot be used.
+    if (st.localOnly && currentVoice() && isCloud(currentVoice())) {
+      var local = pickLocalVoice();
+      if (local) selectVoice(local);
+    }
+    paintNetBtn();
+    rebuildVoices();
+    paint();
+  });
+  // Speed is a hot zone: hovering the button opens the slider underneath. Closing
+  // waits a beat so the pointer can cross the gap into the slider, and dragging
+  // the slider pins it open even when the pointer leaves the popover.
+  var speedClose = 0;
+  var speedHeld = false;
+  function speedOpen() {
+    clearTimeout(speedClose);
+    el.speedWrap.classList.add('open');
+  }
+  function speedCloseSoon() {
+    clearTimeout(speedClose);
+    if (speedHeld) return;
+    speedClose = setTimeout(function () { el.speedWrap.classList.remove('open'); }, 180);
+  }
+  el.speedWrap.addEventListener('pointerenter', speedOpen);
+  el.speedWrap.addEventListener('pointerleave', function () {
+    if (!speedHeld) speedCloseSoon();
+  });
+  el.speedPop.addEventListener('pointerdown', function () {
+    speedHeld = true;
+    speedOpen();
+  });
+  window.addEventListener('pointerup', function () {
+    if (!speedHeld) return;
+    speedHeld = false;
+    if (!el.speedWrap.matches(':hover')) speedCloseSoon();
+  });
+  el.speedWrap.addEventListener('focusin', speedOpen);
+  el.speedWrap.addEventListener('focusout', function () {
+    // Keep it open while the slider itself still has focus.
+    setTimeout(function () {
+      if (!el.speedWrap.contains(document.activeElement)) el.speedWrap.classList.remove('open');
+    }, 0);
+  });
   // Typing filters the list; the field shows the chosen voice again on close.
   el.voiceSearch.addEventListener('focus', function () {
     // Start empty so what you type is the whole search, with the current voice
@@ -1317,13 +1694,14 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     // The list uses mousedown, so a click already chose by the time focus dies.
     setTimeout(function () { if (st.listOpen) closeVoiceList(); }, 120);
   });
-  el.onlyLocal.addEventListener('change', function () { rebuildVoices(); paint(); });
   el.rate.addEventListener('input', function () {
-    st.rate = Math.min(2, Math.max(0.5, Number(el.rate.value) || 1));
-    el.rateVal.textContent = st.rate.toFixed(2) + '×';
-    // A queued utterance keeps its old rate: re-queue from the word being read
-    // so the change is audible right away.
-    if (st.running) speakFrom(st.idx, st.boundary || 0);
+    setRate(el.rate.value, true);
+  });
+  // A tick is a shortcut for dragging to that exact value.
+  el.speedTicks.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('.speed-tick') : null;
+    if (!button) return;
+    setRate(button.getAttribute('data-rate'), true);
   });
 
   applyLang(data.lang);
@@ -1355,7 +1733,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     setTimeout(function () {
       rebuildVoices();
       if (ms === 2000 && !st.visible.length) {
-        banner(el.onlyLocal.checked ? 'warn' : 'err', el.onlyLocal.checked
+        banner(st.localOnly ? 'warn' : 'err', st.localOnly
           ? tr('noOfflineVoices')
           : tr('noVoicesAtAll'));
       }
