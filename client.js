@@ -1876,7 +1876,7 @@ window.__ModuleLoader__.load({
       wrap.style.cssText = 'position:fixed;inset:auto 20px 20px auto;margin:0;padding:0;z-index:2147483645;display:none;'
         + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#1c1c1c);'
         + 'color:var(--dsw-alias-label-primary,#eee);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:12px;'
-        + 'font-family:inherit;min-width:288px;max-width:360px;user-select:none'
+        + 'font-family:inherit;box-sizing:border-box;width:322px;user-select:none'
       const head = document.createElement('div')
       head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:move;'
         + 'border-bottom:1px solid var(--dsw-alias-border-l2,#3a3a3a);touch-action:none'
@@ -1919,9 +1919,12 @@ window.__ModuleLoader__.load({
       const speedValue = document.createElement('span')
       speedValue.style.cssText = 'width:38px;text-align:right;font-variant-numeric:tabular-nums'
       speedInput.oninput = () => {
-        const value = playerClampSpeed(speedInput.value)
-        speedValue.textContent = value.toFixed(2) + '×'
-        playerApplySpeed(value)
+        // Dragging only previews the number: re-queuing speech on every pixel
+        // would stutter, and the window repaints would fight the thumb.
+        speedValue.textContent = playerClampSpeed(speedInput.value).toFixed(2) + '×'
+      }
+      speedInput.onchange = () => {
+        playerApplySpeed(playerClampSpeed(speedInput.value))
       }
       speedBox.append(speedInput, speedValue)
       controls.append(prev, play, next, speedBox)
@@ -2017,8 +2020,14 @@ window.__ModuleLoader__.load({
       parts.prev.disabled = view.unit <= 0
       parts.next.disabled = view.unit >= view.total - 1
       const speedText = (Number(view.speed) || 1)
-      parts.speedInput.value = String(speedText)
-      parts.speedValue.textContent = speedText.toFixed(2) + '×'
+      // Never move the thumb out from under the pointer: while the slider has
+      // focus it owns the value, and boundary-driven repaints must not snap it
+      // back to the running session's speed.
+      const held = typeof document !== 'undefined' && document.activeElement === parts.speedInput
+      if (!held) {
+        parts.speedInput.value = String(speedText)
+        parts.speedValue.textContent = speedText.toFixed(2) + '×'
+      }
     }
 
     function fail(key, error) {
