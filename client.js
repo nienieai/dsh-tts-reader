@@ -3817,10 +3817,6 @@ window.__ModuleLoader__.load({
         children: [
           phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingIcon, { mode: phase, key: 'bars' }),
           error ? h('span', { key: 'mark' }, '!') : null,
-          finished && !error ? h('span', {
-            key: 'done',
-            style: { color: '#30a46c', fontSize: '10px', lineHeight: 1, marginLeft: '1px' },
-          }, '✓') : null,
         ],
       })
     }
@@ -4214,8 +4210,9 @@ window.__ModuleLoader__.load({
               ].filter(Boolean),
             }),
           ),
-          h('div', { className: 'dsh-tts-hint', key: 'hint' }, engineHint),
-          h('div', { className: 'dsh-tts-headrow', key: 'status' }, badge('status', engineReady, engineStatus)),
+          h('div', { className: 'dsh-tts-note', key: 'note' },
+            h('div', { className: 'dsh-tts-hint', key: 'hint' }, engineHint),
+            h('div', { className: 'dsh-tts-headrow', key: 'status' }, badge('status', engineReady, engineStatus))),
           browserEngine ? row('speech-voice', t('语音', 'Voice'), (voices.length > 0 || isDesktopShell)
             ? h('select', {
                 className: 'dsh-tts-select',
@@ -4538,6 +4535,10 @@ window.__ModuleLoader__.load({
       '.dsh-tts-h1{font-size:13px;font-weight:600;line-height:1.4}',
       '.dsh-tts-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-head .dsh-tts-hint{font-size:12px;white-space:normal;overflow:visible}',
+      // A note under one row (the engine card): same gutter as the rows, so a
+      // hint never runs into the card edge.
+      '.dsh-tts-note{display:flex;flex-direction:column;gap:7px;padding:2px 16px 12px;min-width:0}',
+      '.dsh-tts-note .dsh-tts-hint{font-size:12px;white-space:normal;overflow:visible}',
       '.dsh-tts-row{box-sizing:border-box;display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;column-gap:12px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2)}',
       '.dsh-tts-label{font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-grow{display:flex;align-items:center;gap:8px;min-width:0}',
