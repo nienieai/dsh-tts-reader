@@ -474,7 +474,6 @@
 
   /* ---------- 音色选择器：输入即筛选，列表按需生成 ---------- */
 
-  var LIST_LIMIT = 60;
   var picker = { open: false, filter: '', hover: 0 };
 
   /** The field also shows a ⌂/☁/★ prefix; a search must ignore those marks. */
@@ -497,34 +496,70 @@
     els.voiceSearch.placeholder = '点开或输入筛选（例如 中文 / mandarin / cmn）';
   }
 
+  // Rows stream in while you scroll: a machine can expose 14000 voices, and
+  // building all of them at once is what used to freeze this page.
+  var LIST_PAGE = 40;
+  var listShown = { items: [], count: 0 };
+
+  function itemClass(index, hover) {
+    var v = listShown.items[index];
+    return 'item' + (index === hover ? ' hover' : '') + (v && v.voiceURI === st.selectedUri ? ' current' : '');
+  }
+
   function renderVoiceList() {
-    var list = matchingVoices();
+    listShown.items = matchingVoices();
+    listShown.count = 0;
     els.voiceList.textContent = '';
     els.voiceList.hidden = false;
     picker.open = true;
-    if (picker.hover >= list.length) picker.hover = 0;
-    list.slice(0, LIST_LIMIT).forEach(function (v, i) {
-      var item = document.createElement('div');
-      item.className = 'item' + (i === picker.hover ? ' hover' : '') + (v.voiceURI === st.selectedUri ? ' current' : '');
-      item.textContent = voiceLabel(v);
-      item.title = String(v.voiceURI || '');
-      item.addEventListener('mousedown', function (event) {
-        event.preventDefault();
-        chooseVoice(v);
-      });
-      els.voiceList.appendChild(item);
-    });
-    if (list.length > LIST_LIMIT) {
-      var more = document.createElement('div');
-      more.className = 'more';
-      more.textContent = '还有 ' + (list.length - LIST_LIMIT) + ' 个，继续输入缩小范围';
-      els.voiceList.appendChild(more);
-    }
-    if (!list.length) {
+    if (picker.hover >= listShown.items.length) picker.hover = 0;
+    if (!listShown.items.length) {
       var none = document.createElement('div');
       none.className = 'more';
       none.textContent = '没有匹配的音色';
       els.voiceList.appendChild(none);
+      return;
+    }
+    appendVoicePage();
+  }
+
+  function appendVoicePage() {
+    var items = listShown.items;
+    var from = listShown.count;
+    var to = Math.min(items.length, from + LIST_PAGE);
+    var more = els.voiceList.querySelector('.more');
+    if (more) more.parentNode.removeChild(more);
+    for (var i = from; i < to; i += 1) {
+      var v = items[i];
+      var item = document.createElement('div');
+      item.className = itemClass(i, picker.hover);
+      item.setAttribute('data-i', String(i));
+      item.textContent = voiceLabel(v);
+      item.title = String(v.voiceURI || '');
+      (function (voice) {
+        item.addEventListener('mousedown', function (event) {
+          event.preventDefault();
+          chooseVoice(voice);
+        });
+      })(v);
+      els.voiceList.appendChild(item);
+    }
+    listShown.count = to;
+    if (to < items.length) {
+      var node = document.createElement('div');
+      node.className = 'more';
+      node.textContent = '还有 ' + (items.length - to) + ' 个，继续滚动或输入筛选';
+      els.voiceList.appendChild(node);
+    }
+  }
+
+  function setVoiceHover(index) {
+    picker.hover = Math.max(0, Math.min(index, listShown.items.length - 1));
+    while (listShown.count <= picker.hover && listShown.count < listShown.items.length) appendVoicePage();
+    var rows = els.voiceList.querySelectorAll('.item');
+    for (var i = 0; i < rows.length; i += 1) rows[i].className = itemClass(i, picker.hover);
+    if (rows[picker.hover] && rows[picker.hover].scrollIntoView) {
+      try { rows[picker.hover].scrollIntoView({ block: 'nearest' }); } catch (e) {}
     }
   }
 
@@ -913,12 +948,11 @@
     renderVoiceList();
   });
   els.voiceSearch.addEventListener('keydown', function (event) {
-    var list = matchingVoices();
+    var list = listShown.items.length ? listShown.items : matchingVoices();
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       if (!picker.open) { renderVoiceList(); return; }
       var step = event.key === 'ArrowDown' ? 1 : -1;
-      picker.hover = Math.max(0, Math.min(list.length - 1, (picker.hover < 0 ? 0 : picker.hover) + step));
-      renderVoiceList();
+      setVoiceHover(Math.max(0, Math.min(list.length - 1, (picker.hover < 0 ? 0 : picker.hover) + step)));
       event.preventDefault();
       return;
     }
@@ -928,6 +962,16 @@
       return;
     }
     if (event.key === 'Escape') { closeVoiceList(); event.preventDefault(); }
+  });
+  // Scrolling to the bottom streams in the next page of rows.
+  els.voiceList.addEventListener('scroll', function () {
+    if (!picker.open) return;
+    if (listShown.count >= listShown.items.length) return;
+    var room = els.voiceList.scrollHeight - els.voiceList.scrollTop - els.voiceList.clientHeight;
+    if (room > 80) return;
+    appendVoicePage();
+    var rows = els.voiceList.querySelectorAll('.item');
+    for (var i = 0; i < rows.length; i += 1) rows[i].className = itemClass(i, picker.hover);
   });
   els.voiceSearch.addEventListener('blur', function () {
     // The rows use mousedown, so a click has already chosen by now.

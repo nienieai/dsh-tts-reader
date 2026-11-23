@@ -377,7 +377,10 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
 
   /* ---------- voice picker ---------- */
 
-  var LIST_LIMIT = 60;
+  // The list arrives in pages while you scroll: a machine can expose 14000
+  // voices, and building all of those rows is what used to freeze the page.
+  var LIST_PAGE = 40;
+  var listShown = { items: [], count: 0 };
 
   /** The field also shows a ⌂/☁ prefix; a search must ignore those marks. */
   function searchText(value) {
@@ -393,35 +396,68 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     });
   }
 
+  function itemClass(index, hover) {
+    var v = listShown.items[index];
+    return 'item' + (index === hover ? ' hover' : '') + (v && v.voiceURI === st.savedUri ? ' current' : '');
+  }
+
+  /** Rebuild the open list from the first page. */
   function renderVoiceList() {
-    var list = matchingVoices();
+    listShown.items = matchingVoices();
+    listShown.count = 0;
     el.voiceList.textContent = '';
     el.voiceList.hidden = false;
     st.listOpen = true;
-    if (st.hover >= list.length) st.hover = 0;
-    var shown = list.slice(0, LIST_LIMIT);
-    shown.forEach(function (v, i) {
-      var item = document.createElement('div');
-      item.className = 'item' + (i === st.hover ? ' hover' : '') + (v.voiceURI === st.savedUri ? ' current' : '');
-      item.textContent = voiceLabel(v);
-      item.title = String(v.voiceURI || '');
-      item.addEventListener('mousedown', function (event) {
-        event.preventDefault();
-        chooseVoice(v);
-      });
-      el.voiceList.appendChild(item);
-    });
-    if (list.length > shown.length) {
-      var more = document.createElement('div');
-      more.className = 'more';
-      more.textContent = '还有 ' + (list.length - shown.length) + ' 个，继续输入缩小范围';
-      el.voiceList.appendChild(more);
-    }
-    if (shown.length === 0) {
+    if (st.hover >= listShown.items.length) st.hover = 0;
+    if (listShown.items.length === 0) {
       var none = document.createElement('div');
       none.className = 'more';
       none.textContent = '没有匹配的音色';
       el.voiceList.appendChild(none);
+      return;
+    }
+    appendVoicePage();
+  }
+
+  /** Add the next page of rows (and keep the "how many more" line up to date). */
+  function appendVoicePage() {
+    var items = listShown.items;
+    var from = listShown.count;
+    var to = Math.min(items.length, from + LIST_PAGE);
+    var more = el.voiceList.querySelector('.more');
+    if (more) more.parentNode.removeChild(more);
+    for (var i = from; i < to; i += 1) {
+      var v = items[i];
+      var item = document.createElement('div');
+      item.className = itemClass(i, st.hover);
+      item.setAttribute('data-i', String(i));
+      item.textContent = voiceLabel(v);
+      item.title = String(v.voiceURI || '');
+      (function (voice) {
+        item.addEventListener('mousedown', function (event) {
+          event.preventDefault();
+          chooseVoice(voice);
+        });
+      })(v);
+      el.voiceList.appendChild(item);
+    }
+    listShown.count = to;
+    if (to < items.length) {
+      var node = document.createElement('div');
+      node.className = 'more';
+      node.textContent = '还有 ' + (items.length - to) + ' 个，继续滚动或输入筛选';
+      el.voiceList.appendChild(node);
+    }
+  }
+
+  /** Keyboard highlight: draw more rows if it runs past what is on screen. */
+  function setVoiceHover(index) {
+    st.hover = Math.max(0, Math.min(index, listShown.items.length - 1));
+    while (listShown.count <= st.hover && listShown.count < listShown.items.length) appendVoicePage();
+    var rows = el.voiceList.querySelectorAll('.item');
+    for (var i = 0; i < rows.length; i += 1) rows[i].className = itemClass(i, st.hover);
+    if (rows[st.hover] && rows[st.hover].scrollIntoView) {
+      try { rows[st.hover].scrollIntoView({ block: 'nearest' }); } catch (e) {}
     }
   }
 
@@ -430,6 +466,8 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     el.voiceList.hidden = true;
     st.filter = '';
     st.hover = -1;
+    listShown.items = [];
+    listShown.count = 0;
     paintVoiceField();
   }
 
@@ -668,12 +706,11 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     renderVoiceList();
   });
   el.voiceSearch.addEventListener('keydown', function (event) {
-    var list = matchingVoices();
+    var list = listShown.items.length ? listShown.items : matchingVoices();
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       if (!st.listOpen) { renderVoiceList(); return; }
       var step = event.key === 'ArrowDown' ? 1 : -1;
-      st.hover = Math.max(0, Math.min(list.length - 1, (st.hover < 0 ? 0 : st.hover) + step));
-      renderVoiceList();
+      setVoiceHover(Math.max(0, Math.min(list.length - 1, (st.hover < 0 ? 0 : st.hover) + step)));
       event.preventDefault();
       return;
     }
@@ -683,6 +720,16 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
       return;
     }
     if (event.key === 'Escape') { closeVoiceList(); event.preventDefault(); }
+  });
+  // Scrolling to the bottom streams in the next page of rows.
+  el.voiceList.addEventListener('scroll', function () {
+    if (!st.listOpen) return;
+    if (listShown.count >= listShown.items.length) return;
+    var room = el.voiceList.scrollHeight - el.voiceList.scrollTop - el.voiceList.clientHeight;
+    if (room > 80) return;
+    appendVoicePage();
+    var rows = el.voiceList.querySelectorAll('.item');
+    for (var i = 0; i < rows.length; i += 1) rows[i].className = itemClass(i, st.hover);
   });
   el.voiceSearch.addEventListener('blur', function () {
     // The list uses mousedown, so a click already chose by the time focus dies.
