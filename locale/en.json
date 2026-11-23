@@ -2,6 +2,6 @@
   "meta": {
     "title": "Read aloud",
     "description": "Speaks assistant replies with the DeepSeek TTS API. Audio is cached on disk and replayed from cache on the next click; the API key stays in the Host process.",
-    "detail": "docs/DETAIL.md"
+    "detail": "docs/DETAIL.en.md"
   }
 }
