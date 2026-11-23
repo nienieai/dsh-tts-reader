@@ -40,8 +40,8 @@
   select{min-width:min(520px, 100%)}
   input[type=search], #voiceSearch{width:100%}
   /* A plain caret instead of the search box's clear button. */
-  .caret{position:absolute;right:12px;bottom:11px;pointer-events:none;font-size:10px;
-    line-height:1;color:var(--dim)}
+  .caret{position:absolute;right:12px;bottom:11px;pointer-events:none;display:flex;align-items:center;
+    color:var(--dim)}
   select:focus, textarea:focus, input:focus{outline:2px solid rgba(96,165,250,.45); outline-offset:1px}
   /* Voice list is built on demand: Linux exposes 14000+ espeak voices. */
   #voiceList{position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:20;
@@ -123,7 +123,10 @@
         选择音色
         <input id="voiceSearch" type="text" autocomplete="off" spellcheck="false"
                placeholder="点开或输入筛选（例如 中文 / mandarin / cmn）">
-        <span class="caret" aria-hidden="true">▾</span>
+        <span class="caret" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
         <div id="voiceList" hidden></div>
       </label>
     </div>

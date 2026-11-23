@@ -786,6 +786,7 @@ window.__ModuleLoader__.load({
     let player = null
     let playerWindowEl = null
     let speedSaveTimer = 0
+    let lastBarPaint = 0
     const PLAYER_UNIT_GAP_MS = 60
 
     const previewOf = (unit) => {
@@ -1583,6 +1584,14 @@ window.__ModuleLoader__.load({
         return
       }
       if (session.units.length === 0) return
+      // Character offsets per paragraph: what the progress bar measures against.
+      let chars = 0
+      session.charStarts = []
+      for (let index = 0; index < session.units.length; index += 1) {
+        session.charStarts[index] = chars
+        chars += String((session.units[index] && session.units[index].text) || '').length
+      }
+      session.totalChars = chars
       const from = Math.max(0, Math.min(Number(startUnit) || 0, session.units.length - 1))
       const firstText = String((session.units[from] && session.units[from].text) || '')
       const skip = Math.max(0, Math.min(Number(startSkip) || 0, Math.max(0, firstText.length - 1)))
@@ -1665,6 +1674,11 @@ window.__ModuleLoader__.load({
             if (!session.boundarySeen) {
               // Only the first one repaints the window: this flips a label once.
               session.boundarySeen = true
+              lastBarPaint = Date.now()
+              playerView({})
+            } else if (Date.now() - lastBarPaint > 150) {
+              // Word boundaries are frequent; the bar only needs a few repaints.
+              lastBarPaint = Date.now()
               playerView({})
             }
           }
@@ -1877,8 +1891,13 @@ window.__ModuleLoader__.load({
       close.onclick = () => stopPlayback()
       head.append(title, close)
 
-      const meta = document.createElement('div')
-      meta.style.cssText = 'padding:6px 10px 0;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+      const progressTrack = document.createElement('div')
+      progressTrack.style.cssText = 'margin:6px 10px 0;height:3px;border-radius:2px;'
+        + 'background:var(--dsw-alias-border-l2,#3a3a3a);overflow:hidden'
+      const progressFill = document.createElement('div')
+      progressFill.style.cssText = 'height:100%;width:0;background:var(--dsw-alias-state-business-primary,#3b82f6);'
+        + 'transition:width .25s linear'
+      progressTrack.appendChild(progressFill)
       const controls = document.createElement('div')
       controls.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 10px'
       const prev = makePlayerButton('⏮', t('上一段', 'Previous paragraph'))
@@ -1934,13 +1953,13 @@ window.__ModuleLoader__.load({
       head.addEventListener('pointerup', endDrag)
       head.addEventListener('pointercancel', endDrag)
 
-      wrap.append(head, meta, controls)
+      wrap.append(head, progressTrack, controls)
       document.body.appendChild(wrap)
       try { if (typeof wrap.showPopover === 'function') wrap.showPopover() } catch {
         try { wrap.removeAttribute('popover') } catch {}
       }
       playerWindowEl = wrap
-      wrap.__parts = { wrap, title, meta, prev, play, next, speedInput, speedValue }
+      wrap.__parts = { wrap, title, progressFill, prev, play, next, speedInput, speedValue }
       const saved = storedPlayerPos()
       if (saved) {
         wrap.style.left = saved.left + 'px'
@@ -1949,6 +1968,24 @@ window.__ModuleLoader__.load({
         wrap.style.bottom = 'auto'
       }
       return wrap
+    }
+
+    /**
+     * How much of the reply is behind the ear. A voice that reports word
+     * boundaries gives an exact character position; every other engine only
+     * knows which paragraph it is reading, so the bar steps per paragraph.
+     */
+    function playerProgressRatio(session) {
+      if (!session) return 0
+      const view = session.view || {}
+      const totalChars = session.totalChars || 0
+      if (session.kind === 'speech' && session.boundarySeen && totalChars > 0) {
+        const start = (session.charStarts && session.charStarts[session.unit]) || 0
+        return Math.max(0, Math.min(1, (start + (session.skip || 0)) / totalChars))
+      }
+      const count = view.total || 0
+      if (!count) return 0
+      return Math.max(0, Math.min(1, (Math.min(view.unit, count - 1) + 1) / count))
     }
 
     function updatePlayerWindow() {
@@ -1969,8 +2006,11 @@ window.__ModuleLoader__.load({
       // the two things a wrong highlight has to be blamed on.
       const talker = player.kind === 'speech' ? speechLabel(player) : ''
       parts.title.textContent = talker ? title + ' · ' + talker : title
-      const progress = view.total > 1 ? (Math.min(view.unit + 1, view.total) + '/' + view.total + ' · ') : ''
-      parts.meta.textContent = progress + (view.preview || '')
+      // The bar replaces the old "3/19 · paragraph text…" line: progress, not prose.
+      parts.progressFill.style.width = (playerProgressRatio(player) * 100).toFixed(2) + '%'
+      parts.progressFill.parentElement.title = view.total > 1
+        ? (Math.min(view.unit + 1, view.total) + '/' + view.total + (view.preview ? ' · ' + view.preview : ''))
+        : (view.preview || '')
       parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
       parts.play.title = view.phase === 'paused' ? t('继续', 'Resume') : t('暂停', 'Pause')
       parts.play.disabled = view.phase === 'loading'

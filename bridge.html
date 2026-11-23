@@ -40,7 +40,7 @@
   #voiceSearch:focus{outline:none;border-color:var(--accent)}
   /* A plain caret instead of the search box's clear button. */
   .caret{position:absolute;right:8px;top:50%;transform:translateY(-50%);pointer-events:none;
-    font-size:10px;line-height:1;color:var(--dim)}
+    display:flex;align-items:center;color:var(--dim)}
   /* The list may grow wider than the field: voice names are long. */
   #voiceList{position:absolute;top:calc(100% + 6px);left:0;z-index:20;
     width:max-content;min-width:100%;max-width:min(36rem, 88vw);
@@ -98,7 +98,10 @@
     <span class="picker">
       <input id="voiceSearch" type="text" autocomplete="off" spellcheck="false"
              placeholder="音色：点开或输入筛选" title="音色（可输入筛选）">
-      <span class="caret" aria-hidden="true">▾</span>
+      <span class="caret" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </span>
       <div id="voiceList" hidden></div>
     </span>
     <label class="chk" title="只列出离线音色，不连厂商服务器"><input type="checkbox" id="onlyLocal"> 本地</label>
@@ -163,7 +166,7 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     listOpen: false, filter: '', hover: -1,
     // Progress: characters already finished, plus where this paragraph started.
     charStarts: [], totalChars: 0, baseChars: 0, paraStart: 0, paraLen: 0,
-    paraBoundary: 0, sawBoundary: false, cps: 0, pausedAt: 0
+    paraBoundary: 0, sawBoundary: false
   };
 
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
@@ -521,26 +524,17 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     if (progressTimer) { clearInterval(progressTimer); progressTimer = 0; }
   }
 
-  /** Characters finished so far: exact where the voice reports boundaries,
-   *  guessed from elapsed time × chars-per-second where it does not. */
+  /** Characters finished so far. Exact while the voice reports word boundaries;
+   *  otherwise the bar steps once per paragraph, because a guess would lie. */
   function charsRead() {
-    var done = st.baseChars || 0;
-    if (!st.running) return done;
-    var inParagraph;
-    if (st.sawBoundary) {
-      inParagraph = st.paraBoundary;
-    } else if (st.paraStart) {
-      var seconds = Math.max(0, (performance.now() - st.paraStart) / 1000);
-      inParagraph = Math.min(st.paraLen, seconds * (Number(st.rate) || 1) * (st.cps || 4.5));
-    } else {
-      inParagraph = 0;
-    }
-    return Math.min(st.totalChars || 0, done + inParagraph);
+    if (!st.running) return st.baseChars || 0;
+    var start = st.charStarts[st.idx] || 0;
+    if (st.sawBoundary) return Math.min(st.totalChars || 0, start + st.paraBoundary);
+    return Math.min(st.totalChars || 0, start);
   }
 
   function tickProgress() {
-    if (!st.totalChars) return;
-    if (!st.running) return;
+    if (!st.totalChars || !st.running) return;
     var pct = Math.max(0, Math.min(99, (charsRead() / st.totalChars) * 100));
     el.fill.style.width = pct.toFixed(2) + '%';
   }
@@ -560,7 +554,6 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     st.paused = false;
     clearWatchdog();
     stopProgress();
-    st.pausedAt = 0;
     try { synth && synth.cancel(); } catch (e) {}
     banner('err', reason + (canRetryLocal ? '　可以点「▶」换本地音色重试。' : ''));
     var local = pickLocalVoice();
@@ -590,11 +583,8 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     paint();
     // The bar follows characters; reset it to where this run begins.
     st.baseChars = st.charStarts[start] || 0;
-    st.paraStart = 0;
-    st.paraLen = 0;
     st.paraBoundary = base;
     st.sawBoundary = false;
-    st.pausedAt = 0;
     el.fill.style.width = ((st.baseChars / (st.totalChars || 1)) * 100).toFixed(2) + '%';
     startProgress();
 
@@ -633,10 +623,8 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
           st.idx = item.index;
           st.boundary = item.begin;
           st.baseChars = st.charStarts[item.index] || 0;
-          st.paraLen = item.begin + String(item.rest).length;
           st.paraBoundary = item.begin;
           st.sawBoundary = false;
-          st.paraStart = performance.now();
           paintPara(item.index);
           follow(item.index);
           paint();
@@ -651,15 +639,6 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
         };
         utter.onend = function () {
           if (gen !== st.gen) return;
-          // Learn this voice's characters-per-second while it is fresh, so the
-          // guess for the next paragraph is close.
-          if (st.paraStart && st.paraLen) {
-            var seconds = (performance.now() - st.paraStart) / 1000;
-            if (seconds > 0.4) {
-              var measured = st.paraLen / seconds / (Number(st.rate) || 1);
-              st.cps = st.cps ? (st.cps * 3 + measured) / 4 : measured;
-            }
-          }
           if (item.index + 1 < units.length) return;
           clearWatchdog();
           finish();
@@ -718,7 +697,6 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     st.gen++;
     clearWatchdog();
     stopProgress();
-    st.pausedAt = 0;
     try { synth.cancel(); } catch (e) {}
     el.fill.style.width = '0%';
     setStatus('已停止');
@@ -736,13 +714,9 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
     if (st.paused) {
       try { synth.resume(); } catch (e) {}
       st.paused = false;
-      // Paused time does not count towards the guessed character position.
-      if (st.paraStart && st.pausedAt) st.paraStart += performance.now() - st.pausedAt;
-      st.pausedAt = 0;
     } else {
       try { synth.pause(); } catch (e) {}
       st.paused = true;
-      st.pausedAt = performance.now();
     }
     paint();
   }
@@ -894,10 +868,14 @@ window.__BRIDGE__ = typeof __BRIDGE_DATA__ === 'undefined' ? {} : __BRIDGE_DATA_
       el.dot.className = 'dot warn';
       el.dot.title = everOpen ? '与 DSH 的连接断开，正在重连…' : '还没连上 DSH';
       if (everOpen) return;
-      // A tab left over from before a Host restart can never reconnect; say so
-      // instead of waiting silently for a push that will not arrive.
+      // A tab left over from before a Host restart — or one opened from a file
+      // or a plain static server — can never reconnect. Say it out loud: a
+      // waiting page with no explanation looks like the page is broken.
       setTimeout(function () {
-        if (!everOpen) el.dot.title = '还没连上 DSH：Host 重启后请刷新本页';
+        if (everOpen) return;
+        el.dot.title = '还没连上 DSH：Host 重启后请刷新本页';
+        banner('warn', '这一页没有连上 DSH（它可能是从文件/静态服务打开的，或 Host 重启过）。'
+          + '在 DSH 里点一次「朗读」会自动打开新的桥页面。');
       }, 2000);
     };
   }
