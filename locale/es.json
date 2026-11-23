@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Leer en voz alta",
+    "description": "Lee las respuestas del asistente con la API TTS de DeepSeek. El audio se guarda en caché en este equipo y se reproduce desde ella al siguiente clic; la clave de API nunca sale del proceso Host.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -10,13 +10,14 @@
     --dim-text:rgba(230,233,239,.52); --bar:rgba(15,17,21,.82); --field:#0c0e12;
     --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --accent:#60a5fa;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
+    color-scheme: dark;
   }
-  @media (prefers-color-scheme: light) {
-    :root{
-      --bg:#fbfbfa; --line:#e3e4e8; --fg:#1f2329; --dim:#6b7280;
-      --dim-text:rgba(31,35,41,.55); --bar:rgba(251,251,250,.84); --field:#ffffff;
-      --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
-    }
+  /* The palette follows DSH, not the OS: the Host sends its scheme with the text. */
+  :root[data-theme="light"]{
+    --bg:#fbfbfa; --line:#e3e4e8; --fg:#1f2329; --dim:#6b7280;
+    --dim-text:rgba(31,35,41,.55); --bar:rgba(251,251,250,.84); --field:#ffffff;
+    --ok:#22a06b; --warn:#b45309; --err:#c0392b; --accent:#2563eb;
+    color-scheme: light;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -28,22 +29,52 @@
     -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
   .bar-inner{max-width:44rem;margin:0 auto;padding:0 16px;height:52px;
     display:flex;align-items:center;gap:8px}
-  .brand{flex:0 0 auto;font-size:13px;color:var(--dim);letter-spacing:.02em;margin-right:auto;
-    white-space:nowrap}
   .progress{height:2px;background:transparent}
   #fill{height:100%;width:0;background:var(--accent);transition:width .25s linear}
 
-  select{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:7px;
-    padding:5px 7px;font:inherit;font-size:12.5px;max-width:12rem;min-width:0}
+  /* Voice picker: one searchable field, the list only exists while it is open.
+     A system can expose 10 000+ voices (espeak-ng), so a <select> is a trap. */
+  .picker{position:relative;flex:1 1 auto;min-width:0;margin-right:auto}
+  #voiceSearch{width:100%;max-width:26rem;background:var(--field);color:var(--fg);
+    border:1px solid var(--line);border-radius:7px;padding:5px 24px 5px 8px;font:inherit;font-size:12.5px;
+    min-width:0}
+  #voiceSearch:focus{outline:none;border-color:var(--accent)}
+  /* A plain caret instead of the search box's clear button. */
+  .caret{position:absolute;right:8px;top:50%;transform:translateY(-50%);pointer-events:none;
+    display:flex;align-items:center;color:var(--dim)}
+  /* The list may grow wider than the field: voice names are long. */
+  #voiceList{position:absolute;top:calc(100% + 6px);left:0;z-index:20;
+    width:max-content;min-width:100%;max-width:min(36rem, 88vw);
+    max-height:min(320px,60vh);overflow:auto;background:var(--bg);border:1px solid var(--line);
+    border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:4px}
+  #voiceList .item{padding:5px 8px;border-radius:6px;font-size:12.5px;cursor:pointer;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #voiceList .item:hover,#voiceList .item.hover{background:rgba(96,165,250,.18)}
+  #voiceList .item.current{color:var(--accent);font-weight:600}
+  #voiceList .more{padding:4px 8px;font-size:11.5px;color:var(--dim)}
   .chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);
     cursor:pointer;user-select:none;white-space:nowrap}
   .rate-wrap{display:inline-flex;align-items:center;gap:5px}
-  input[type=range]{width:88px;accent-color:var(--accent)}
+  /* A drawn track: the platform default track is white-on-white in light mode. */
+  input[type=range]{width:88px;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;
+    border:0;border-radius:50%;background:var(--accent)}
+  input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--line)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+  input[type=range]:focus{outline:none}
+  input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
   .val{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:44px}
 
   button{background:transparent;color:var(--fg);border:1px solid transparent;border-radius:7px;
     width:32px;height:30px;font:inherit;font-size:13px;line-height:1;cursor:pointer;
     display:inline-flex;align-items:center;justify-content:center}
+  button svg{width:16px;height:16px;display:block;pointer-events:none}
+  /* The play button holds all three glyphs; data-icon picks one. */
+  #btnPlay svg{display:none}
+  #btnPlay[data-icon=play] .i-play,
+  #btnPlay[data-icon=pause] .i-pause,
+  #btnPlay[data-icon=replay] .i-replay{display:block}
   button:hover:not(:disabled){background:#222736}
   button:disabled{opacity:.35;cursor:not-allowed}
   button.play{width:36px;border-color:var(--line)}
@@ -65,12 +96,13 @@
   .doc p{margin:0 0 1.15em;font-size:17px;line-height:1.85;color:var(--dim-text);
     transition:color .18s ease}
   .doc p.on{color:var(--fg)}
+  /* What is already behind you: read paragraphs fade, the current one stays bright. */
+  .doc p.read{opacity:.42}
   .doc p.mark{background:rgba(96,165,250,.14);border-radius:4px}
   .doc p.empty{color:var(--dim);font-size:15px}
   ::highlight(bridge-para){background-color:rgba(96,165,250,.14)}
   ::highlight(bridge-word){background-color:#f5c542;color:#241a00}
   @media (max-width: 600px) {
-    .brand{display:none}
     .bar-inner{gap:6px;padding:0 12px}
     main{padding:20px 14px 45vh}
     input[type=range]{width:64px}
@@ -80,17 +112,34 @@
 <body>
 <div class="bar">
   <div class="bar-inner">
-    <span class="brand" id="brand">朗读桥</span>
-    <select id="voiceSel" title="音色"><option value="">（正在读取本机语音…）</option></select>
-    <label class="chk" title="只列出离线音色，不连厂商服务器"><input type="checkbox" id="onlyLocal"> 本地</label>
+    <span class="picker">
+      <input id="voiceSearch" type="text" autocomplete="off" spellcheck="false"
+             placeholder="音色：点开或输入筛选" title="音色（可输入筛选）">
+      <span class="caret" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </span>
+      <div id="voiceList" hidden></div>
+    </span>
+    <label class="chk" title="只列出离线音色，不连厂商服务器"><input type="checkbox" id="onlyLocal"> <span id="onlyLocalText">本地</span></label>
     <span class="rate-wrap">
       <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1" title="语速">
       <span class="val" id="rateVal">1.00×</span>
     </span>
-    <button id="btnPrev" title="上一段" disabled>⏮</button>
-    <button id="btnPlay" class="play" title="开始朗读">▶</button>
-    <button id="btnNext" title="下一段" disabled>⏭</button>
-    <button id="btnStop" title="停止" disabled>■</button>
+    <button id="btnPrev" title="上一段" disabled aria-label="上一段">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 5v14a1 1 0 0 1-1.6.8L9 13.5V19a1 1 0 0 1-2 0V5a1 1 0 0 1 2 0v5.5l8.4-6.3A1 1 0 0 1 19 5z"/></svg>
+    </button>
+    <button id="btnPlay" class="play" title="开始朗读" data-icon="play" aria-label="开始朗读">
+      <svg class="i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.6c0-1 1.1-1.6 1.9-1L19 11c.8.5.8 1.5 0 2L8.9 20.4c-.8.6-1.9 0-1.9-1z"/></svg>
+      <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>
+      <svg class="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/></svg>
+    </button>
+    <button id="btnNext" title="下一段" disabled aria-label="下一段">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 5v14a1 1 0 0 0 1.6.8l8.4-6.3V19a1 1 0 0 0 2 0V5a1 1 0 0 0-2 0v5.5L6.6 4.2A1 1 0 0 0 5 5z"/></svg>
+    </button>
+    <button id="btnStop" title="停止" disabled aria-label="停止">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+    </button>
     <span id="dot" class="dot" title="未连接 DSH"></span>
   </div>
   <div class="progress"><div id="fill"></div></div>
@@ -104,11 +153,33 @@
   <div id="doc" class="doc"></div>
 </main>
 
-<script>window.__BRIDGE__ = __BRIDGE_DATA__;</script>
+<script>/* The Host substitutes the text placeholder; opened straight from disk there is none. */
+try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }</script>
 <script>
 (function () {
   'use strict';
   var data = window.__BRIDGE__ || {};
+  /** Keep the page in the app's palette; opened from disk it stays dark. */
+  function applyScheme(scheme) {
+    try {
+      document.documentElement.setAttribute('data-theme', scheme === 'light' ? 'light' : 'dark');
+    } catch (e) {}
+  }
+  applyScheme(data.scheme);
+  // ?demo=1 fills the page with a sample so it can be tried without DSH. The
+  // hash works too, because some browsers drop the query on file:// URLs.
+  var demo = /[?&]demo=1/.test(window.location.search || '') || /demo/.test(window.location.hash || '');
+  if (demo && !(Array.isArray(data.units) && data.units.length)) {
+    data = {
+      title: '朗读桥 · 自测文本',
+      speed: 1,
+      units: [
+        { text: '这是朗读桥的自测文本。段落高亮是淡蓝色，读到哪个词，那个词会变成黄色。' },
+        { text: '缓存 缓存 缓存：同一个词在一段里出现多次时，只高亮正在读的那一处，不会来回跳。' },
+        { text: '如果这里提示没有可用音色，说明系统没装语音合成后端（Linux 上是 speech-dispatcher）。' },
+      ],
+    };
+  }
   var units = Array.isArray(data.units) ? data.units.map(function (u, i) {
     return { index: i, text: String((u && u.text) || '') };
   }) : [];
@@ -119,18 +190,471 @@
   var FOLLOW_RESUME_MS = 3000;
 
   var el = {};
-  ['brand','fill','banner','voiceSel','onlyLocal','btnPrev','btnPlay','btnNext','btnStop',
+  ['fill','banner','voiceSearch','voiceList','onlyLocal','onlyLocalText','btnPrev','btnPlay','btnNext','btnStop',
    'rate','rateVal','dot','title','sub','doc'].forEach(function (id) { el[id] = document.getElementById(id); });
 
   var st = {
     voices: [], visible: [], idx: 0, running: false, paused: false, stop: false,
     gen: 0, watchdog: 0, boundary: 0, attempted: false, startedAt: 0,
-    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0
+    rate: 1, savedUri: '', paragraphs: [], userScrolledAt: 0,
+    listOpen: false, filter: '', hover: -1,
+    // Pushes that arrived while something was playing wait here, in order: a
+    // newer push must never cut off the paragraph being spoken.
+    queue: [], active: null, lastActive: null, done: false,
+    dotState: 'idle', dotTitle: '未连接 DSH',
+    // Progress: characters already finished, plus where this paragraph started.
+    charStarts: [], totalChars: 0, baseChars: 0, paraStart: 0, paraLen: 0,
+    paraBoundary: 0, sawBoundary: false
   };
 
+  /** Where the bridge's own API lives, or null when this page has no Host. */
+  function apiBase() {
+    try {
+      if (!/^https?:$/.test(window.location.protocol || '')) return null;
+      return String(window.location.pathname || '').replace(/\/[^/]*$/, '');
+    } catch (e) { return null; }
+  }
+
+  /** Tell the Host what happened to one push: received, state, stopped. */
+  function ack(id, kind, messageId, units, extra) {
+    if (!id) return;
+    var dir = apiBase();
+    if (dir === null) return;
+    var body = { id: String(id), kind: String(kind) };
+    if (messageId) body.messageId = String(messageId);
+    if (typeof units === 'number') body.units = units;
+    if (extra) for (var name in extra) body[name] = extra[name];
+    var json = JSON.stringify(body);
+    try {
+      if (navigator.sendBeacon) {
+        var blob = new Blob([json], { type: 'application/json' });
+        if (navigator.sendBeacon(dir + '/bridge/ack', blob)) return;
+      }
+    } catch (e) {}
+    try {
+      fetch(dir + '/bridge/ack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: json,
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  /** Mirror the current reading state back to the app (wave / pause / queue). */
+  function reportState(phase) {
+    var active = st.active;
+    if (!active || !active.id) return;
+    ack(active.id, 'state', active.messageId, undefined, {
+      key: active.key || '',
+      phase: phase,
+      unit: Math.min(st.idx, units.length),
+      total: units.length,
+      queued: st.queue.length
+    });
+  }
+
+  /** A push that had to wait: the app can show its spinner meanwhile. */
+  function reportQueued(payload) {
+    if (!payload || !payload.id) return;
+    ack(payload.id, 'state', payload.messageId, undefined, {
+      key: payload.key || '',
+      phase: 'queued',
+      unit: 0,
+      total: (payload.units || []).length,
+      queued: st.queue.length
+    });
+  }
+
+  /**
+   * The page's own copy in the eight languages DSH ships. The language arrives
+   * with the text (and again on every prefs push), because this page cannot see
+   * the app's locale service. Chinese is the historical default.
+   */
+  var I18N = {
+    zh: {
+      readAloudTitle: '朗读桥',
+      voicePlaceholder: '音色：点开或输入筛选',
+      voiceFieldTitle: '音色（可输入筛选）',
+      localOnly: '本地',
+      localOnlyTitle: '只列出离线音色，不连厂商服务器',
+      speedTitle: '语速',
+      prevPara: '上一段',
+      playStart: '开始朗读',
+      pause: '暂停',
+      resume: '继续',
+      nextPara: '下一段',
+      stopReading: '停止',
+      notConnected: '未连接 DSH',
+      emptyWaiting: 'DSH 还没有推送朗读内容。在 DSH 里点一次「朗读」，这段文字会自动出现在这一页。',
+      noVoicesYet: '（没有可用音色）',
+      noMatch: '没有匹配的音色',
+      moreVoices: '还有 {n} 个，继续滚动或输入筛选',
+      queued: ' · 已排队 {n} 段',
+      replay: '重读（全部 {n} 段已读完）',
+      retryLocalHint: '　可以点「▶」换本地音色重试。',
+      switchedLocal: '　已自动选用本地音色「{name}」，点「▶」即可。',
+      noSoundTimeout: '这个音色在 {sec} 秒内没有出声（多半连不上厂商服务器）',
+      needsClick: '浏览器要求先点一下「▶」才允许发声。',
+      paraFailed: '第 {n} 段朗读失败：{err}',
+      refused: '浏览器拒绝朗读：{err}',
+      finished: '已读完 {n} 段 · 用时 {time}',
+      noVoice: '这台浏览器没有可用的语音，无法朗读。',
+      stopped: '已停止',
+      statusCount: '{n} 段 · 共 {c} 字',
+      waitingPush: '等待 DSH 推送…',
+      noWebSpeech: '这个浏览器不支持 Web Speech 语音合成。',
+      noOfflineVoices: '本机没有离线音色；取消勾选「本地」可以用云端音色（需要联网）。',
+      noVoicesAtAll: '这个内核没有暴露任何语音。',
+      connected: '已连接 DSH',
+      disconnected: '与 DSH 的连接断开，正在重连…',
+      notConnectedYet: '还没连上 DSH',
+      stalePage: '还没连上 DSH：Host 重启后请刷新本页',
+      staleBanner: '这一页没有连上 DSH（它可能是从文件/静态服务打开的，或 Host 重启过）。在 DSH 里点一次「朗读」会自动打开新的桥页面。'
+    },
+    en: {
+      readAloudTitle: 'Read aloud',
+      voicePlaceholder: 'Voice — click or type to filter',
+      voiceFieldTitle: 'Voice (type to filter)',
+      localOnly: 'Local',
+      localOnlyTitle: 'List offline voices only (no vendor servers)',
+      speedTitle: 'Speed',
+      prevPara: 'Previous paragraph',
+      playStart: 'Start reading',
+      pause: 'Pause',
+      resume: 'Resume',
+      nextPara: 'Next paragraph',
+      stopReading: 'Stop',
+      notConnected: 'Not connected to DSH',
+      emptyWaiting: 'DSH has not pushed any text yet. Click “Read aloud” in DSH and it will appear on this page.',
+      noVoicesYet: '(no voices available)',
+      noMatch: 'No matching voices',
+      moreVoices: '{n} more — keep scrolling or type to filter',
+      queued: ' · {n} queued',
+      replay: 'Read again (all {n} paragraphs read)',
+      retryLocalHint: ' Click ▶ to retry with a local voice.',
+      switchedLocal: ' Switched to the local voice “{name}” — press ▶.',
+      noSoundTimeout: 'This voice produced no sound within {sec}s (it probably cannot reach its server)',
+      needsClick: 'The browser needs one click on ▶ before it may speak.',
+      paraFailed: 'Paragraph {n} failed: {err}',
+      refused: 'The browser refused to speak: {err}',
+      finished: 'Read {n} paragraphs · {time}',
+      noVoice: 'This browser has no usable voice, so it cannot read aloud.',
+      stopped: 'Stopped',
+      statusCount: '{n} paragraphs · {c} characters',
+      waitingPush: 'Waiting for DSH…',
+      noWebSpeech: 'This browser does not support Web Speech synthesis.',
+      noOfflineVoices: 'No offline voices on this machine; uncheck “Local” to use cloud voices (needs a network).',
+      noVoicesAtAll: 'This browser exposes no voices at all.',
+      connected: 'Connected to DSH',
+      disconnected: 'Lost the DSH connection — reconnecting…',
+      notConnectedYet: 'Not connected to DSH yet',
+      stalePage: 'DSH is unreachable: refresh this page after a Host restart',
+      staleBanner: 'This page is not connected to DSH (opened from a file/static server, or the Host restarted). Clicking “Read aloud” in DSH opens a fresh bridge page.'
+    },
+    ja: {
+      readAloudTitle: '読み上げページ',
+      voicePlaceholder: '音声：クリックまたは入力で絞り込み',
+      voiceFieldTitle: '音声（入力で絞り込み）',
+      localOnly: 'ローカル',
+      localOnlyTitle: 'オフラインの音声だけを表示（ベンダーのサーバーに接続しない）',
+      speedTitle: '速度',
+      prevPara: '前の段落',
+      playStart: '読み上げ開始',
+      pause: '一時停止',
+      resume: '再開',
+      nextPara: '次の段落',
+      stopReading: '停止',
+      notConnected: 'DSH に未接続',
+      emptyWaiting: 'DSH からまだテキストが届いていません。DSH で「読み上げ」を押すと、このページに表示されます。',
+      noVoicesYet: '（利用できる音声なし）',
+      noMatch: '一致する音声がありません',
+      moreVoices: 'あと {n} 件。スクロールするか入力で絞り込んでください',
+      queued: ' · {n} 件待機中',
+      replay: 'もう一度読む（全 {n} 段落読み上げ済み）',
+      retryLocalHint: '　「▶」でローカル音声に切り替えて再試行できます。',
+      switchedLocal: '　ローカル音声「{name}」に自動で切り替えました。「▶」を押してください。',
+      noSoundTimeout: 'この音声は {sec} 秒間音が出ませんでした（サーバーに接続できていない可能性）',
+      needsClick: 'ブラウザは「▶」を一度クリックするまで発声を許可しません。',
+      paraFailed: '{n} 段落目の読み上げに失敗：{err}',
+      refused: 'ブラウザが読み上げを拒否しました：{err}',
+      finished: '{n} 段落を読み終えました · {time}',
+      noVoice: 'このブラウザには使える音声がないため、読み上げられません。',
+      stopped: '停止しました',
+      statusCount: '{n} 段落 · 全 {c} 文字',
+      waitingPush: 'DSH の送信を待っています…',
+      noWebSpeech: 'このブラウザは Web Speech 音声合成に対応していません。',
+      noOfflineVoices: 'この端末にオフライン音声がありません。「ローカル」を外すとクラウド音声を使えます（ネットワークが必要）。',
+      noVoicesAtAll: 'このブラウザは音声を一つも公開していません。',
+      connected: 'DSH に接続済み',
+      disconnected: 'DSH との接続が切れました。再接続中…',
+      notConnectedYet: 'まだ DSH に接続していません',
+      stalePage: 'DSH に接続できません：Host の再起動後にこのページを再読み込みしてください',
+      staleBanner: 'このページは DSH に接続できていません（ファイル/静的サーバーから開いたか、Host が再起動しました）。DSH で「読み上げ」を押すと新しいページが開きます。'
+    },
+    es: {
+      readAloudTitle: 'Puente de lectura',
+      voicePlaceholder: 'Voz: haz clic o escribe para filtrar',
+      voiceFieldTitle: 'Voz (escribe para filtrar)',
+      localOnly: 'Local',
+      localOnlyTitle: 'Mostrar solo voces sin conexión (sin servidores del fabricante)',
+      speedTitle: 'Velocidad',
+      prevPara: 'Párrafo anterior',
+      playStart: 'Empezar a leer',
+      pause: 'Pausar',
+      resume: 'Reanudar',
+      nextPara: 'Párrafo siguiente',
+      stopReading: 'Detener',
+      notConnected: 'Sin conexión con DSH',
+      emptyWaiting: 'DSH aún no ha enviado texto. Pulsa «Leer en voz alta» en DSH y aparecerá en esta página.',
+      noVoicesYet: '(no hay voces disponibles)',
+      noMatch: 'Ninguna voz coincide',
+      moreVoices: '{n} más: sigue desplazándote o escribe para filtrar',
+      queued: ' · {n} en cola',
+      replay: 'Leer de nuevo (los {n} párrafos ya leídos)',
+      retryLocalHint: ' Pulsa ▶ para reintentar con una voz local.',
+      switchedLocal: ' Se cambió a la voz local «{name}»: pulsa ▶.',
+      noSoundTimeout: 'Esta voz no sonó en {sec} s (probablemente no llega a su servidor)',
+      needsClick: 'El navegador necesita un clic en ▶ antes de poder hablar.',
+      paraFailed: 'Falló el párrafo {n}: {err}',
+      refused: 'El navegador rechazó hablar: {err}',
+      finished: 'Leídos {n} párrafos · {time}',
+      noVoice: 'Este navegador no tiene ninguna voz utilizable, así que no puede leer.',
+      stopped: 'Detenido',
+      statusCount: '{n} párrafos · {c} caracteres',
+      waitingPush: 'Esperando a DSH…',
+      noWebSpeech: 'Este navegador no admite la síntesis de Web Speech.',
+      noOfflineVoices: 'No hay voces sin conexión en esta máquina; desmarca «Local» para usar voces en la nube (requiere red).',
+      noVoicesAtAll: 'Este navegador no expone ninguna voz.',
+      connected: 'Conectado a DSH',
+      disconnected: 'Se perdió la conexión con DSH: reconectando…',
+      notConnectedYet: 'Aún sin conexión con DSH',
+      stalePage: 'DSH no responde: recarga esta página tras reiniciar el Host',
+      staleBanner: 'Esta página no está conectada a DSH (abierta desde un archivo/servidor estático, o el Host se reinició). Pulsar «Leer en voz alta» en DSH abre una página nueva.'
+    },
+    fr: {
+      readAloudTitle: 'Pont de lecture',
+      voicePlaceholder: 'Voix : cliquez ou tapez pour filtrer',
+      voiceFieldTitle: 'Voix (tapez pour filtrer)',
+      localOnly: 'Local',
+      localOnlyTitle: 'Lister uniquement les voix hors ligne (sans serveur du fabricant)',
+      speedTitle: 'Vitesse',
+      prevPara: 'Paragraphe précédent',
+      playStart: 'Commencer la lecture',
+      pause: 'Mettre en pause',
+      resume: 'Reprendre',
+      nextPara: 'Paragraphe suivant',
+      stopReading: 'Arrêter',
+      notConnected: 'Non connecté à DSH',
+      emptyWaiting: 'DSH n’a encore rien envoyé. Cliquez sur « Lire à voix haute » dans DSH et le texte apparaîtra ici.',
+      noVoicesYet: '(aucune voix disponible)',
+      noMatch: 'Aucune voix correspondante',
+      moreVoices: '{n} de plus — continuez à faire défiler ou tapez pour filtrer',
+      queued: ' · {n} en attente',
+      replay: 'Relire (les {n} paragraphes sont lus)',
+      retryLocalHint: ' Cliquez sur ▶ pour réessayer avec une voix locale.',
+      switchedLocal: ' Voix locale « {name} » sélectionnée automatiquement — cliquez sur ▶.',
+      noSoundTimeout: 'Cette voix n’a rien émis pendant {sec} s (elle n’atteint probablement pas son serveur)',
+      needsClick: 'Le navigateur exige un clic sur ▶ avant de parler.',
+      paraFailed: 'Échec du paragraphe {n} : {err}',
+      refused: 'Le navigateur a refusé de parler : {err}',
+      finished: '{n} paragraphes lus · {time}',
+      noVoice: 'Ce navigateur n’a aucune voix utilisable : impossible de lire.',
+      stopped: 'Arrêté',
+      statusCount: '{n} paragraphes · {c} caractères',
+      waitingPush: 'En attente de DSH…',
+      noWebSpeech: 'Ce navigateur ne prend pas en charge la synthèse Web Speech.',
+      noOfflineVoices: 'Aucune voix hors ligne sur cette machine ; décochez « Local » pour utiliser les voix du cloud (réseau requis).',
+      noVoicesAtAll: 'Ce navigateur n’expose aucune voix.',
+      connected: 'Connecté à DSH',
+      disconnected: 'Connexion à DSH perdue — reconnexion…',
+      notConnectedYet: 'Pas encore connecté à DSH',
+      stalePage: 'DSH est injoignable : rechargez cette page après un redémarrage du Host',
+      staleBanner: 'Cette page n’est pas connectée à DSH (ouverte depuis un fichier/serveur statique, ou le Host a redémarré). Cliquer sur « Lire à voix haute » dans DSH ouvre une nouvelle page.'
+    },
+    de: {
+      readAloudTitle: 'Lese-Brücke',
+      voicePlaceholder: 'Stimme – klicken oder tippen zum Filtern',
+      voiceFieldTitle: 'Stimme (tippen zum Filtern)',
+      localOnly: 'Lokal',
+      localOnlyTitle: 'Nur Offline-Stimmen anzeigen (keine Herstellerserver)',
+      speedTitle: 'Geschwindigkeit',
+      prevPara: 'Vorheriger Absatz',
+      playStart: 'Vorlesen starten',
+      pause: 'Pause',
+      resume: 'Fortsetzen',
+      nextPara: 'Nächster Absatz',
+      stopReading: 'Stopp',
+      notConnected: 'Nicht mit DSH verbunden',
+      emptyWaiting: 'DSH hat noch keinen Text gesendet. Klicke in DSH auf „Vorlesen“, dann erscheint er hier.',
+      noVoicesYet: '(keine Stimmen verfügbar)',
+      noMatch: 'Keine passende Stimme',
+      moreVoices: 'noch {n} – weiter scrollen oder tippen zum Filtern',
+      queued: ' · {n} in Warteschlange',
+      replay: 'Erneut lesen (alle {n} Absätze gelesen)',
+      retryLocalHint: ' Klicke auf ▶, um es mit einer lokalen Stimme zu versuchen.',
+      switchedLocal: ' Lokale Stimme „{name}“ gewählt – auf ▶ drücken.',
+      noSoundTimeout: 'Diese Stimme gab {sec} s lang keinen Ton (erreicht wohl ihren Server nicht)',
+      needsClick: 'Der Browser braucht einen Klick auf ▶, bevor er sprechen darf.',
+      paraFailed: 'Absatz {n} fehlgeschlagen: {err}',
+      refused: 'Der Browser hat das Sprechen abgelehnt: {err}',
+      finished: '{n} Absätze gelesen · {time}',
+      noVoice: 'Dieser Browser hat keine nutzbare Stimme und kann nicht vorlesen.',
+      stopped: 'Gestoppt',
+      statusCount: '{n} Absätze · {c} Zeichen',
+      waitingPush: 'Warte auf DSH…',
+      noWebSpeech: 'Dieser Browser unterstützt keine Web-Speech-Synthese.',
+      noOfflineVoices: 'Keine Offline-Stimmen auf diesem Rechner; „Lokal“ abwählen, um Cloud-Stimmen zu nutzen (Netz nötig).',
+      noVoicesAtAll: 'Dieser Browser stellt keine Stimmen bereit.',
+      connected: 'Mit DSH verbunden',
+      disconnected: 'Verbindung zu DSH verloren – verbinde neu…',
+      notConnectedYet: 'Noch nicht mit DSH verbunden',
+      stalePage: 'DSH ist nicht erreichbar: lade diese Seite nach einem Host-Neustart neu',
+      staleBanner: 'Diese Seite ist nicht mit DSH verbunden (aus einer Datei/einem statischen Server geöffnet, oder der Host wurde neu gestartet). Ein Klick auf „Vorlesen“ in DSH öffnet eine neue Seite.'
+    },
+    ru: {
+      readAloudTitle: 'Мост чтения',
+      voicePlaceholder: 'Голос — нажмите или начните вводить для фильтра',
+      voiceFieldTitle: 'Голос (ввод для фильтра)',
+      localOnly: 'Локальные',
+      localOnlyTitle: 'Только офлайн-голоса (без серверов производителя)',
+      speedTitle: 'Скорость',
+      prevPara: 'Предыдущий абзац',
+      playStart: 'Начать чтение',
+      pause: 'Пауза',
+      resume: 'Продолжить',
+      nextPara: 'Следующий абзац',
+      stopReading: 'Стоп',
+      notConnected: 'Нет связи с DSH',
+      emptyWaiting: 'DSH ещё не отправил текст. Нажмите «Читать вслух» в DSH — текст появится на этой странице.',
+      noVoicesYet: '(нет доступных голосов)',
+      noMatch: 'Подходящих голосов нет',
+      moreVoices: 'ещё {n} — прокрутите или введите запрос',
+      queued: ' · в очереди: {n}',
+      replay: 'Прочитать снова (все {n} абзацев прочитаны)',
+      retryLocalHint: ' Нажмите ▶, чтобы повторить с локальным голосом.',
+      switchedLocal: ' Выбран локальный голос «{name}» — нажмите ▶.',
+      noSoundTimeout: 'Голос молчал {sec} с (вероятно, не может связаться с сервером)',
+      needsClick: 'Браузеру нужен один клик по ▶, чтобы начать говорить.',
+      paraFailed: 'Ошибка в абзаце {n}: {err}',
+      refused: 'Браузер отказался говорить: {err}',
+      finished: 'Прочитано {n} абзацев · {time}',
+      noVoice: 'В этом браузере нет пригодного голоса, читать нечем.',
+      stopped: 'Остановлено',
+      statusCount: '{n} абзацев · {c} символов',
+      waitingPush: 'Ожидание DSH…',
+      noWebSpeech: 'Этот браузер не поддерживает синтез Web Speech.',
+      noOfflineVoices: 'На этой машине нет офлайн-голосов; снимите «Локальные», чтобы использовать облачные (нужна сеть).',
+      noVoicesAtAll: 'Этот браузер не предоставляет ни одного голоса.',
+      connected: 'Связь с DSH установлена',
+      disconnected: 'Связь с DSH потеряна — переподключение…',
+      notConnectedYet: 'Связи с DSH пока нет',
+      stalePage: 'DSH недоступен: перезагрузите страницу после перезапуска Host',
+      staleBanner: 'Эта страница не связана с DSH (открыта из файла/статического сервера или Host перезапускался). Нажатие «Читать вслух» в DSH откроет новую страницу.'
+    },
+    pt: {
+      readAloudTitle: 'Modo de leitura',
+      voicePlaceholder: 'Voz — clique ou digite para filtrar',
+      voiceFieldTitle: 'Voz (digite para filtrar)',
+      localOnly: 'Local',
+      localOnlyTitle: 'Listar apenas vozes offline (sem servidores do fabricante)',
+      speedTitle: 'Velocidade',
+      prevPara: 'Parágrafo anterior',
+      playStart: 'Começar a ler',
+      pause: 'Pausar',
+      resume: 'Continuar',
+      nextPara: 'Próximo parágrafo',
+      stopReading: 'Parar',
+      notConnected: 'Sem conexão com DSH',
+      emptyWaiting: 'O DSH ainda não enviou texto. Clique em «Ler em voz alta» no DSH e ele aparecerá nesta página.',
+      noVoicesYet: '(nenhuma voz disponível)',
+      noMatch: 'Nenhuma voz correspondente',
+      moreVoices: 'mais {n} — continue rolando ou digite para filtrar',
+      queued: ' · {n} na fila',
+      replay: 'Ler de novo (os {n} parágrafos já lidos)',
+      retryLocalHint: ' Clique em ▶ para tentar com uma voz local.',
+      switchedLocal: ' Voz local «{name}» selecionada — pressione ▶.',
+      noSoundTimeout: 'Esta voz não emitiu som em {sec} s (provavelmente não alcança o servidor)',
+      needsClick: 'O navegador precisa de um clique em ▶ antes de falar.',
+      paraFailed: 'Falha no parágrafo {n}: {err}',
+      refused: 'O navegador recusou falar: {err}',
+      finished: '{n} parágrafos lidos · {time}',
+      noVoice: 'Este navegador não tem voz utilizável, então não pode ler.',
+      stopped: 'Parado',
+      statusCount: '{n} parágrafos · {c} caracteres',
+      waitingPush: 'Aguardando o DSH…',
+      noWebSpeech: 'Este navegador não suporta síntese Web Speech.',
+      noOfflineVoices: 'Não há vozes offline nesta máquina; desmarque «Local» para usar vozes na nuvem (requer rede).',
+      noVoicesAtAll: 'Este navegador não expõe nenhuma voz.',
+      connected: 'Conectado ao DSH',
+      disconnected: 'Conexão com o DSH perdida — reconectando…',
+      notConnectedYet: 'Ainda sem conexão com o DSH',
+      stalePage: 'DSH inacessível: recarregue esta página após reiniciar o Host',
+      staleBanner: 'Esta página não está conectada ao DSH (aberta de um arquivo/servidor estático, ou o Host reiniciou). Clicar em «Ler em voz alta» no DSH abre uma página nova.'
+    }
+  };
+
+  /** The page's language; DSH sends it with every push and on prefs changes. */
+  var lang = 'zh';
+
+  function tr(key) {
+    var table = I18N[lang] || I18N.zh;
+    if (table && table[key]) return table[key];
+    return (I18N.zh[key] || key);
+  }
+
+  function fmt(key, vars) {
+    return String(tr(key)).replace(/\{(\w+)\}/g, function (match, name) {
+      return vars && vars[name] !== undefined ? String(vars[name]) : match;
+    });
+  }
+
+  function applyLang(next) {
+    var base = String(next || '').toLowerCase().split(/[-_]/)[0];
+    lang = I18N[base] ? base : 'zh';
+    try { document.documentElement.setAttribute('lang', lang); } catch (e) {}
+    applyStaticText();
+    // The empty-state text and the placeholders are rebuilt in this language;
+    // keep the read marks so a mid-read language switch does not erase progress.
+    renderDoc();
+    if (st.idx > 0) markRead(Math.min(st.idx, units.length));
+    renderHead();
+    paint();
+  }
+
+  /** The fixed labels live in the markup; this renames them for the language. */
+  function applyStaticText() {
+    var title = tr('readAloudTitle');
+    document.title = title;
+    var pageTitle = document.querySelector('h1#title');
+    if (pageTitle && data.title) pageTitle.textContent = data.title;
+    el.voiceSearch.setAttribute('placeholder', tr('voicePlaceholder'));
+    el.voiceSearch.setAttribute('title', tr('voiceFieldTitle'));
+    el.onlyLocal.setAttribute('title', tr('localOnlyTitle'));
+    if (el.onlyLocalText) el.onlyLocalText.textContent = tr('localOnly');
+    el.rate.setAttribute('title', tr('speedTitle'));
+    el.btnPrev.setAttribute('title', tr('prevPara'));
+    el.btnPrev.setAttribute('aria-label', tr('prevPara'));
+    el.btnNext.setAttribute('title', tr('nextPara'));
+    el.btnNext.setAttribute('aria-label', tr('nextPara'));
+    el.btnStop.setAttribute('title', tr('stopReading'));
+    el.btnStop.setAttribute('aria-label', tr('stopReading'));
+    if (!st.running) el.btnPlay.setAttribute('title', st.done ? tr('replay') : tr('playStart'));
+    if (!st.dotState || st.dotState === 'idle') st.dotTitle = tr('notConnected');
+  }
+
   function isZh(v) { return /^zh/i.test(v.lang || ''); }
-  function isCloud(v) { return v.localService === false; }
-  function fmt(ms) { return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
+  /**
+   * Firefox marks every speech-dispatcher voice as `localService: false`, so a
+   * name check decides the engines known to run on this machine; anything else
+   * that calls itself remote is treated as a vendor server.
+   */
+  function isCloud(v) {
+    if (v.localService !== false) return false;
+    var name = String(v.name || '') + ' ' + String(v.voiceURI || '');
+    return !/espeak|speech-?dispatcher|speechd|festival|pico|svox|mbrola/i.test(name);
+  }
+  function fmtDuration(ms) { return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
 
   function banner(kind, text) {
     el.banner.className = 'show ' + kind;
@@ -140,13 +664,24 @@
 
   /* ---------- the document ---------- */
 
+  /** Length of every paragraph, so the bar can measure characters instead of steps. */
+  function measureChars() {
+    st.charStarts = [];
+    st.totalChars = 0;
+    units.forEach(function (unit, index) {
+      st.charStarts[index] = st.totalChars;
+      st.totalChars += String(unit.text || '').length;
+    });
+  }
+
   function renderDoc() {
     el.doc.textContent = '';
     st.paragraphs = [];
+    measureChars();
     if (!units.length) {
       var empty = document.createElement('p');
       empty.className = 'empty';
-      empty.textContent = 'DSH 还没有推送朗读内容。在 DSH 里点一次「朗读」，这段文字会自动出现在这一页。';
+      empty.textContent = tr('emptyWaiting');
       el.doc.appendChild(empty);
       return;
     }
@@ -180,6 +715,7 @@
       if (i === index) p.classList.add('on');
       else p.classList.remove('on');
     });
+    markRead(index);
     // The word layer belongs to the paragraph that just ended.
     paintWordClear();
     if (supportsHighlight()) {
@@ -198,6 +734,11 @@
     try {
       if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-word');
     } catch (e) {}
+  }
+
+  /** Paragraphs before `upTo` are read: they fade instead of staying unread. */
+  function markRead(upTo) {
+    st.paragraphs.forEach(function (p, i) { p.classList.toggle('read', i < upTo); });
   }
 
   function paintWord(index, from, length) {
@@ -242,40 +783,70 @@
     try { return (synth && synth.getVoices()) || []; } catch (e) { return []; }
   }
 
+  /** The language the app speaks, so its voices come first instead of last. */
+  function preferredLang() {
+    var raw = String(data.lang || '').toLowerCase();
+    if (raw) return raw.split(/[-_]/)[0];
+    var sample = units.slice(0, 3).map(function (u) { return u.text; }).join(' ');
+    if (/[\u3400-\u9fff]/.test(sample)) return 'zh';
+    if (/[\u3040-\u30ff]/.test(sample)) return 'ja';
+    if (/[\uac00-\ud7af]/.test(sample)) return 'ko';
+    return String(navigator.language || 'en').toLowerCase().split(/[-_]/)[0];
+  }
+
   function sortVoices(list) {
+    var pref = preferredLang();
+    var rank = function (v) {
+      var lang = String(v.lang || '').toLowerCase().split(/[-_]/)[0];
+      if (lang === pref) return 0;
+      if (pref !== 'zh' && lang === 'zh') return 1;
+      if (lang === 'en' && pref !== 'en') return 2;
+      return 3;
+    };
     return list.slice().sort(function (a, b) {
-      if (isZh(a) !== isZh(b)) return isZh(a) ? -1 : 1;
-      if (isCloud(a) !== isCloud(b)) return isCloud(a) ? -1 : 1;
+      var ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      // Natural voices (Edge's Online series) sound like speech and do report
+      // word boundaries, so they lead; then local engines; plain cloud last.
+      var na = /natural/i.test(a.name || '') ? 0 : 1;
+      var nb = /natural/i.test(b.name || '') ? 0 : 1;
+      if (na !== nb) return na - nb;
+      if (isCloud(a) !== isCloud(b)) return isCloud(a) ? 1 : -1;
+      // Plain names before espeak's "+Variant" copies.
+      var va = (a.name || '').indexOf('+') === -1 ? 0 : 1;
+      var vb = (b.name || '').indexOf('+') === -1 ? 0 : 1;
+      if (va !== vb) return va - vb;
       var la = a.lang || '', lb = b.lang || '';
       if (la !== lb) return la < lb ? -1 : 1;
       return (a.name || '') < (b.name || '') ? -1 : 1;
     });
   }
 
+  function voiceLabel(v) {
+    return (isCloud(v) ? '☁ ' : '⌂ ') + v.name + ' · ' + v.lang;
+  }
+
   function rebuildVoices() {
     st.voices = sortVoices(allVoices());
     st.visible = el.onlyLocal.checked ? st.voices.filter(function (v) { return !isCloud(v); }) : st.voices;
-    el.voiceSel.textContent = '';
-    if (!st.visible.length) {
-      var o0 = document.createElement('option');
-      o0.value = '';
-      o0.textContent = el.onlyLocal.checked ? '（没有本地音色）' : '（没有可用音色）';
-      el.voiceSel.appendChild(o0);
-      return;
+    if (!st.visible.length && el.onlyLocal.checked && st.voices.length) {
+      // Firefox labels speechd voices remote; never leave the user with nothing.
+      el.onlyLocal.checked = false;
+      st.visible = st.voices;
     }
-    st.visible.forEach(function (v, i) {
-      var o = document.createElement('option');
-      o.value = String(i);
-      o.textContent = (isCloud(v) ? '☁ ' : '⌂ ') + v.name + ' · ' + v.lang;
-      if (v.voiceURI === st.savedUri) o.selected = true;
-      el.voiceSel.appendChild(o);
-    });
-    if (!el.voiceSel.value && st.visible.length) el.voiceSel.value = '0';
+    if (!currentVoice() && st.visible.length) {
+      var remembered = st.visible.filter(function (v) { return v.voiceURI === st.savedUri })[0];
+      st.savedUri = (remembered || st.visible[0]).voiceURI;
+    }
+    paintVoiceField();
+    if (st.listOpen) renderVoiceList();
   }
 
   function currentVoice() {
-    var i = parseInt(el.voiceSel.value, 10);
-    return (i >= 0 && st.visible[i]) ? st.visible[i] : null;
+    if (!st.savedUri) return null;
+    for (var i = 0; i < st.visible.length; i++) if (st.visible[i].voiceURI === st.savedUri) return st.visible[i];
+    for (var j = 0; j < st.voices.length; j++) if (st.voices[j].voiceURI === st.savedUri) return st.voices[j];
+    return null;
   }
 
   function pickLocalVoice() {
@@ -287,11 +858,123 @@
 
   function selectVoice(v) {
     if (!v) return false;
-    if (st.visible.indexOf(v) < 0) { el.onlyLocal.checked = false; rebuildVoices(); }
-    var i = st.visible.indexOf(v);
-    if (i < 0) return false;
-    el.voiceSel.value = String(i);
+    if (st.visible.indexOf(v) < 0) {
+      el.onlyLocal.checked = false;
+      rebuildVoices();
+      if (st.visible.indexOf(v) < 0) return false;
+    }
+    st.savedUri = v.voiceURI;
+    paintVoiceField();
     return true;
+  }
+
+  function paintVoiceField() {
+    var v = currentVoice();
+    el.voiceSearch.value = v ? voiceLabel(v) : (st.visible.length ? '' : tr('noVoicesYet'));
+    el.voiceSearch.placeholder = tr('voicePlaceholder');
+  }
+
+  /* ---------- voice picker ---------- */
+
+  // The list arrives in pages while you scroll: a machine can expose 14000
+  // voices, and building all of those rows is what used to freeze the page.
+  var LIST_PAGE = 40;
+  var listShown = { items: [], count: 0 };
+
+  /** The field also shows a ⌂/☁ prefix; a search must ignore those marks. */
+  function searchText(value) {
+    return String(value || '').replace(/[⌂☁★]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function matchingVoices() {
+    var needle = searchText(st.filter);
+    if (!needle) return st.visible;
+    return st.visible.filter(function (v) {
+      var hay = (String(v.name || '') + ' ' + String(v.lang || '')).toLowerCase();
+      return needle.split(/\s+/).every(function (part) { return hay.indexOf(part) !== -1; });
+    });
+  }
+
+  function itemClass(index, hover) {
+    var v = listShown.items[index];
+    return 'item' + (index === hover ? ' hover' : '') + (v && v.voiceURI === st.savedUri ? ' current' : '');
+  }
+
+  /** Rebuild the open list from the first page. */
+  function renderVoiceList() {
+    listShown.items = matchingVoices();
+    listShown.count = 0;
+    el.voiceList.textContent = '';
+    el.voiceList.hidden = false;
+    st.listOpen = true;
+    if (st.hover >= listShown.items.length) st.hover = 0;
+    if (listShown.items.length === 0) {
+      var none = document.createElement('div');
+      none.className = 'more';
+      none.textContent = tr('noMatch');
+      el.voiceList.appendChild(none);
+      return;
+    }
+    appendVoicePage();
+  }
+
+  /** Add the next page of rows (and keep the "how many more" line up to date). */
+  function appendVoicePage() {
+    var items = listShown.items;
+    var from = listShown.count;
+    var to = Math.min(items.length, from + LIST_PAGE);
+    var more = el.voiceList.querySelector('.more');
+    if (more) more.parentNode.removeChild(more);
+    for (var i = from; i < to; i += 1) {
+      var v = items[i];
+      var item = document.createElement('div');
+      item.className = itemClass(i, st.hover);
+      item.setAttribute('data-i', String(i));
+      item.textContent = voiceLabel(v);
+      item.title = String(v.voiceURI || '');
+      (function (voice) {
+        item.addEventListener('mousedown', function (event) {
+          event.preventDefault();
+          chooseVoice(voice);
+        });
+      })(v);
+      el.voiceList.appendChild(item);
+    }
+    listShown.count = to;
+    if (to < items.length) {
+      var node = document.createElement('div');
+      node.className = 'more';
+      node.textContent = fmt('moreVoices', { n: items.length - to });
+      el.voiceList.appendChild(node);
+    }
+  }
+
+  /** Keyboard highlight: draw more rows if it runs past what is on screen. */
+  function setVoiceHover(index) {
+    st.hover = Math.max(0, Math.min(index, listShown.items.length - 1));
+    while (listShown.count <= st.hover && listShown.count < listShown.items.length) appendVoicePage();
+    var rows = el.voiceList.querySelectorAll('.item');
+    for (var i = 0; i < rows.length; i += 1) rows[i].className = itemClass(i, st.hover);
+    if (rows[st.hover] && rows[st.hover].scrollIntoView) {
+      try { rows[st.hover].scrollIntoView({ block: 'nearest' }); } catch (e) {}
+    }
+  }
+
+  function closeVoiceList() {
+    st.listOpen = false;
+    el.voiceList.hidden = true;
+    st.filter = '';
+    st.hover = -1;
+    listShown.items = [];
+    listShown.count = 0;
+    paintVoiceField();
+  }
+
+  function chooseVoice(v) {
+    selectVoice(v);
+    try { localStorage.setItem(VOICE_KEY, v.voiceURI || ''); } catch (e) {}
+    closeVoiceList();
+    paint();
   }
 
   /** The settings page owns the speed; it arrives with the text. */
@@ -307,34 +990,87 @@
 
   function clearWatchdog() { if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = 0; } }
 
+  /* ---------- progress: characters read, not paragraphs crossed ---------- */
+
+  var progressTimer = 0;
+
+  function startProgress() {
+    stopProgress();
+    progressTimer = setInterval(tickProgress, 200);
+    tickProgress();
+  }
+
+  function stopProgress() {
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = 0; }
+  }
+
+  /** Characters finished so far. Exact while the voice reports word boundaries;
+   *  otherwise the bar steps once per paragraph, because a guess would lie. */
+  function charsRead() {
+    if (!st.running) return st.baseChars || 0;
+    var start = st.charStarts[st.idx] || 0;
+    if (st.sawBoundary) return Math.min(st.totalChars || 0, start + st.paraBoundary);
+    return Math.min(st.totalChars || 0, start);
+  }
+
+  function tickProgress() {
+    if (!st.totalChars || !st.running) return;
+    var pct = Math.max(0, Math.min(99, (charsRead() / st.totalChars) * 100));
+    el.fill.style.width = pct.toFixed(2) + '%';
+  }
+
   function paint() {
-    var total = units.length || 1;
-    el.fill.style.width = (Math.min(st.idx, total) / total * 100) + '%';
+    var done = st.done && !st.running && !st.paused;
     el.btnPlay.disabled = !units.length;
-    el.btnPlay.textContent = st.running ? (st.paused ? '▶' : '⏸') : '▶';
-    el.btnPlay.title = st.running ? (st.paused ? '继续' : '暂停') : '开始朗读';
+    // The button holds all three glyphs; the attribute picks one.
+    el.btnPlay.setAttribute('data-icon', st.running ? (st.paused ? 'play' : 'pause') : (done ? 'replay' : 'play'));
+    var playTitle = st.running
+      ? (st.paused ? tr('resume') : tr('pause'))
+      : (done ? fmt('replay', { n: units.length }) : tr('playStart'));
+    el.btnPlay.title = playTitle;
+    el.btnPlay.setAttribute('aria-label', playTitle);
     el.btnPrev.disabled = !units.length || st.idx <= 0;
     el.btnNext.disabled = !units.length || st.idx >= units.length - 1;
     el.btnStop.disabled = !st.running && !st.paused;
+    paintDot();
+  }
+
+  /** Connection state plus how many pushes are waiting behind the current one. */
+  function paintDot() {
+    var queued = st.queue.length;
+    el.dot.className = 'dot' + (st.dotState === 'ok' ? ' ok' : st.dotState === 'warn' ? ' warn' : '');
+    el.dot.title = st.dotTitle + (queued ? fmt('queued', { n: queued }) : '');
   }
 
   function abort(reason, canRetryLocal) {
+    var played = st.active;
+    // A state report needs the active push, so send it before clearing it.
+    reportState('stopped');
+    st.active = null;
+    st.done = false;
+    // A failing voice would fail the whole queue the same way: drop it.
+    st.queue.length = 0;
     st.stop = true;
     st.running = false;
     st.paused = false;
     clearWatchdog();
+    stopProgress();
     try { synth && synth.cancel(); } catch (e) {}
-    banner('err', reason + (canRetryLocal ? '　可以点「▶」换本地音色重试。' : ''));
+    banner('err', reason + (canRetryLocal ? tr('retryLocalHint') : ''));
     var local = pickLocalVoice();
     if (canRetryLocal && local && selectVoice(local)) {
-      banner('warn', reason + '　已自动选用本地音色「' + local.name + '」，点「▶」即可。');
+      banner('warn', reason + fmt('switchedLocal', { name: local.name }));
     }
+    if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
 
   /** One utterance per paragraph, all queued now: the engine never waits on us. */
   function speakFrom(from, skip) {
     if (!units.length) return;
+    // Replaying or stepping after a read finished: the push is still the same
+    // one, so adopt it again — otherwise the app has nothing to put the wave on.
+    if (!st.active && st.lastActive) st.active = st.lastActive;
     var start = Math.max(0, Math.min(from, units.length - 1));
     var base = Math.max(0, Math.min(skip || 0, Math.max(0, paragraphText(start).length - 1)));
     var gen = ++st.gen;
@@ -350,6 +1086,13 @@
     paintPara(start);
     follow(start);
     paint();
+    reportState('playing');
+    // The bar follows characters; reset it to where this run begins.
+    st.baseChars = st.charStarts[start] || 0;
+    st.paraBoundary = base;
+    st.sawBoundary = false;
+    el.fill.style.width = ((st.baseChars / (st.totalChars || 1)) * 100).toFixed(2) + '%';
+    startProgress();
 
     var voice = currentVoice();
     var items = [];
@@ -365,7 +1108,7 @@
       st.watchdog = 0;
       if (started || st.stop) return;
       var local = pickLocalVoice();
-      abort('这个音色在 ' + (FIRST_SOUND_TIMEOUT / 1000) + ' 秒内没有出声（多半连不上厂商服务器）', !!local);
+      abort(fmt('noSoundTimeout', { sec: FIRST_SOUND_TIMEOUT / 1000 }), !!local);
     }, FIRST_SOUND_TIMEOUT);
 
     // Chrome drops speak() calls issued in the same tick as cancel().
@@ -385,14 +1128,20 @@
           if (!st.startedAt) st.startedAt = performance.now();
           st.idx = item.index;
           st.boundary = item.begin;
+          st.baseChars = st.charStarts[item.index] || 0;
+          st.paraBoundary = item.begin;
+          st.sawBoundary = false;
           paintPara(item.index);
           follow(item.index);
           paint();
+          reportState('playing');
           try { if (synth.paused && !st.paused) synth.resume(); } catch (e) {}
         };
         utter.onboundary = function (e) {
           if (gen !== st.gen || typeof e.charIndex !== 'number') return;
           st.boundary = item.begin + e.charIndex;
+          st.sawBoundary = true;
+          st.paraBoundary = st.boundary;
           paintWord(item.index, st.boundary, e.charLength || 1);
         };
         utter.onend = function () {
@@ -411,18 +1160,18 @@
             st.running = false;
             st.paused = false;
             st.gen++;
-            banner('warn', '浏览器要求先点一下「▶」才允许发声。');
+            banner('warn', tr('needsClick'));
             paint();
             return;
           }
-          abort('第 ' + (item.index + 1) + ' 段朗读失败：' + err, false);
+          abort(fmt('paraFailed', { n: item.index + 1, err: err }), false);
         };
 
         try {
           synth.speak(utter);
           st.attempted = true;
         } catch (e) {
-          abort('浏览器拒绝朗读：' + (e && e.message ? e.message : String(e)), false);
+          abort(fmt('refused', { err: e && e.message ? e.message : String(e) }), false);
         }
       });
     }, 30);
@@ -432,29 +1181,52 @@
     st.running = false;
     st.paused = false;
     clearWatchdog();
+    stopProgress();
     st.idx = units.length;
+    st.done = true;
+    paintWordClear();
+    markRead(units.length);
     el.fill.style.width = '100%';
-    if (st.startedAt) setStatus('已读完 ' + units.length + ' 段 · 用时 ' + fmt(performance.now() - st.startedAt));
+    if (st.startedAt) setStatus(fmt('finished', { n: units.length, time: fmtDuration(performance.now() - st.startedAt) }));
+    // "Done" is a state, not a badge: the app goes back to its speaker icon.
+    reportState('finished');
+    st.active = null;
     paint();
+    drainQueue();
   }
 
   function start() {
     if (!units.length) return;
-    if (!currentVoice()) { banner('err', '这台浏览器没有可用的语音，无法朗读。'); return; }
+    if (!currentVoice()) { banner('err', tr('noVoice')); return; }
     clearBanner();
     st.startedAt = 0;
+    st.done = false;
     speakFrom(0, 0);
   }
 
   function stop() {
+    var played = st.active;
+    reportState('stopped');
+    st.active = null;
+    st.done = false;
+    // Stop is the only "drop it" gesture: everything waiting goes too.
+    st.queue.length = 0;
     st.stop = true;
     st.running = false;
     st.paused = false;
     st.gen++;
     clearWatchdog();
+    stopProgress();
     try { synth.cancel(); } catch (e) {}
     el.fill.style.width = '0%';
-    setStatus('已停止');
+    setStatus(tr('stopped'));
+    // Nothing is being read, so nothing should stay marked.
+    paintWordClear();
+    try {
+      if (window.CSS && window.CSS.highlights) window.CSS.highlights.delete('bridge-para');
+    } catch (e) {}
+    st.paragraphs.forEach(function (p) { p.classList.remove('on'); p.classList.remove('mark'); });
+    if (played) ack(played.id, 'stop', played.messageId, 0);
     paint();
   }
 
@@ -468,6 +1240,7 @@
       st.paused = true;
     }
     paint();
+    reportState(st.paused ? 'paused' : 'playing');
   }
 
   function step(delta) {
@@ -485,7 +1258,7 @@
     el.title.textContent = data.title || '';
     el.title.style.display = data.title ? '' : 'none';
     var chars = units.reduce(function (a, u) { return a + String(u.text || '').length; }, 0);
-    setStatus(units.length ? units.length + ' 段 · 共 ' + chars + ' 字' : '等待 DSH 推送…');
+    setStatus(units.length ? fmt('statusCount', { n: units.length, c: chars }) : tr('waitingPush'));
   }
 
   /* ---------- wiring ---------- */
@@ -498,11 +1271,51 @@
   el.btnStop.addEventListener('click', stop);
   el.btnPrev.addEventListener('click', function () { step(-1); });
   el.btnNext.addEventListener('click', function () { step(1); });
-  el.voiceSel.addEventListener('change', function () {
+  // Typing filters the list; the field shows the chosen voice again on close.
+  el.voiceSearch.addEventListener('focus', function () {
+    // Start empty so what you type is the whole search, with the current voice
+    // shown as a placeholder instead of sitting in the box as text.
     var v = currentVoice();
-    if (!v) return;
-    st.savedUri = v.voiceURI;
-    try { localStorage.setItem(VOICE_KEY, v.voiceURI || ''); } catch (e) {}
+    el.voiceSearch.value = '';
+    if (v) el.voiceSearch.placeholder = voiceLabel(v);
+    st.filter = '';
+    st.hover = 0;
+    renderVoiceList();
+  });
+  el.voiceSearch.addEventListener('input', function () {
+    st.filter = el.voiceSearch.value;
+    st.hover = 0;
+    renderVoiceList();
+  });
+  el.voiceSearch.addEventListener('keydown', function (event) {
+    var list = listShown.items.length ? listShown.items : matchingVoices();
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!st.listOpen) { renderVoiceList(); return; }
+      var step = event.key === 'ArrowDown' ? 1 : -1;
+      setVoiceHover(Math.max(0, Math.min(list.length - 1, (st.hover < 0 ? 0 : st.hover) + step)));
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (st.listOpen && list.length) chooseVoice(list[Math.max(0, Math.min(st.hover, list.length - 1))]);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Escape') { closeVoiceList(); event.preventDefault(); }
+  });
+  // Scrolling to the bottom streams in the next page of rows.
+  el.voiceList.addEventListener('scroll', function () {
+    if (!st.listOpen) return;
+    if (listShown.count >= listShown.items.length) return;
+    var room = el.voiceList.scrollHeight - el.voiceList.scrollTop - el.voiceList.clientHeight;
+    if (room > 80) return;
+    appendVoicePage();
+    var rows = el.voiceList.querySelectorAll('.item');
+    for (var i = 0; i < rows.length; i += 1) rows[i].className = itemClass(i, st.hover);
+  });
+  el.voiceSearch.addEventListener('blur', function () {
+    // The list uses mousedown, so a click already chose by the time focus dies.
+    setTimeout(function () { if (st.listOpen) closeVoiceList(); }, 120);
   });
   el.onlyLocal.addEventListener('change', function () { rebuildVoices(); paint(); });
   el.rate.addEventListener('input', function () {
@@ -513,12 +1326,24 @@
     if (st.running) speakFrom(st.idx, st.boundary || 0);
   });
 
-  renderDoc();
-  renderHead();
-  paint();
+  applyLang(data.lang);
+
+  // A page opened for a fresh push starts from the Host-injected data and never
+  // saw a receiveUnits call, so it adopts that push here — and confirms it — or
+  // the Host would never hear about this tab.
+  if (data.id && units.length) {
+    st.active = {
+      id: String(data.id),
+      messageId: String(data.messageId || ''),
+      key: String(data.key || ''),
+      units: units.length
+    };
+    st.lastActive = st.active;
+    ack(st.active.id, 'read', st.active.messageId);
+  }
 
   if (!synth || typeof Utter !== 'function') {
-    banner('err', '这个浏览器不支持 Web Speech 语音合成。');
+    banner('err', tr('noWebSpeech'));
     el.btnPlay.disabled = true;
     return;
   }
@@ -531,8 +1356,8 @@
       rebuildVoices();
       if (ms === 2000 && !st.visible.length) {
         banner(el.onlyLocal.checked ? 'warn' : 'err', el.onlyLocal.checked
-          ? '本机没有离线音色；取消勾选「本地」可以用云端音色（需要联网）。'
-          : '这个内核没有暴露任何语音。');
+          ? tr('noOfflineVoices')
+          : tr('noVoicesAtAll'));
       }
     }, ms);
   });
@@ -542,10 +1367,37 @@
   function receiveUnits(payload) {
     var next = Array.isArray(payload.units) ? payload.units : [];
     if (!next.length) return;
-    stop();
+    // Confirm receipt before this page can spend minutes speaking it.
+    if (payload.id) ack(payload.id, 'read', payload.messageId);
+    // Reading or waiting: this push goes to the back of the line. Cutting off
+    // the paragraph being spoken is exactly what the queue exists to prevent.
+    if (st.running || st.paused || st.queue.length) {
+      st.queue.push(payload);
+      reportQueued(payload);
+      paintDot();
+      return;
+    }
+    playPayload(payload);
+  }
+
+  /** Make one push the current text, then read it from the top. */
+  function playPayload(payload) {
+    var next = Array.isArray(payload.units) ? payload.units : [];
+    if (!next.length) return;
+    st.active = {
+      id: payload.id ? String(payload.id) : '',
+      messageId: payload.messageId ? String(payload.messageId) : '',
+      key: payload.key ? String(payload.key) : '',
+      units: next.length
+    };
+    // Kept after finishing so a replay can report the same push again.
+    st.lastActive = st.active;
     units = next.map(function (u, i) { return { index: i, text: String((u && u.text) || '') }; });
     data.title = String(payload.title || '');
+    if (payload.scheme) applyScheme(payload.scheme);
+    if (payload.lang) applyLang(payload.lang);
     st.stop = false;
+    st.done = false;
     st.idx = 0;
     st.startedAt = 0;
     applySpeed(payload.speed);
@@ -556,6 +1408,24 @@
     start();
   }
 
+  /** Next push in line, only once nothing is being read. */
+  function drainQueue() {
+    if (st.running || st.paused || !st.queue.length) return;
+    playPayload(st.queue.shift());
+  }
+
+  /** Theme and language arrive on their own channel, without any text. */
+  function applyPrefs(prefs) {
+    if (!prefs) return;
+    if (prefs.scheme === 'light' || prefs.scheme === 'dark') applyScheme(prefs.scheme);
+    if (typeof prefs.lang === 'string' && prefs.lang && prefs.lang !== data.lang) {
+      data.lang = prefs.lang;
+      applyLang(prefs.lang);
+      rebuildVoices();
+      paint();
+    }
+  }
+
   function connectBridgeStream() {
     if (typeof EventSource !== 'function') return;
     var dir = String(location.pathname || '').replace(/\/[^/]*$/, '');
@@ -564,23 +1434,31 @@
     var everOpen = false;
     source.onopen = function () {
       everOpen = true;
-      el.dot.className = 'dot ok';
-      el.dot.title = '已连接 DSH';
+      st.dotState = 'ok';
+      st.dotTitle = tr('connected');
+      paintDot();
     };
     source.onmessage = function (event) {
       var payload = null;
       try { payload = JSON.parse(event.data); } catch (e) { return; }
-      if (!payload || payload.type !== 'read') return;
+      if (!payload) return;
+      if (payload.type === 'prefs') { applyPrefs(payload); return; }
+      if (payload.type !== 'read') return;
       receiveUnits(payload);
     };
     source.onerror = function () {
-      el.dot.className = 'dot warn';
-      el.dot.title = everOpen ? '与 DSH 的连接断开，正在重连…' : '还没连上 DSH';
+      st.dotState = 'warn';
+      st.dotTitle = everOpen ? tr('disconnected') : tr('notConnectedYet');
+      paintDot();
       if (everOpen) return;
-      // A tab left over from before a Host restart can never reconnect; say so
-      // instead of waiting silently for a push that will not arrive.
+      // A tab left over from before a Host restart — or one opened from a file
+      // or a plain static server — can never reconnect. Say it out loud: a
+      // waiting page with no explanation looks like the page is broken.
       setTimeout(function () {
-        if (!everOpen) el.dot.title = '还没连上 DSH：Host 重启后请刷新本页';
+        if (everOpen) return;
+        st.dotTitle = tr('stalePage');
+        paintDot();
+        banner('warn', tr('staleBanner'));
       }, 2000);
     };
   }

@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
     const CLEAR_PATH = '/api/dsh-tts/cache/clear'
     const EVENTS_PATH = '/api/dsh-tts/events'
     const RECENT_PATH = '/api/dsh-tts/recent'
+    const BRIDGE_PREFS_PATH = '/api/dsh-tts/bridge/prefs'
 
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
@@ -32,21 +33,1133 @@ window.__ModuleLoader__.load({
     // Locale follows the Host's active language (what DSH itself shows), not the
     // browser's: the plugin's copy must switch with the app. `ctx.locale` is
     // wired in apply(); the navigator language is only the pre-injection guess.
+    // DSH ships exactly these eight languages, so an unknown id falls back to
+    // English instead of leaking a half-translated UI.
+    const LOCALES = ['zh', 'en', 'ja', 'es', 'fr', 'de', 'ru', 'pt']
     let localeCtx = null
     let localeListeners = []
     function currentLang() {
       try {
         const snapshot = localeCtx && typeof localeCtx.getLocale === 'function' ? localeCtx.getLocale() : null
         const active = snapshot && typeof snapshot.active === 'string' ? snapshot.active.toLowerCase() : ''
-        if (active) return active.startsWith('zh') ? 'zh' : 'en'
+        if (active) {
+          const base = active.split(/[-_]/)[0]
+          return LOCALES.indexOf(base) !== -1 ? base : 'en'
+        }
       } catch {}
       try {
-        return String(navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'
+        const base = String(navigator.language || 'zh').toLowerCase().split(/[-_]/)[0]
+        return LOCALES.indexOf(base) !== -1 ? base : 'en'
       } catch {
         return 'zh'
       }
     }
-    const t = (zh, en) => (currentLang() === 'zh' ? zh : en)
+    // Call sites keep passing (Chinese, English): Chinese is the source, English
+    // is the dictionary key, and a missing translation falls back to English.
+    function t(zh, en) {
+      const lang = currentLang()
+      if (lang === 'zh') return zh
+      const table = MESSAGES[lang]
+      return (table && table[en]) || en
+    }
+
+    /**
+     * Two Host failures have copy worth translating (`code` rides along with
+     * them); engine and network diagnostics stay as the Host wrote them, because
+     * they embed the provider's own answer.
+     */
+    function hostErrorText(payload) {
+      const code = payload && typeof payload.code === 'string' ? payload.code : ''
+      if (code === 'NO_TEXT') return t('这条消息没有可朗读的文字', 'nothing to read here')
+      if (code === 'SESSION_READ_FAILED') return t('读取会话失败', 'could not read the session')
+      return ''
+    }
+
+    /**
+     * UI copy for the languages DSH ships. Keyed by the English text of each
+     * `t()` call so no call site had to change; `zh` and `en` stay inline.
+     */
+    const MESSAGES = {
+      ja: {
+        'the bridge failed': '読み上げページに失敗しました',
+        'the browser confirmed receipt': 'ブラウザが受信を確認しました',
+        'sent to the bridge tab, but no confirmation came back (closed tab, or an older page)': '読み上げページに送信しましたが、確認が返ってきません（ページが閉じられたか、古い版のページです）',
+        'could not open a browser; the link is copied: ': 'ブラウザを開けませんでした。リンクをコピーしました：',
+        'no browser voices here': 'この環境にはブラウザの音声がありません',
+        'the browser needs one click on this page before it may speak; try again': 'このページで一度クリックするまでブラウザが音声を出せません。もう一度お試しください',
+        'preview failed: ': '試聴に失敗しました：',
+        'the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice': 'このクラウド音声は8秒間無音でした（サーバーに接続できていない可能性）。⌂ ローカル音声をお試しください',
+        'no sound in 8 s; the browser may be blocking autoplay': '8秒間音が出ません。自動再生がブロックされている可能性があります',
+        'Speech synthesis failed': '音声合成に失敗しました',
+        online: 'オンライン',
+        words: '単語',
+        'browser speech is not available here': 'この環境ではブラウザ読み上げが使えません',
+        'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice': 'このクラウド音声は8秒間無音でした（サーバーに接続できない可能性）。⌂ ローカル音声に切り替えてください',
+        'this desktop shell stayed silent; it now uses the bridge — press read again': 'デスクトップ版では音が出なかったため、読み上げページに切り替えました。もう一度読み上げを押してください',
+        'no sound in 8 s; the browser may be blocking autoplay — press read again': '8秒間音が出ません。自動再生がブロックされている可能性があります。もう一度読み上げを押してください',
+        'the browser needs one click on this page before it may speak; press read': 'このページで一度クリックするまでブラウザが音声を出せません。読み上げボタンを押してください',
+        'browser speech failed: ': 'ブラウザ読み上げに失敗しました：',
+        'nothing to read here': 'このメッセージに読み上げる文字がありません',
+        'could not read the session': 'セッションを読み取れませんでした',
+        'Read aloud': '音声読み上げ',
+        'Stop reading': '読み上げを停止',
+        'Previous paragraph': '前の段落',
+        'Pause / resume': '一時停止 / 再開',
+        'Next paragraph': '次の段落',
+        'Playback speed': '再生速度',
+        Paused: '一時停止中',
+        Resume: '再開',
+        Pause: '一時停止',
+        'Sent to the browser': 'ブラウザに送信しました',
+        'Playback failed': '読み上げに失敗しました',
+        Dismiss: '閉じる',
+        'Read request': '承認を読み上げ',
+        'Read question': '質問を読み上げ',
+        'Waiting for the current read': '前の読み上げの完了を待っています',
+        'Reading the previous item — click to cut in and read this now': '前の項目を読み上げ中です。クリックすると中断してこれを読み上げます',
+        Stop: '停止',
+        'Click to stop': 'クリックで停止',
+        'Synthesizing…': '合成中…',
+        'Click to stop (the floating window pauses and steps)': 'クリックで停止（小窓から一時停止・段落移動ができます）',
+        'Paused — resume from the floating window': '一時停止中。小窓から再開してください',
+        'Play again (cached)': 'もう一度再生（キャッシュ）',
+        'Read this reply aloud (the paragraphs around the selection)': 'この返信を読み上げ（選択中ならその段落）',
+        'Speech bridge (read in a browser)': '読み上げページ（ブラウザで読み上げ）',
+        'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': '既定のブラウザで読み上げます（読み上げページ経由）。キー不要・キャッシュなし。ページは DSH のテーマと言語に従います。',
+        'desktop only': 'デスクトップ版のみ',
+        'Install Piper offline': 'Piper をオフラインで導入',
+        Close: '閉じる',
+        'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'このプラグインは音声を再生するだけで、Piper 本体と音声モデルは含みません。一度用意すれば合成はオフライン・無料のまま使えます。',
+        'Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install "piper-tts[zh]".': '本体：piper の実行ファイルを用意します。「花顔」だけなら2023年版の自己完結パッケージで十分です（約37 MB、解凍して実行）。「超文 / 小雅」は Python 3.9–3.12 の pip 版が必要です：pip install "piper-tts[zh]"',
+        'Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.': '音声：音声は .onnx と同名の .json を同じフォルダに置いたものです（各約60 MB）。超文 / 小雅 はさらに g2pW/（約260 MB）と BERT トークナイザー（約0.1 MB）が必要です。',
+        'Fill it in: pick "Local Piper" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.': '設定：上の「ローカル Piper」を選び、「プログラム」と「音声モデル」のパスを入力します。状態が「準備完了」になればスピーカーボタンがオフラインで使えます。',
+        'Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.': '容量：花顔 ≈ 97 MB（本体37 + モデル60）。超文 / 小雅 ≈ 660 MB（g2pW とトークナイザーを含む）。',
+        'Program: ': 'プログラム：',
+        '; the older build works too: ': '（旧版も使用可：',
+        'Voices: ': 'モデル：',
+        '; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.': '。中国本土では HF_ENDPOINT=https://hf-mirror.com ミラーが使えます。',
+        'Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.': 'Piper と espeak-ng は GPL-3.0、音声モデルはそれぞれ独自の条件があります。本プラグインはこれらを再配布しません。',
+        'Save failed': '保存に失敗しました',
+        Saved: '保存しました',
+        'Loading…': '読み込み中…',
+        'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.': 'DeepSeek 公式 TTS API：利用量に応じてご自身の残高から課金されます。キーとネットワークが必要です。',
+        'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.': 'ブラウザ自身が段落を読み上げます。キー不要、保存なし、Host との往復なし。速度は音声エンジン側の速度です。',
+        'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.': 'OS に付属する音声。オフライン・追加ダウンロードなし。中国語と英語の混在も読めますが機械的な声です。',
+        'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.': 'OpenAI 互換の /v1/audio/speech エンドポイントならどれでも可。オンラインサービスはご自身のアカウントに課金され、ローカルなら無料です。キーはこの端末に残り、ページには返しません。',
+        ready: '準備完了',
+        'key missing': 'キー未設定',
+        'no browser voices': 'この環境にはブラウザ音声がありません',
+        'no voices': '音声なし',
+        unsupported: '非対応',
+        'needs setup': '設定が必要',
+        Chinese: '中国語',
+        Japanese: '日本語',
+        Korean: '韓国語',
+        Cantonese: '広東語',
+        Auto: '自動',
+        Engine: '合成エンジン',
+        'DeepSeek cloud (online)': 'DeepSeek クラウド（オンライン）',
+        'Browser speech (hand off to a browser)': 'ブラウザ読み上げ（ブラウザに委譲）',
+        'Browser speech (no voices here)': 'ブラウザ読み上げ（この環境に音声なし）',
+        'System voices (offline)': 'システム音声（オフライン）',
+        'Custom API (online)': 'カスタム API（オンライン）',
+        Voice: '音声',
+        female: '女性',
+        male: '男性',
+        'Configured · DEEPSEEK_API_KEY': '設定済み（DEEPSEEK_API_KEY）',
+        'Not configured — set a key in Settings → Models': '未設定。設定 → モデル でキーを入力してください',
+        'no system voices installed': '利用できるシステム音声がありません',
+        'not supported on this OS': 'この OS では未対応',
+        Protocol: 'プロトコル',
+        'OpenAI-compatible /v1/audio/speech': 'OpenAI 互換 /v1/audio/speech',
+        'GPT-SoVITS (api_v2 /tts)': 'GPT-SoVITS（api_v2 /tts）',
+        'Fish Audio (/v1/tts)': 'Fish Audio（/v1/tts）',
+        'Custom request template': 'カスタムリクエストテンプレート',
+        'key required': 'キーが必要',
+        'local, no key': 'ローカル、キー不要',
+        'invalid URL': 'URL が不正',
+        'Reference audio': '参照音声',
+        required: '必須',
+        'Reference text': '参照テキスト',
+        'what the reference audio says (optional)': '参照音声の発話内容（任意）',
+        'Text language': 'テキスト言語',
+        'Prompt language': '参照言語',
+        Model: 'モデル',
+        Format: '形式',
+        'wav (recommended)': 'wav（推奨）',
+        'pcm (24 kHz raw)': 'pcm（24 kHz 生データ）',
+        'Reference voice id': '参照音声 ID',
+        Method: 'メソッド',
+        Path: 'パス',
+        Headers: 'ヘッダー',
+        'Body template': 'ボディテンプレート',
+        'Audio type': '音声タイプ',
+        'auto (sniff WAV)': '自動（WAV を判別）',
+        'PCM (24 kHz raw)': 'PCM（24 kHz 生データ）',
+        'configured — leave empty to keep': '設定済み（空欄なら変更しません）',
+        Clear: 'クリア',
+        configured: '設定済み',
+        missing: '未設定',
+        Preview: '試聴',
+        'Stop (synthesizing)': '停止（合成中）',
+        'Stop preview': '試聴を停止',
+        'Play a sample': 'サンプルを再生',
+        'fixed mixed zh/en sentence': '中国語と英語の混在した固定文',
+        Playback: '読み上げ',
+        'Part size sets how much text one synthesis covers; speed only changes playback, never pitch.': '1回の合成に含める文字数を決めます。速度は再生の速さだけを変え、音程は変わりません。',
+        'Max per part': '1回の上限',
+        chars: '文字',
+        Speed: '速度',
+        'Auto-read': '自動読み上げ',
+        'Turn these on to speak automatically; the speaker button still works with all of them off.': 'オンにすると自動で読み上げます。すべてオフでも各返信のスピーカーボタンは使えます。',
+        'Read replies': '返信を読み上げ',
+        'Read mid-turn output': '途中出力を読み上げ',
+        'needs "Read replies"': '「返信を読み上げ」が必要',
+        'Read questions': '質問を読み上げ',
+        'prompts that need your answer': '回答が必要な質問',
+        'Read approvals': '承認を読み上げ',
+        'requests that need your confirmation': '確認が必要な承認リクエスト',
+        'Audio cache': '音声キャッシュ',
+        ' files · ': ' ファイル · ',
+        'in memory: ': 'メモリ内 ',
+        ' entries · ': ' 件 · ',
+        'Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.': 'Host が合成するエンジン（DeepSeek / カスタム API / システム音声）だけをキャッシュします。ブラウザ読み上げはキャッシュしません。',
+        Location: '保存場所',
+        'Disk (survives a restart)': 'ディスク（再起動後も残る）',
+        'Memory (cleared on restart, nothing written)': 'メモリ（再起動で消去、書き込みなし）',
+        Limit: '上限',
+        Cleanup: 'クリーンアップ',
+        'Cache cleared': 'キャッシュを消去しました',
+        'Clear cache': 'キャッシュを消去',
+        'Saves on Enter, blur, or release.': 'Enter、フォーカス移動、または操作を離したときに保存します。',
+      },
+      es: {
+        'the bridge failed': 'falló el puente de lectura',
+        'the browser confirmed receipt': 'el navegador confirmó la recepción',
+        'sent to the bridge tab, but no confirmation came back (closed tab, or an older page)': 'enviado a la pestaña del puente, pero sin confirmación (pestaña cerrada o página antigua)',
+        'could not open a browser; the link is copied: ': 'no se pudo abrir el navegador; el enlace está copiado: ',
+        'no browser voices here': 'aquí no hay voces del navegador',
+        'the browser needs one click on this page before it may speak; try again': 'el navegador necesita un clic en esta página para hablar; inténtalo de nuevo',
+        'preview failed: ': 'falló la vista previa: ',
+        'the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice': 'la voz en la nube estuvo 8 s en silencio: no llega a su servidor; prueba una voz local',
+        'no sound in 8 s; the browser may be blocking autoplay': 'sin sonido en 8 s; puede que el navegador bloquee la reproducción automática',
+        'Speech synthesis failed': 'falló la síntesis de voz',
+        online: 'en línea',
+        words: 'palabras',
+        'browser speech is not available here': 'la lectura del navegador no está disponible aquí',
+        'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice': 'esta voz en la nube no sonó en 8 s; no llega a su servidor: elige una voz local',
+        'this desktop shell stayed silent; it now uses the bridge — press read again': 'este entorno de escritorio no emitió sonido; ahora usa el puente: pulsa leer de nuevo',
+        'no sound in 8 s; the browser may be blocking autoplay — press read again': 'sin sonido en 8 s; quizá el navegador bloquea la reproducción automática: pulsa leer de nuevo',
+        'the browser needs one click on this page before it may speak; press read': 'el navegador necesita un clic en esta página para hablar; pulsa leer',
+        'browser speech failed: ': 'falló la lectura del navegador: ',
+        'nothing to read here': 'aquí no hay nada que leer',
+        'could not read the session': 'no se pudo leer la sesión',
+        'Read aloud': 'Leer en voz alta',
+        'Stop reading': 'Detener la lectura',
+        'Previous paragraph': 'Párrafo anterior',
+        'Pause / resume': 'Pausar / reanudar',
+        'Next paragraph': 'Párrafo siguiente',
+        'Playback speed': 'Velocidad de reproducción',
+        Paused: 'En pausa',
+        Resume: 'Reanudar',
+        Pause: 'Pausar',
+        'Sent to the browser': 'Enviado al navegador',
+        'Playback failed': 'Falló la lectura',
+        Dismiss: 'Cerrar',
+        'Read request': 'Leer solicitud',
+        'Read question': 'Leer pregunta',
+        'Waiting for the current read': 'Esperando la lectura actual',
+        'Reading the previous item — click to cut in and read this now': 'Leyendo el elemento anterior: haz clic para interrumpir y leer esto',
+        Stop: 'Detener',
+        'Click to stop': 'Haz clic para detener',
+        'Synthesizing…': 'Sintetizando…',
+        'Click to stop (the floating window pauses and steps)': 'Haz clic para detener (la ventana flotante permite pausar y cambiar de párrafo)',
+        'Paused — resume from the floating window': 'En pausa: reanuda desde la ventana flotante',
+        'Play again (cached)': 'Reproducir de nuevo (en caché)',
+        'Read this reply aloud (the paragraphs around the selection)': 'Leer esta respuesta (los párrafos junto a la selección)',
+        'Speech bridge (read in a browser)': 'Puente de lectura (leer en un navegador)',
+        'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': 'Lee en tu navegador predeterminado mediante la página del puente: sin clave, sin caché; sigue el tema y el idioma de la app.',
+        'desktop only': 'solo en escritorio',
+        'Install Piper offline': 'Instalar Piper sin conexión',
+        Close: 'Cerrar',
+        'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'Este plugin solo reproduce audio; el programa Piper y los modelos de voz no están incluidos. Configúralos una vez y la síntesis seguirá sin conexión y gratis.',
+        'Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install "piper-tts[zh]".': 'Programa: consigue un ejecutable de piper. Solo con Huayan basta la versión autocontenida de 2023 (unos 37 MB, descomprimir y ejecutar); Chaowen / Xiao_ya necesitan la versión pip en Python 3.9–3.12: pip install "piper-tts[zh]".',
+        'Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.': 'Voz: una voz son un .onnx y su .json del mismo nombre en una carpeta (unos 60 MB cada uno). Chaowen / Xiao_ya también necesitan g2pW/ (unos 260 MB) y el tokenizador BERT (unos 0,1 MB) en esa carpeta.',
+        'Fill it in: pick "Local Piper" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.': 'Rellénalo: elige «Piper local» arriba, indica las rutas del programa y del modelo de voz; cuando el estado diga listo, el botón del altavoz funcionará sin conexión.',
+        'Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.': 'Disco: Huayan ≈ 97 MB (37 programa + 60 modelo); Chaowen / Xiao_ya ≈ 660 MB con g2pW y el tokenizador.',
+        'Program: ': 'Programa: ',
+        '; the older build works too: ': '; la versión anterior también sirve: ',
+        'Voices: ': 'Voces: ',
+        '; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.': '; en China continental usa el espejo HF_ENDPOINT=https://hf-mirror.com.',
+        'Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.': 'Piper y espeak-ng son GPL-3.0 y cada modelo de voz tiene sus propias condiciones; este plugin no los redistribuye.',
+        'Save failed': 'Error al guardar',
+        Saved: 'Guardado',
+        'Loading…': 'Cargando…',
+        'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.': 'La API oficial de TTS de DeepSeek: se factura por uso con tu propio saldo; necesita una clave y red.',
+        'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.': 'El navegador lee los párrafos: sin clave, sin caché, sin ida y vuelta al Host; la velocidad es la del motor.',
+        'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.': 'Voces del sistema operativo: sin conexión, sin descargas, bien en mezclas de chino e inglés, pero sintéticas.',
+        'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.': 'Cualquier endpoint /v1/audio/speech compatible con OpenAI: los servicios alojados cobran a tu cuenta, los locales son gratis. La clave se queda en esta máquina y nunca vuelve a la página.',
+        ready: 'listo',
+        'key missing': 'falta la clave',
+        'no browser voices': 'sin voces del navegador',
+        'no voices': 'sin voces',
+        unsupported: 'no compatible',
+        'needs setup': 'requiere configuración',
+        Chinese: 'Chino',
+        Japanese: 'Japonés',
+        Korean: 'Coreano',
+        Cantonese: 'Cantonés',
+        Auto: 'Automático',
+        Engine: 'Motor de síntesis',
+        'DeepSeek cloud (online)': 'DeepSeek en la nube (en línea)',
+        'Browser speech (hand off to a browser)': 'Lectura del navegador (delegar en un navegador)',
+        'Browser speech (no voices here)': 'Lectura del navegador (sin voces aquí)',
+        'System voices (offline)': 'Voces del sistema (sin conexión)',
+        'Custom API (online)': 'API personalizada (en línea)',
+        Voice: 'Voz',
+        female: 'femenina',
+        male: 'masculina',
+        'Configured · DEEPSEEK_API_KEY': 'Configurado · DEEPSEEK_API_KEY',
+        'Not configured — set a key in Settings → Models': 'Sin configurar: define una clave en Ajustes → Modelos',
+        'no system voices installed': 'no hay voces del sistema instaladas',
+        'not supported on this OS': 'no compatible con este sistema',
+        Protocol: 'Protocolo',
+        'OpenAI-compatible /v1/audio/speech': 'Compatible con OpenAI /v1/audio/speech',
+        'GPT-SoVITS (api_v2 /tts)': 'GPT-SoVITS (api_v2 /tts)',
+        'Fish Audio (/v1/tts)': 'Fish Audio (/v1/tts)',
+        'Custom request template': 'Plantilla de solicitud personalizada',
+        'key required': 'clave necesaria',
+        'local, no key': 'local, sin clave',
+        'invalid URL': 'URL no válida',
+        'Reference audio': 'Audio de referencia',
+        required: 'obligatorio',
+        'Reference text': 'Texto de referencia',
+        'what the reference audio says (optional)': 'lo que dice el audio de referencia (opcional)',
+        'Text language': 'Idioma del texto',
+        'Prompt language': 'Idioma de referencia',
+        Model: 'Modelo',
+        Format: 'Formato',
+        'wav (recommended)': 'wav (recomendado)',
+        'pcm (24 kHz raw)': 'pcm (24 kHz sin formato)',
+        'Reference voice id': 'ID de voz de referencia',
+        Method: 'Método',
+        Path: 'Ruta',
+        Headers: 'Cabeceras',
+        'Body template': 'Plantilla del cuerpo',
+        'Audio type': 'Tipo de audio',
+        'auto (sniff WAV)': 'automático (detectar WAV)',
+        'PCM (24 kHz raw)': 'PCM (24 kHz sin formato)',
+        'configured — leave empty to keep': 'configurado: déjalo vacío para conservarlo',
+        Clear: 'Borrar',
+        configured: 'configurado',
+        missing: 'sin configurar',
+        Preview: 'Vista previa',
+        'Stop (synthesizing)': 'Detener (sintetizando)',
+        'Stop preview': 'Detener la vista previa',
+        'Play a sample': 'Reproducir una muestra',
+        'fixed mixed zh/en sentence': 'frase fija mixta chino/inglés',
+        Playback: 'Reproducción',
+        'Part size sets how much text one synthesis covers; speed only changes playback, never pitch.': 'El tamaño de parte decide cuánto texto cubre una síntesis; la velocidad solo cambia la reproducción, nunca el tono.',
+        'Max per part': 'Máximo por parte',
+        chars: 'caracteres',
+        Speed: 'Velocidad',
+        'Auto-read': 'Lectura automática',
+        'Turn these on to speak automatically; the speaker button still works with all of them off.': 'Actívalos para leer automáticamente; el botón del altavoz sigue funcionando con todos apagados.',
+        'Read replies': 'Leer respuestas',
+        'Read mid-turn output': 'Leer salida intermedia',
+        'needs "Read replies"': 'requiere «Leer respuestas»',
+        'Read questions': 'Leer preguntas',
+        'prompts that need your answer': 'preguntas que necesitan tu respuesta',
+        'Read approvals': 'Leer aprobaciones',
+        'requests that need your confirmation': 'solicitudes que necesitan tu confirmación',
+        'Audio cache': 'Caché de audio',
+        ' files · ': ' archivos · ',
+        'in memory: ': 'en memoria: ',
+        ' entries · ': ' entradas · ',
+        'Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.': 'Solo se cachean los motores sintetizados por el Host (DeepSeek, API personalizada, voces del sistema); la lectura del navegador nunca.',
+        Location: 'Ubicación',
+        'Disk (survives a restart)': 'Disco (sobrevive al reinicio)',
+        'Memory (cleared on restart, nothing written)': 'Memoria (se borra al reiniciar, no escribe nada)',
+        Limit: 'Límite',
+        Cleanup: 'Limpieza',
+        'Cache cleared': 'Caché borrada',
+        'Clear cache': 'Borrar caché',
+        'Saves on Enter, blur, or release.': 'Se guarda al pulsar Enter, al salir del campo o al soltar.',
+      },
+      fr: {
+        "the bridge failed": "le pont de lecture a échoué",
+        "the browser confirmed receipt": "le navigateur a confirmé la réception",
+        "sent to the bridge tab, but no confirmation came back (closed tab, or an older page)": "envoyé à l’onglet du pont, mais aucune confirmation n’est revenue (onglet fermé ou page ancienne)",
+        "could not open a browser; the link is copied: ": "impossible d’ouvrir un navigateur ; le lien est copié : ",
+        "no browser voices here": "aucune voix du navigateur ici",
+        "the browser needs one click on this page before it may speak; try again": "le navigateur exige un clic sur cette page avant de parler ; réessayez",
+        "preview failed: ": "l’aperçu a échoué : ",
+        "the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice": "la voix du cloud est restée muette 8 s : elle n’atteint pas son serveur ; essayez une voix locale",
+        "no sound in 8 s; the browser may be blocking autoplay": "aucun son en 8 s ; le navigateur bloque peut-être la lecture automatique",
+        "Speech synthesis failed": "la synthèse vocale a échoué",
+        online: "en ligne",
+        words: "mots",
+        "browser speech is not available here": "la lecture par le navigateur n’est pas disponible ici",
+        "no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice": "cette voix du cloud n’a rien émis en 8 s ; elle n’atteint pas son serveur — choisissez une voix locale",
+        "this desktop shell stayed silent; it now uses the bridge — press read again": "ce shell de bureau est resté muet ; il utilise maintenant le pont — appuyez de nouveau sur lire",
+        "no sound in 8 s; the browser may be blocking autoplay — press read again": "aucun son en 8 s ; le navigateur bloque peut-être la lecture automatique — appuyez de nouveau sur lire",
+        "the browser needs one click on this page before it may speak; press read": "le navigateur exige un clic sur cette page avant de parler ; appuyez sur lire",
+        "browser speech failed: ": "la lecture par le navigateur a échoué : ",
+        "nothing to read here": "rien à lire ici",
+        "could not read the session": "impossible de lire la session",
+        "Read aloud": "Lire à voix haute",
+        "Stop reading": "Arrêter la lecture",
+        "Previous paragraph": "Paragraphe précédent",
+        "Pause / resume": "Pause / reprendre",
+        "Next paragraph": "Paragraphe suivant",
+        "Playback speed": "Vitesse de lecture",
+        Paused: "En pause",
+        Resume: "Reprendre",
+        Pause: "Mettre en pause",
+        "Sent to the browser": "Envoyé au navigateur",
+        "Playback failed": "La lecture a échoué",
+        Dismiss: "Fermer",
+        "Read request": "Lire la demande",
+        "Read question": "Lire la question",
+        "Waiting for the current read": "En attente de la lecture en cours",
+        "Reading the previous item — click to cut in and read this now": "Lecture de l’élément précédent — cliquez pour couper et lire ceci",
+        Stop: "Arrêter",
+        "Click to stop": "Cliquer pour arrêter",
+        "Synthesizing…": "Synthèse…",
+        "Click to stop (the floating window pauses and steps)": "Cliquer pour arrêter (la fenêtre flottante permet pause et navigation)",
+        "Paused — resume from the floating window": "En pause — reprenez depuis la fenêtre flottante",
+        "Play again (cached)": "Relire (cache)",
+        "Read this reply aloud (the paragraphs around the selection)": "Lire cette réponse (les paragraphes autour de la sélection)",
+        "Speech bridge (read in a browser)": "Pont de lecture (lire dans un navigateur)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lit dans votre navigateur par défaut via la page du pont : sans clé, sans cache ; elle suit le thème et la langue de l’application.",
+        "desktop only": "bureau uniquement",
+        "Install Piper offline": "Installer Piper hors ligne",
+        Close: "Fermer",
+        "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Ce plugin ne fait que lire l’audio ; le programme Piper et les modèles de voix ne sont pas fournis. Configurez-les une fois : la synthèse reste hors ligne et gratuite.",
+        "Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install \"piper-tts[zh]\".": "Programme : procurez-vous un exécutable piper. Pour Huayan seul, la version autonome de 2023 suffit (environ 37 Mo, à décompresser) ; Chaowen / Xiao_ya nécessitent la version pip sous Python 3.9–3.12 : pip install \"piper-tts[zh]\".",
+        "Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.": "Voix : une voix, c’est un .onnx et son .json du même nom dans un dossier (environ 60 Mo chacun). Chaowen / Xiao_ya exigent aussi g2pW/ (environ 260 Mo) et le tokenizer BERT (environ 0,1 Mo) dans ce dossier.",
+        "Fill it in: pick \"Local Piper\" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.": "Renseignez : choisissez « Piper local » ci-dessus, indiquez les chemins du programme et du modèle de voix ; quand l’état affiche prêt, le bouton haut-parleur fonctionne hors ligne.",
+        "Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.": "Disque : Huayan ≈ 97 Mo (37 programme + 60 modèle) ; Chaowen / Xiao_ya ≈ 660 Mo avec g2pW et le tokenizer.",
+        "Program: ": "Programme : ",
+        "; the older build works too: ": " ; l’ancienne version fonctionne aussi : ",
+        "Voices: ": "Voix : ",
+        "; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.": " ; en Chine continentale, utilisez le miroir HF_ENDPOINT=https://hf-mirror.com.",
+        "Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.": "Piper et espeak-ng sont sous GPL-3.0 et chaque modèle de voix a ses propres conditions ; ce plugin ne les redistribue pas.",
+        "Save failed": "Échec de l’enregistrement",
+        Saved: "Enregistré",
+        "Loading…": "Chargement…",
+        "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "L’API TTS officielle DeepSeek : facturée à l’usage sur votre propre solde ; nécessite une clé et un réseau.",
+        "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "Le navigateur lit les paragraphes lui-même : pas de clé, aucun cache, aucun aller-retour avec l’hôte ; la vitesse est celle du moteur.",
+        "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Voix fournies par le système : hors ligne, aucun téléchargement, correctes en chinois/anglais mêlés, mais synthétiques.",
+        "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Tout point de terminaison /v1/audio/speech compatible OpenAI : les services hébergés facturent votre compte, les services locaux sont gratuits. La clé reste sur cette machine et n’est jamais renvoyée à la page.",
+        ready: "prêt",
+        "key missing": "clé manquante",
+        "no browser voices": "aucune voix du navigateur",
+        "no voices": "aucune voix",
+        unsupported: "non pris en charge",
+        "needs setup": "configuration requise",
+        Chinese: "Chinois",
+        Japanese: "Japonais",
+        Korean: "Coréen",
+        Cantonese: "Cantonais",
+        Auto: "Automatique",
+        Engine: "Moteur de synthèse",
+        "DeepSeek cloud (online)": "DeepSeek cloud (en ligne)",
+        "Browser speech (hand off to a browser)": "Lecture par le navigateur (déléguer à un navigateur)",
+        "Browser speech (no voices here)": "Lecture par le navigateur (aucune voix ici)",
+        "System voices (offline)": "Voix du système (hors ligne)",
+        "Custom API (online)": "API personnalisée (en ligne)",
+        Voice: "Voix",
+        female: "féminine",
+        male: "masculine",
+        "Configured · DEEPSEEK_API_KEY": "Configuré · DEEPSEEK_API_KEY",
+        "Not configured — set a key in Settings → Models": "Non configuré — définissez une clé dans Réglages → Modèles",
+        "no system voices installed": "aucune voix système installée",
+        "not supported on this OS": "non pris en charge sur ce système",
+        Protocol: "Protocole",
+        "OpenAI-compatible /v1/audio/speech": "Compatible OpenAI /v1/audio/speech",
+        "GPT-SoVITS (api_v2 /tts)": "GPT-SoVITS (api_v2 /tts)",
+        "Fish Audio (/v1/tts)": "Fish Audio (/v1/tts)",
+        "Custom request template": "Modèle de requête personnalisé",
+        "key required": "clé requise",
+        "local, no key": "local, sans clé",
+        "invalid URL": "URL invalide",
+        "Reference audio": "Audio de référence",
+        required: "obligatoire",
+        "Reference text": "Texte de référence",
+        "what the reference audio says (optional)": "ce que dit l’audio de référence (facultatif)",
+        "Text language": "Langue du texte",
+        "Prompt language": "Langue de référence",
+        Model: "Modèle",
+        Format: "Format",
+        "wav (recommended)": "wav (recommandé)",
+        "pcm (24 kHz raw)": "pcm (24 kHz brut)",
+        "Reference voice id": "ID de voix de référence",
+        Method: "Méthode",
+        Path: "Chemin",
+        Headers: "En-têtes",
+        "Body template": "Modèle du corps",
+        "Audio type": "Type d’audio",
+        "auto (sniff WAV)": "auto (détection WAV)",
+        "PCM (24 kHz raw)": "PCM (24 kHz brut)",
+        "configured — leave empty to keep": "configuré — laissez vide pour conserver",
+        Clear: "Effacer",
+        configured: "configuré",
+        missing: "manquant",
+        Preview: "Aperçu",
+        "Stop (synthesizing)": "Arrêter (synthèse en cours)",
+        "Stop preview": "Arrêter l’aperçu",
+        "Play a sample": "Lire un exemple",
+        "fixed mixed zh/en sentence": "phrase fixe chinois/anglais mêlés",
+        Playback: "Lecture",
+        "Part size sets how much text one synthesis covers; speed only changes playback, never pitch.": "La taille des parties fixe la quantité de texte par synthèse ; la vitesse ne change que la lecture, jamais la hauteur.",
+        "Max per part": "Maximum par partie",
+        chars: "caractères",
+        Speed: "Vitesse",
+        "Auto-read": "Lecture automatique",
+        "Turn these on to speak automatically; the speaker button still works with all of them off.": "Activez ces options pour lire automatiquement ; le bouton haut-parleur fonctionne même avec tout désactivé.",
+        "Read replies": "Lire les réponses",
+        "Read mid-turn output": "Lire la sortie intermédiaire",
+        "needs \"Read replies\"": "nécessite « Lire les réponses »",
+        "Read questions": "Lire les questions",
+        "prompts that need your answer": "questions qui attendent votre réponse",
+        "Read approvals": "Lire les autorisations",
+        "requests that need your confirmation": "demandes qui attendent votre confirmation",
+        "Audio cache": "Cache audio",
+        " files · ": " fichiers · ",
+        "in memory: ": "en mémoire : ",
+        " entries · ": " entrées · ",
+        "Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.": "Seuls les moteurs synthétisés par l’hôte (DeepSeek, API personnalisée, voix système) sont mis en cache ; jamais la lecture par le navigateur.",
+        Location: "Emplacement",
+        "Disk (survives a restart)": "Disque (survit au redémarrage)",
+        "Memory (cleared on restart, nothing written)": "Mémoire (vidée au redémarrage, rien n’est écrit)",
+        Limit: "Limite",
+        Cleanup: "Nettoyage",
+        "Cache cleared": "Cache vidé",
+        "Clear cache": "Vider le cache",
+        "Saves on Enter, blur, or release.": "Enregistre sur Entrée, à la perte de focus ou au relâchement.",
+      },
+      de: {
+        "the bridge failed": "die Lese-Brücke ist fehlgeschlagen",
+        "the browser confirmed receipt": "der Browser hat den Empfang bestätigt",
+        "sent to the bridge tab, but no confirmation came back (closed tab, or an older page)": "an den Brücken-Tab gesendet, aber keine Bestätigung erhalten (Tab geschlossen oder alte Seite)",
+        "could not open a browser; the link is copied: ": "Browser konnte nicht geöffnet werden; der Link ist kopiert: ",
+        "no browser voices here": "hier gibt es keine Browser-Stimmen",
+        "the browser needs one click on this page before it may speak; try again": "der Browser braucht einen Klick auf dieser Seite, bevor er sprechen darf; versuche es erneut",
+        "preview failed: ": "Vorschau fehlgeschlagen: ",
+        "the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice": "die Cloud-Stimme blieb 8 s stumm – sie erreicht ihren Server nicht; probiere eine lokale Stimme",
+        "no sound in 8 s; the browser may be blocking autoplay": "8 s lang kein Ton; eventuell blockiert der Browser die automatische Wiedergabe",
+        "Speech synthesis failed": "Sprachsynthese fehlgeschlagen",
+        online: "online",
+        words: "Wörter",
+        "browser speech is not available here": "Browser-Sprachausgabe ist hier nicht verfügbar",
+        "no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice": "diese Cloud-Stimme gab 8 s keinen Ton; sie erreicht ihren Server nicht – nimm eine lokale Stimme",
+        "this desktop shell stayed silent; it now uses the bridge — press read again": "diese Desktop-Hülle blieb stumm; sie nutzt jetzt die Lese-Brücke – drücke erneut auf Lesen",
+        "no sound in 8 s; the browser may be blocking autoplay — press read again": "8 s kein Ton; eventuell blockiert der Browser die automatische Wiedergabe – drücke erneut auf Lesen",
+        "the browser needs one click on this page before it may speak; press read": "der Browser braucht einen Klick auf dieser Seite, bevor er sprechen darf; drücke Lesen",
+        "browser speech failed: ": "Browser-Sprachausgabe fehlgeschlagen: ",
+        "nothing to read here": "hier gibt es nichts zu lesen",
+        "could not read the session": "die Sitzung konnte nicht gelesen werden",
+        "Read aloud": "Vorlesen",
+        "Stop reading": "Vorlesen stoppen",
+        "Previous paragraph": "Vorheriger Absatz",
+        "Pause / resume": "Pause / fortsetzen",
+        "Next paragraph": "Nächster Absatz",
+        "Playback speed": "Wiedergabegeschwindigkeit",
+        Paused: "Pausiert",
+        Resume: "Fortsetzen",
+        Pause: "Pause",
+        "Sent to the browser": "An den Browser gesendet",
+        "Playback failed": "Wiedergabe fehlgeschlagen",
+        Dismiss: "Schließen",
+        "Read request": "Freigabe vorlesen",
+        "Read question": "Frage vorlesen",
+        "Waiting for the current read": "Wartet auf die aktuelle Wiedergabe",
+        "Reading the previous item — click to cut in and read this now": "Vorheriger Eintrag wird gelesen – klicken, um ihn zu unterbrechen und dies zu lesen",
+        Stop: "Stopp",
+        "Click to stop": "Zum Stoppen klicken",
+        "Synthesizing…": "Synthetisiere…",
+        "Click to stop (the floating window pauses and steps)": "Zum Stoppen klicken (das schwebende Fenster pausiert und wechselt Absätze)",
+        "Paused — resume from the floating window": "Pausiert – im schwebenden Fenster fortsetzen",
+        "Play again (cached)": "Erneut abspielen (Cache)",
+        "Read this reply aloud (the paragraphs around the selection)": "Diese Antwort vorlesen (die Absätze um die Auswahl)",
+        "Speech bridge (read in a browser)": "Lese-Brücke (im Browser lesen)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Liest im Standardbrowser über die Brückenseite: kein Schlüssel, kein Cache; die Seite folgt Thema und Sprache der App.",
+        "desktop only": "nur Desktop",
+        "Install Piper offline": "Piper offline installieren",
+        Close: "Schließen",
+        "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Dieses Plugin spielt nur Audio ab; Piper-Programm und Stimmmodelle sind nicht enthalten. Einmal eingerichtet, bleibt die Synthese offline und kostenlos.",
+        "Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install \"piper-tts[zh]\".": "Programm: eine piper-Executable besorgen. Für Huayan allein genügt der eigenständige Build von 2023 (ca. 37 MB, entpacken und starten); Chaowen / Xiao_ya brauchen den pip-Build unter Python 3.9–3.12: pip install \"piper-tts[zh]\".",
+        "Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.": "Stimme: eine Stimme besteht aus einer .onnx und der gleichnamigen .json in einem Ordner (je ca. 60 MB). Chaowen / Xiao_ya brauchen zusätzlich g2pW/ (ca. 260 MB) und den BERT-Tokenizer (ca. 0,1 MB) in diesem Ordner.",
+        "Fill it in: pick \"Local Piper\" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.": "Eintragen: oben „Lokales Piper“ wählen, Programmpfad und Stimmmodell angeben; sobald der Status bereit meldet, funktioniert der Lautsprecher offline.",
+        "Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.": "Speicher: Huayan ≈ 97 MB (37 Programm + 60 Modell); Chaowen / Xiao_ya ≈ 660 MB inkl. g2pW und Tokenizer.",
+        "Program: ": "Programm: ",
+        "; the older build works too: ": "; die ältere Version funktioniert auch: ",
+        "Voices: ": "Stimmen: ",
+        "; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.": "; in Festlandchina den Spiegel HF_ENDPOINT=https://hf-mirror.com verwenden.",
+        "Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.": "Piper und espeak-ng stehen unter GPL-3.0, jedes Stimmmodell hat eigene Bedingungen; dieses Plugin verteilt sie nicht.",
+        "Save failed": "Speichern fehlgeschlagen",
+        Saved: "Gespeichert",
+        "Loading…": "Lädt…",
+        "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "Die offizielle DeepSeek-TTS-API: nutzungsabhängig über dein eigenes Guthaben abgerechnet; braucht Schlüssel und Netzwerk.",
+        "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "Der Browser liest die Absätze selbst: kein Schlüssel, kein Cache, kein Host-Umweg; die Geschwindigkeit ist die der Engine.",
+        "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Stimmen des Betriebssystems: offline, kein Download, gut bei gemischtem Chinesisch/Englisch, aber synthetisch.",
+        "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Jeder OpenAI-kompatible /v1/audio/speech-Endpunkt: gehostete Dienste rechnen über dein Konto ab, lokale sind kostenlos. Der Schlüssel bleibt auf diesem Rechner und geht nie an die Seite zurück.",
+        ready: "bereit",
+        "key missing": "Schlüssel fehlt",
+        "no browser voices": "keine Browser-Stimmen",
+        "no voices": "keine Stimmen",
+        unsupported: "nicht unterstützt",
+        "needs setup": "Einrichtung nötig",
+        Chinese: "Chinesisch",
+        Japanese: "Japanisch",
+        Korean: "Koreanisch",
+        Cantonese: "Kantonesisch",
+        Auto: "Automatisch",
+        Engine: "Synthese-Engine",
+        "DeepSeek cloud (online)": "DeepSeek-Cloud (online)",
+        "Browser speech (hand off to a browser)": "Browser-Sprachausgabe (an Browser übergeben)",
+        "Browser speech (no voices here)": "Browser-Sprachausgabe (hier keine Stimmen)",
+        "System voices (offline)": "Systemstimmen (offline)",
+        "Custom API (online)": "Eigene API (online)",
+        Voice: "Stimme",
+        female: "weiblich",
+        male: "männlich",
+        "Configured · DEEPSEEK_API_KEY": "Konfiguriert · DEEPSEEK_API_KEY",
+        "Not configured — set a key in Settings → Models": "Nicht konfiguriert — Schlüssel unter Einstellungen → Modelle eintragen",
+        "no system voices installed": "keine Systemstimmen installiert",
+        "not supported on this OS": "auf diesem System nicht unterstützt",
+        Protocol: "Protokoll",
+        "OpenAI-compatible /v1/audio/speech": "OpenAI-kompatibel /v1/audio/speech",
+        "GPT-SoVITS (api_v2 /tts)": "GPT-SoVITS (api_v2 /tts)",
+        "Fish Audio (/v1/tts)": "Fish Audio (/v1/tts)",
+        "Custom request template": "Eigene Anfragevorlage",
+        "key required": "Schlüssel nötig",
+        "local, no key": "lokal, ohne Schlüssel",
+        "invalid URL": "ungültige URL",
+        "Reference audio": "Referenzaudio",
+        required: "erforderlich",
+        "Reference text": "Referenztext",
+        "what the reference audio says (optional)": "was das Referenzaudio sagt (optional)",
+        "Text language": "Textsprache",
+        "Prompt language": "Referenzsprache",
+        Model: "Modell",
+        Format: "Format",
+        "wav (recommended)": "wav (empfohlen)",
+        "pcm (24 kHz raw)": "pcm (24 kHz roh)",
+        "Reference voice id": "Referenz-Stimm-ID",
+        Method: "Methode",
+        Path: "Pfad",
+        Headers: "Header",
+        "Body template": "Body-Vorlage",
+        "Audio type": "Audiotyp",
+        "auto (sniff WAV)": "auto (WAV erkennen)",
+        "PCM (24 kHz raw)": "PCM (24 kHz roh)",
+        "configured — leave empty to keep": "konfiguriert — leer lassen zum Behalten",
+        Clear: "Löschen",
+        configured: "konfiguriert",
+        missing: "fehlt",
+        Preview: "Vorschau",
+        "Stop (synthesizing)": "Stoppen (synthetisiert)",
+        "Stop preview": "Vorschau stoppen",
+        "Play a sample": "Beispiel abspielen",
+        "fixed mixed zh/en sentence": "fester gemischt chinesisch/englischer Satz",
+        Playback: "Wiedergabe",
+        "Part size sets how much text one synthesis covers; speed only changes playback, never pitch.": "Die Teilgröße bestimmt, wie viel Text eine Synthese umfasst; die Geschwindigkeit ändert nur die Wiedergabe, nie die Tonhöhe.",
+        "Max per part": "Max. pro Teil",
+        chars: "Zeichen",
+        Speed: "Geschwindigkeit",
+        "Auto-read": "Automatisches Vorlesen",
+        "Turn these on to speak automatically; the speaker button still works with all of them off.": "Aktiviere diese, um automatisch vorzulesen; der Lautsprecher-Button funktioniert auch mit allem aus.",
+        "Read replies": "Antworten vorlesen",
+        "Read mid-turn output": "Zwischenausgaben vorlesen",
+        "needs \"Read replies\"": "benötigt „Antworten vorlesen“",
+        "Read questions": "Fragen vorlesen",
+        "prompts that need your answer": "Fragen, die deine Antwort brauchen",
+        "Read approvals": "Freigaben vorlesen",
+        "requests that need your confirmation": "Anfragen, die deine Bestätigung brauchen",
+        "Audio cache": "Audio-Cache",
+        " files · ": " Dateien · ",
+        "in memory: ": "im Speicher: ",
+        " entries · ": " Einträge · ",
+        "Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.": "Nur Host-synthetisierte Engines (DeepSeek, eigene API, Systemstimmen) werden zwischengespeichert; Browser-Sprachausgabe nie.",
+        Location: "Ort",
+        "Disk (survives a restart)": "Festplatte (übersteht einen Neustart)",
+        "Memory (cleared on restart, nothing written)": "Speicher (beim Neustart geleert, nichts wird geschrieben)",
+        Limit: "Limit",
+        Cleanup: "Bereinigung",
+        "Cache cleared": "Cache geleert",
+        "Clear cache": "Cache leeren",
+        "Saves on Enter, blur, or release.": "Speichert bei Enter, Fokusverlust oder Loslassen.",
+      },
+      ru: {
+        "the bridge failed": "мост чтения не сработал",
+        "the browser confirmed receipt": "браузер подтвердил получение",
+        "sent to the bridge tab, but no confirmation came back (closed tab, or an older page)": "отправлено на вкладку моста, но подтверждение не пришло (вкладка закрыта или старая страница)",
+        "could not open a browser; the link is copied: ": "не удалось открыть браузер; ссылка скопирована: ",
+        "no browser voices here": "здесь нет голосов браузера",
+        "the browser needs one click on this page before it may speak; try again": "браузеру нужен один клик на этой странице, чтобы говорить; попробуйте ещё раз",
+        "preview failed: ": "не удалось показать образец: ",
+        "the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice": "облачный голос молчал 8 с — он не может связаться со своим сервером; попробуйте локальный голос",
+        "no sound in 8 s; the browser may be blocking autoplay": "нет звука 8 с; возможно, браузер блокирует автовоспроизведение",
+        "Speech synthesis failed": "синтез речи не удался",
+        online: "онлайн",
+        words: "слова",
+        "browser speech is not available here": "чтение браузером здесь недоступно",
+        "no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice": "этот облачный голос не издал звука за 8 с; он не может связаться с сервером — выберите локальный голос",
+        "this desktop shell stayed silent; it now uses the bridge — press read again": "эта оболочка не издала звука; теперь используется мост — нажмите чтение ещё раз",
+        "no sound in 8 s; the browser may be blocking autoplay — press read again": "нет звука 8 с; возможно, браузер блокирует автовоспроизведение — нажмите чтение ещё раз",
+        "the browser needs one click on this page before it may speak; press read": "браузеру нужен один клик на этой странице, чтобы говорить; нажмите чтение",
+        "browser speech failed: ": "чтение браузером не удалось: ",
+        "nothing to read here": "здесь нечего читать",
+        "could not read the session": "не удалось прочитать сессию",
+        "Read aloud": "Читать вслух",
+        "Stop reading": "Остановить чтение",
+        "Previous paragraph": "Предыдущий абзац",
+        "Pause / resume": "Пауза / продолжить",
+        "Next paragraph": "Следующий абзац",
+        "Playback speed": "Скорость воспроизведения",
+        Paused: "Пауза",
+        Resume: "Продолжить",
+        Pause: "Пауза",
+        "Sent to the browser": "Отправлено в браузер",
+        "Playback failed": "Ошибка чтения",
+        Dismiss: "Закрыть",
+        "Read request": "Читать запрос",
+        "Read question": "Читать вопрос",
+        "Waiting for the current read": "Ожидание текущего чтения",
+        "Reading the previous item — click to cut in and read this now": "Читается предыдущий элемент — нажмите, чтобы прервать и прочитать это",
+        Stop: "Стоп",
+        "Click to stop": "Нажмите, чтобы остановить",
+        "Synthesizing…": "Синтез…",
+        "Click to stop (the floating window pauses and steps)": "Нажмите, чтобы остановить (в плавающем окне можно ставить паузу и менять абзац)",
+        "Paused — resume from the floating window": "Пауза — продолжите из плавающего окна",
+        "Play again (cached)": "Повторить (из кэша)",
+        "Read this reply aloud (the paragraphs around the selection)": "Прочитать этот ответ (абзацы вокруг выделения)",
+        "Speech bridge (read in a browser)": "Мост чтения (читать в браузере)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Читает в браузере по умолчанию через страницу моста: без ключа, без кэша; страница следует теме и языку приложения.",
+        "desktop only": "только для десктопа",
+        "Install Piper offline": "Установить Piper офлайн",
+        Close: "Закрыть",
+        "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Этот плагин только воспроизводит звук; программа Piper и голосовые модели не входят в комплект. Настройте их один раз — синтез останется офлайн и бесплатным.",
+        "Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install \"piper-tts[zh]\".": "Программа: возьмите исполняемый файл piper. Только для Huayan достаточно автономной сборки 2023 года (около 37 МБ, распаковать и запустить); Chaowen / Xiao_ya требуют pip-сборку на Python 3.9–3.12: pip install \"piper-tts[zh]\".",
+        "Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.": "Голос: голос — это .onnx и одноимённый .json в одной папке (около 60 МБ каждый). Chaowen / Xiao_ya также требуют g2pW/ (около 260 МБ) и токенизатор BERT (около 0,1 МБ) в этой папке.",
+        "Fill it in: pick \"Local Piper\" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.": "Заполните: выберите «Локальный Piper» выше, укажите пути к программе и голосовой модели; когда состояние станет «готово», кнопка динамика будет работать офлайн.",
+        "Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.": "Диск: Huayan ≈ 97 МБ (37 программа + 60 модель); Chaowen / Xiao_ya ≈ 660 МБ с g2pW и токенизатором.",
+        "Program: ": "Программа: ",
+        "; the older build works too: ": "; старая версия тоже подходит: ",
+        "Voices: ": "Голоса: ",
+        "; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.": "; в материковом Китае используйте зеркало HF_ENDPOINT=https://hf-mirror.com.",
+        "Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.": "Piper и espeak-ng распространяются по GPL-3.0, у каждой голосовой модели свои условия; этот плагин их не распространяет.",
+        "Save failed": "Не удалось сохранить",
+        Saved: "Сохранено",
+        "Loading…": "Загрузка…",
+        "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "Официальный TTS API DeepSeek: оплата по факту использования с вашего баланса; нужны ключ и сеть.",
+        "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "Браузер сам читает абзацы: без ключа, без кэша, без обращений к Host; скорость — скорость движка.",
+        "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Голоса операционной системы: офлайн, без загрузки, нормально читают смесь китайского и английского, но звучат синтетично.",
+        "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Любой эндпоинт /v1/audio/speech, совместимый с OpenAI: облачные сервисы списывают с вашего аккаунта, локальные бесплатны. Ключ остаётся на этой машине и никогда не возвращается на страницу.",
+        ready: "готово",
+        "key missing": "нет ключа",
+        "no browser voices": "нет голосов браузера",
+        "no voices": "нет голосов",
+        unsupported: "не поддерживается",
+        "needs setup": "нужна настройка",
+        Chinese: "Китайский",
+        Japanese: "Японский",
+        Korean: "Корейский",
+        Cantonese: "Кантонский",
+        Auto: "Авто",
+        Engine: "Движок синтеза",
+        "DeepSeek cloud (online)": "DeepSeek Cloud (онлайн)",
+        "Browser speech (hand off to a browser)": "Чтение браузером (передать браузеру)",
+        "Browser speech (no voices here)": "Чтение браузером (здесь нет голосов)",
+        "System voices (offline)": "Системные голоса (офлайн)",
+        "Custom API (online)": "Свой API (онлайн)",
+        Voice: "Голос",
+        female: "женский",
+        male: "мужской",
+        "Configured · DEEPSEEK_API_KEY": "Настроено · DEEPSEEK_API_KEY",
+        "Not configured — set a key in Settings → Models": "Не настроено — укажите ключ в «Настройки → Модели»",
+        "no system voices installed": "системные голоса не установлены",
+        "not supported on this OS": "не поддерживается в этой ОС",
+        Protocol: "Протокол",
+        "OpenAI-compatible /v1/audio/speech": "Совместимо с OpenAI /v1/audio/speech",
+        "GPT-SoVITS (api_v2 /tts)": "GPT-SoVITS (api_v2 /tts)",
+        "Fish Audio (/v1/tts)": "Fish Audio (/v1/tts)",
+        "Custom request template": "Свой шаблон запроса",
+        "key required": "нужен ключ",
+        "local, no key": "локально, без ключа",
+        "invalid URL": "неверный URL",
+        "Reference audio": "Референсное аудио",
+        required: "обязательно",
+        "Reference text": "Референсный текст",
+        "what the reference audio says (optional)": "что говорит референсное аудио (необязательно)",
+        "Text language": "Язык текста",
+        "Prompt language": "Язык референса",
+        Model: "Модель",
+        Format: "Формат",
+        "wav (recommended)": "wav (рекомендуется)",
+        "pcm (24 kHz raw)": "pcm (24 кГц, сырой поток)",
+        "Reference voice id": "ID референсного голоса",
+        Method: "Метод",
+        Path: "Путь",
+        Headers: "Заголовки",
+        "Body template": "Шаблон тела",
+        "Audio type": "Тип аудио",
+        "auto (sniff WAV)": "авто (определить WAV)",
+        "PCM (24 kHz raw)": "PCM (24 кГц, сырой поток)",
+        "configured — leave empty to keep": "настроено — оставьте пустым, чтобы сохранить",
+        Clear: "Очистить",
+        configured: "настроено",
+        missing: "не задано",
+        Preview: "Образец",
+        "Stop (synthesizing)": "Остановить (идёт синтез)",
+        "Stop preview": "Остановить образец",
+        "Play a sample": "Прослушать образец",
+        "fixed mixed zh/en sentence": "фиксированная фраза на смеси китайского и английского",
+        Playback: "Воспроизведение",
+        "Part size sets how much text one synthesis covers; speed only changes playback, never pitch.": "Размер части задаёт, сколько текста покрывает один синтез; скорость меняет только воспроизведение и не меняет тон.",
+        "Max per part": "Максимум на часть",
+        chars: "символов",
+        Speed: "Скорость",
+        "Auto-read": "Авточтение",
+        "Turn these on to speak automatically; the speaker button still works with all of them off.": "Включите, чтобы читать автоматически; кнопка динамика работает и когда всё выключено.",
+        "Read replies": "Читать ответы",
+        "Read mid-turn output": "Читать промежуточный вывод",
+        "needs \"Read replies\"": "нужно «Читать ответы»",
+        "Read questions": "Читать вопросы",
+        "prompts that need your answer": "вопросы, которым нужен ваш ответ",
+        "Read approvals": "Читать подтверждения",
+        "requests that need your confirmation": "запросы, которым нужно ваше подтверждение",
+        "Audio cache": "Кэш аудио",
+        " files · ": " файлов · ",
+        "in memory: ": "в памяти: ",
+        " entries · ": " записей · ",
+        "Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.": "Кэшируются только движки, синтезируемые Host (DeepSeek, свой API, системные голоса); чтение браузером — никогда.",
+        Location: "Расположение",
+        "Disk (survives a restart)": "Диск (сохраняется после перезапуска)",
+        "Memory (cleared on restart, nothing written)": "Память (очищается при перезапуске, ничего не пишется)",
+        Limit: "Предел",
+        Cleanup: "Очистка",
+        "Cache cleared": "Кэш очищен",
+        "Clear cache": "Очистить кэш",
+        "Saves on Enter, blur, or release.": "Сохраняется по Enter, при потере фокуса или отпускании.",
+      },
+      pt: {
+        "the bridge failed": "o modo de leitura falhou",
+        "the browser confirmed receipt": "o navegador confirmou o recebimento",
+        "sent to the bridge tab, but no confirmation came back (closed tab, or an older page)": "enviado para a aba do modo de leitura, mas sem confirmação (aba fechada ou página antiga)",
+        "could not open a browser; the link is copied: ": "não foi possível abrir o navegador; o link foi copiado: ",
+        "no browser voices here": "não há vozes do navegador aqui",
+        "the browser needs one click on this page before it may speak; try again": "o navegador precisa de um clique nesta página antes de falar; tente de novo",
+        "preview failed: ": "a prévia falhou: ",
+        "the cloud voice stayed silent for 8 s — it cannot reach its server; try a local voice": "a voz da nuvem ficou 8 s em silêncio — não alcança o servidor; tente uma voz local",
+        "no sound in 8 s; the browser may be blocking autoplay": "sem som por 8 s; talvez o navegador esteja bloqueando a reprodução automática",
+        "Speech synthesis failed": "falha na síntese de voz",
+        online: "online",
+        words: "palavras",
+        "browser speech is not available here": "a leitura pelo navegador não está disponível aqui",
+        "no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice": "esta voz da nuvem não emitiu som em 8 s; não alcança o servidor — escolha uma voz local",
+        "this desktop shell stayed silent; it now uses the bridge — press read again": "este ambiente de desktop ficou em silêncio; agora usa o modo de leitura — pressione ler de novo",
+        "no sound in 8 s; the browser may be blocking autoplay — press read again": "sem som por 8 s; talvez o navegador bloqueie a reprodução automática — pressione ler de novo",
+        "the browser needs one click on this page before it may speak; press read": "o navegador precisa de um clique nesta página antes de falar; pressione ler",
+        "browser speech failed: ": "falha na leitura pelo navegador: ",
+        "nothing to read here": "não há nada para ler aqui",
+        "could not read the session": "não foi possível ler a sessão",
+        "Read aloud": "Ler em voz alta",
+        "Stop reading": "Parar a leitura",
+        "Previous paragraph": "Parágrafo anterior",
+        "Pause / resume": "Pausar / continuar",
+        "Next paragraph": "Próximo parágrafo",
+        "Playback speed": "Velocidade de reprodução",
+        Paused: "Pausado",
+        Resume: "Continuar",
+        Pause: "Pausar",
+        "Sent to the browser": "Enviado ao navegador",
+        "Playback failed": "Falha na leitura",
+        Dismiss: "Fechar",
+        "Read request": "Ler solicitação",
+        "Read question": "Ler pergunta",
+        "Waiting for the current read": "Aguardando a leitura atual",
+        "Reading the previous item — click to cut in and read this now": "Lendo o item anterior — clique para interromper e ler isto",
+        Stop: "Parar",
+        "Click to stop": "Clique para parar",
+        "Synthesizing…": "Sintetizando…",
+        "Click to stop (the floating window pauses and steps)": "Clique para parar (a janela flutuante pausa e muda de parágrafo)",
+        "Paused — resume from the floating window": "Pausado — continue pela janela flutuante",
+        "Play again (cached)": "Reproduzir de novo (cache)",
+        "Read this reply aloud (the paragraphs around the selection)": "Ler esta resposta (os parágrafos em torno da seleção)",
+        "Speech bridge (read in a browser)": "Modo de leitura (ler num navegador)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lê no navegador padrão através da página do modo de leitura: sem chave, sem cache; a página segue o tema e o idioma do app.",
+        "desktop only": "só no desktop",
+        "Install Piper offline": "Instalar o Piper offline",
+        Close: "Fechar",
+        "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Este plugin só reproduz áudio; o programa Piper e os modelos de voz não são incluídos. Configure uma vez e a síntese continua offline e gratuita.",
+        "Program: get a piper executable. For Huayan alone the 2023 self-contained build is enough (about 37 MB, unzip and run); Chaowen / Xiao_ya need the pip build on Python 3.9–3.12: pip install \"piper-tts[zh]\".": "Programa: obtenha um executável do piper. Só com o Huayan basta a versão autônoma de 2023 (cerca de 37 MB, descompactar e executar); Chaowen / Xiao_ya exigem a versão pip no Python 3.9–3.12: pip install \"piper-tts[zh]\".",
+        "Voice: a voice is an .onnx plus its same-named .json in one folder (about 60 MB each). Chaowen / Xiao_ya also need g2pW/ (about 260 MB) and the BERT tokenizer (about 0.1 MB) in that folder.": "Voz: uma voz é um .onnx e o .json de mesmo nome numa pasta (cerca de 60 MB cada). Chaowen / Xiao_ya também exigem g2pW/ (cerca de 260 MB) e o tokenizador BERT (cerca de 0,1 MB) nessa pasta.",
+        "Fill it in: pick \"Local Piper\" above, set the program and voice model paths; once the status reads ready, the speaker button works offline.": "Preencha: escolha «Piper local» acima, informe os caminhos do programa e do modelo de voz; quando o status disser pronto, o botão de alto-falante funciona offline.",
+        "Disk: Huayan ≈ 97 MB (37 program + 60 model); Chaowen / Xiao_ya ≈ 660 MB including g2pW and the tokenizer.": "Disco: Huayan ≈ 97 MB (37 programa + 60 modelo); Chaowen / Xiao_ya ≈ 660 MB com g2pW e o tokenizador.",
+        "Program: ": "Programa: ",
+        "; the older build works too: ": "; a versão antiga também funciona: ",
+        "Voices: ": "Vozes: ",
+        "; from mainland China use the HF_ENDPOINT=https://hf-mirror.com mirror.": "; na China continental use o espelho HF_ENDPOINT=https://hf-mirror.com.",
+        "Piper and espeak-ng are GPL-3.0 and each voice model has its own terms; this plugin does not redistribute them.": "Piper e espeak-ng são GPL-3.0 e cada modelo de voz tem seus próprios termos; este plugin não os redistribui.",
+        "Save failed": "Falha ao salvar",
+        Saved: "Salvo",
+        "Loading…": "Carregando…",
+        "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "A API oficial de TTS da DeepSeek: cobrada por uso no seu próprio saldo; precisa de chave e rede.",
+        "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "O navegador lê os parágrafos: sem chave, sem cache, sem ida e volta ao Host; a velocidade é a do motor.",
+        "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Vozes do sistema operacional: offline, sem download, boas em misturas de chinês e inglês, mas sintéticas.",
+        "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Qualquer endpoint /v1/audio/speech compatível com OpenAI: serviços hospedados cobram na sua conta, locais são gratuitos. A chave fica nesta máquina e nunca volta para a página.",
+        ready: "pronto",
+        "key missing": "falta a chave",
+        "no browser voices": "sem vozes do navegador",
+        "no voices": "sem vozes",
+        unsupported: "não suportado",
+        "needs setup": "precisa de configuração",
+        Chinese: "Chinês",
+        Japanese: "Japonês",
+        Korean: "Coreano",
+        Cantonese: "Cantonês",
+        Auto: "Automático",
+        Engine: "Motor de síntese",
+        "DeepSeek cloud (online)": "DeepSeek na nuvem (online)",
+        "Browser speech (hand off to a browser)": "Leitura pelo navegador (entregar a um navegador)",
+        "Browser speech (no voices here)": "Leitura pelo navegador (sem vozes aqui)",
+        "System voices (offline)": "Vozes do sistema (offline)",
+        "Custom API (online)": "API personalizada (online)",
+        Voice: "Voz",
+        female: "feminina",
+        male: "masculina",
+        "Configured · DEEPSEEK_API_KEY": "Configurado · DEEPSEEK_API_KEY",
+        "Not configured — set a key in Settings → Models": "Não configurado — defina uma chave em Configurações → Modelos",
+        "no system voices installed": "nenhuma voz do sistema instalada",
+        "not supported on this OS": "não suportado neste sistema",
+        Protocol: "Protocolo",
+        "OpenAI-compatible /v1/audio/speech": "Compatível com OpenAI /v1/audio/speech",
+        "GPT-SoVITS (api_v2 /tts)": "GPT-SoVITS (api_v2 /tts)",
+        "Fish Audio (/v1/tts)": "Fish Audio (/v1/tts)",
+        "Custom request template": "Modelo de requisição personalizado",
+        "key required": "chave necessária",
+        "local, no key": "local, sem chave",
+        "invalid URL": "URL inválida",
+        "Reference audio": "Áudio de referência",
+        required: "obrigatório",
+        "Reference text": "Texto de referência",
+        "what the reference audio says (optional)": "o que o áudio de referência diz (opcional)",
+        "Text language": "Idioma do texto",
+        "Prompt language": "Idioma de referência",
+        Model: "Modelo",
+        Format: "Formato",
+        "wav (recommended)": "wav (recomendado)",
+        "pcm (24 kHz raw)": "pcm (24 kHz bruto)",
+        "Reference voice id": "ID da voz de referência",
+        Method: "Método",
+        Path: "Caminho",
+        Headers: "Cabeçalhos",
+        "Body template": "Modelo do corpo",
+        "Audio type": "Tipo de áudio",
+        "auto (sniff WAV)": "auto (detectar WAV)",
+        "PCM (24 kHz raw)": "PCM (24 kHz bruto)",
+        "configured — leave empty to keep": "configurado — deixe vazio para manter",
+        Clear: "Limpar",
+        configured: "configurado",
+        missing: "não definido",
+        Preview: "Prévia",
+        "Stop (synthesizing)": "Parar (sintetizando)",
+        "Stop preview": "Parar prévia",
+        "Play a sample": "Ouvir uma amostra",
+        "fixed mixed zh/en sentence": "frase fixa mista de chinês/inglês",
+        Playback: "Reprodução",
+        "Part size sets how much text one synthesis covers; speed only changes playback, never pitch.": "O tamanho da parte define quanto texto uma síntese cobre; a velocidade muda só a reprodução, nunca o tom.",
+        "Max per part": "Máximo por parte",
+        chars: "caracteres",
+        Speed: "Velocidade",
+        "Auto-read": "Leitura automática",
+        "Turn these on to speak automatically; the speaker button still works with all of them off.": "Ative para ler automaticamente; o botão de alto-falante continua funcionando com tudo desligado.",
+        "Read replies": "Ler respostas",
+        "Read mid-turn output": "Ler saída intermediária",
+        "needs \"Read replies\"": "precisa de «Ler respostas»",
+        "Read questions": "Ler perguntas",
+        "prompts that need your answer": "perguntas que precisam da sua resposta",
+        "Read approvals": "Ler autorizações",
+        "requests that need your confirmation": "pedidos que precisam da sua confirmação",
+        "Audio cache": "Cache de áudio",
+        " files · ": " arquivos · ",
+        "in memory: ": "na memória: ",
+        " entries · ": " entradas · ",
+        "Only Host-synthesized engines (DeepSeek, custom API, system voices) are cached; browser speech never is.": "Só os motores sintetizados pelo Host (DeepSeek, API personalizada, vozes do sistema) são armazenados; a leitura pelo navegador nunca.",
+        Location: "Local",
+        "Disk (survives a restart)": "Disco (sobrevive a um reinício)",
+        "Memory (cleared on restart, nothing written)": "Memória (limpa no reinício, nada é escrito)",
+        Limit: "Limite",
+        Cleanup: "Limpeza",
+        "Cache cleared": "Cache limpo",
+        "Clear cache": "Limpar cache",
+        "Saves on Enter, blur, or release.": "Salva com Enter, ao perder o foco ou ao soltar.",
+      },
+    }
+
+    // The bridge is a separate page: it cannot see the app's theme, so the
+    // palette is read here and pushed there. `ctx` is kept for a lazy lookup —
+    // the theme service may mount after this plugin, and a one-shot read in
+    // apply() would then answer "dark" forever.
+    let appCtx = null
+    /** The colour DSH actually paints. Reads the service first, the pixels second. */
+    function currentScheme() {
+      try {
+        const theme = appCtx && typeof appCtx.get === 'function' ? appCtx.get('theme') : null
+        const snapshot = theme && typeof theme.getTheme === 'function' ? theme.getTheme() : null
+        const active = snapshot && snapshot.active
+        const scheme = active && typeof active.colorScheme === 'string' ? active.colorScheme : ''
+        if (scheme === 'light' || scheme === 'dark') return scheme
+      } catch {}
+      // No service (older Host): the painted background is the truth, and it is
+      // the only signal that also follows a theme the service does not report.
+      const painted = paintedScheme()
+      if (painted) return painted
+      return 'dark'
+    }
+
+    /** light/dark from the first opaque background between <body> and <html>. */
+    function paintedScheme() {
+      if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return ''
+      const parse = (value) => {
+        const match = /^rgba?\(([^)]+)\)$/.exec(String(value || ''))
+        if (!match) return null
+        const parts = match[1].split(/[,\s/]+/).filter(Boolean).map(Number)
+        if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return null
+        const alpha = parts.length > 3 && Number.isFinite(parts[3]) ? parts[3] : 1
+        return { r: parts[0], g: parts[1], b: parts[2], a: alpha }
+      }
+      let node = document.body || document.documentElement
+      while (node) {
+        let color = null
+        try { color = parse(getComputedStyle(node).backgroundColor) } catch {}
+        if (color && color.a >= 0.5) {
+          const luminance = (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255
+          return luminance > 0.5 ? 'light' : 'dark'
+        }
+        node = node.parentElement
+      }
+      return ''
+    }
+
+    // Theme and language are pushed on their own, and only once the bridge has
+    // been used: a page that never opened one does not need the traffic.
+    let bridgeUsed = false
+    let lastPrefs = { scheme: '', lang: '' }
+    let prefsTimer = 0
+
+    function schedulePrefsPush() {
+      if (!bridgeUsed) return
+      if (prefsTimer) clearTimeout(prefsTimer)
+      // One push per burst: a theme switch can repaint several times.
+      prefsTimer = setTimeout(() => {
+        prefsTimer = 0
+        void sendPrefs()
+      }, 150)
+    }
+
+    async function sendPrefs() {
+      if (!bridgeUsed) return
+      const scheme = currentScheme()
+      const lang = currentLang()
+      const body = {}
+      if (scheme !== lastPrefs.scheme) body.scheme = scheme
+      if (lang !== lastPrefs.lang) body.lang = lang
+      if (!body.scheme && !body.lang) return
+      lastPrefs = { scheme, lang }
+      try {
+        await fetch(BRIDGE_PREFS_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          keepalive: true,
+        })
+      } catch {}
+    }
+
+    // The bridge reports what it is doing; the app mirrors it on the buttons.
+    function noteBridgeState(payload) {
+      const key = String(payload.key || '')
+      if (!key) return
+      const phase = String(payload.phase || '')
+      if (phase === 'finished' || phase === 'stopped') {
+        if (!bridgeStates.has(key)) return
+        bridgeStates.delete(key)
+      } else {
+        bridgeStates.set(key, {
+          phase: phase === 'paused' ? 'paused' : phase === 'queued' ? 'queued' : 'playing',
+          unit: Number(payload.unit) || 0,
+          total: Number(payload.total) || 0,
+          queued: Number(payload.queued) || 0,
+          at: Date.now(),
+        })
+      }
+      setPlayback({})
+    }
+
+    /** The bridge's state for one button, dropped once it is too old to trust. */
+    function liveBridgeState(key) {
+      const state = bridgeStates.get(key)
+      if (!state) return null
+      if (Date.now() - (state.at || 0) > 10 * 60 * 1000) {
+        bridgeStates.delete(key)
+        return null
+      }
+      return state
+    }
+
+    /** Theme/language changes, plus a DOM fallback for a Host without the service. */
+    function watchBridgePrefs(ctx) {
+      ctx.effect(() => {
+        const offTheme = typeof ctx.on === 'function' ? ctx.on('theme/change', () => schedulePrefsPush()) : null
+        const offLocale = typeof ctx.on === 'function' ? ctx.on('locale/change', () => schedulePrefsPush()) : null
+        return () => {
+          try { offTheme && offTheme() } catch {}
+          try { offLocale && offLocale() } catch {}
+        }
+      }, 'dsh-tts-reader: bridge prefs')
+      ctx.effect(() => {
+        if (typeof window === 'undefined' || typeof document === 'undefined') return
+        let last = currentScheme()
+        let pending = 0
+        const check = () => {
+          pending = 0
+          const next = currentScheme()
+          if (next === last) return
+          last = next
+          schedulePrefsPush()
+        }
+        const onChange = () => {
+          if (pending) return
+          pending = setTimeout(check, 120)
+        }
+        let observer = null
+        try {
+          if (typeof MutationObserver === 'function') {
+            observer = new MutationObserver(onChange)
+            observer.observe(document.documentElement, {
+              attributes: true,
+              attributeFilter: ['class', 'style', 'data-theme', 'data-color-scheme'],
+            })
+          }
+        } catch { observer = null }
+        let media = null
+        try {
+          media = window.matchMedia('(prefers-color-scheme: dark)')
+          if (media && typeof media.addEventListener === 'function') media.addEventListener('change', onChange)
+        } catch { media = null }
+        return () => {
+          if (pending) clearTimeout(pending)
+          try { observer && observer.disconnect() } catch {}
+          try {
+            if (media && typeof media.removeEventListener === 'function') media.removeEventListener('change', onChange)
+          } catch {}
+        }
+      }, 'dsh-tts-reader: scheme watch')
+    }
 
     // Re-render a component when the app language changes.
     function useLocaleTick() {
@@ -73,6 +1186,9 @@ window.__ModuleLoader__.load({
     // Messages that have been read at least once: the speaker button uses this
     // only to know it can offer "play again (cached)".
     const playedMessages = new Set()
+    // Replies the browser bridge finished reading: their buttons show a check.
+    // The Host owns the record (it survives a reload); this is the page's copy.
+    const bridgeStates = new Map()
     // The rendered read button per message: the only handle on the message DOM,
     // and auto-read has no click to carry one, so it is kept for later lookups.
     const actionAnchors = new Map()
@@ -151,16 +1267,20 @@ window.__ModuleLoader__.load({
       } catch { return false }
     })()
 
-    // Which of the two browser paths this shell uses: its own voices, or the
-    // bridge to a real browser. A desktop shell defaults to the bridge, because
-    // its voice list can look fine and still stay silent.
-    const BRIDGE_TARGET = 'bridge'
+    // The bridge is an engine of its own now, not a voice inside the browser
+    // engine: a desktop shell cannot use its own voices at all.
+    const LEGACY_BRIDGE_TARGET = 'bridge'
+    const usesBridge = () => engineMode === 'bridge'
+    // A saved pre-bridge engine pair ("browser" + the bridge voice) becomes the
+    // bridge engine once, so an existing setup keeps reading in the browser.
+    const needsBridgeMigration = () => isDesktopShell
+      && engineMode === 'browser'
+      && storedSpeechVoice() === LEGACY_BRIDGE_TARGET
     const speechTargetValue = () => {
       const stored = storedSpeechVoice()
-      if (isDesktopShell) return stored === '' || stored === BRIDGE_TARGET ? BRIDGE_TARGET : stored
+      if (stored === LEGACY_BRIDGE_TARGET) return ''
       return stored || ((pickSpeechVoice() || {}).voiceURI || '')
     }
-    const usesBridge = () => speechTargetValue() === BRIDGE_TARGET
 
     const speechCapable = () => speechVoices.length > 0
 
@@ -177,14 +1297,34 @@ window.__ModuleLoader__.load({
 
     function isCloudVoice(voice) { return voice && voice.localService === false }
 
-    /** Prefer the remembered voice, then a local Chinese one, then anything. */
+    /**
+     * Which voice reads by default. The remembered one wins; otherwise a
+     * "Natural" voice in the app language is best — Edge's Online (Natural)
+     * voices sound like speech and do report word boundaries. They are still
+     * network voices, so plain cloud voices (Chrome's "Google …", which can hang
+     * without ever starting) rank below the local engines.
+     */
     function pickSpeechVoice() {
       const wanted = storedSpeechVoice()
-      const byUri = wanted ? speechVoices.find((voice) => voice.voiceURI === wanted) : null
-      if (byUri) return byUri
-      const local = speechVoices.filter((voice) => !isCloudVoice(voice))
-      const pool = local.length > 0 ? local : speechVoices
-      return pool.find((voice) => /^zh/i.test(voice.lang || '')) || pool[0] || null
+      if (wanted) {
+        const remembered = speechVoices.find((voice) => voice.voiceURI === wanted)
+        if (remembered) return remembered
+      }
+      const zh = (voice) => /^zh/i.test(voice.lang || '')
+      const natural = (voice) => /natural/i.test(voice.name || '')
+      const local = (voice) => !isCloudVoice(voice)
+      const best = [
+        (voice) => zh(voice) && natural(voice),
+        (voice) => zh(voice) && local(voice),
+        zh,
+        natural,
+        local,
+      ]
+      for (const test of best) {
+        const found = speechVoices.find(test)
+        if (found) return found
+      }
+      return speechVoices[0] || null
     }
 
     /**
@@ -193,11 +1333,21 @@ window.__ModuleLoader__.load({
      */
     async function openBridge(target) {
       const payload = {}
+      // Auto-read stays quiet: a toast per auto-sent paragraph would bury the
+      // conversation, and a failed auto hand-off is not the user's problem.
+      const quiet = !!(target && target.quiet)
       if (target && target.sessionId) payload.sessionId = target.sessionId
       if (target && target.messageId) payload.messageId = target.messageId
       if (target && target.text) payload.text = target.text
       // The bridge reads at the speed set on the settings page.
       payload.speed = Number(speed) || 1
+      // Its voice list is ordered by the app's language, not the browser's.
+      payload.lang = currentLang()
+      // The bridge paints itself in the app's palette, not the OS preference.
+      payload.scheme = currentScheme()
+      // The app's own key for this read: the bridge echoes it with its state so
+      // the app can show a wave on the button that started it.
+      if (target && target.stateKey) payload.key = String(target.stateKey)
       try {
         const response = await fetch(BRIDGE_PATH, {
           method: 'POST',
@@ -206,19 +1356,30 @@ window.__ModuleLoader__.load({
         })
         const body = await response.json().catch(() => null)
         if (!response.ok || !body || body.ok !== true) {
-          throw new Error((body && body.error) || t('朗读桥失败', 'the bridge failed'))
+          throw new Error(hostErrorText(body) || (body && body.error) || t('朗读桥失败', 'the bridge failed'))
         }
         const value = body.value || {}
+        // From here on theme/language changes are worth pushing to it.
+        bridgeUsed = true
+        lastPrefs = { scheme: payload.scheme, lang: payload.lang }
         if (value.delivered > 0) {
-          // A bridge tab was already listening: nothing new was opened.
-          showFailureToast(t('已发送到浏览器里那个朗读页', 'sent to the bridge tab you already have open'), 'ok')
+          // A bridge tab was already listening: nothing new was opened. It also
+          // confirms receipt, so "sent" and "received" are no longer the same
+          // claim: an unconfirmed hand-off usually means the tab was closed.
+          if (!quiet) {
+            showFailureToast(value.acked
+              ? t('浏览器已确认收到', 'the browser confirmed receipt')
+              : t('已发到那个朗读页，但没等到它的确认（多半是页面已关或是旧版页面）',
+                'sent to the bridge tab, but no confirmation came back (closed tab, or an older page)'),
+            value.acked ? 'ok' : undefined)
+          }
         } else if (!value.launched && value.url) {
           try { await navigator.clipboard.writeText(value.url) } catch {}
-          showFailureToast(t('没能自动打开浏览器，链接已复制到剪贴板：', 'could not open a browser; the link is copied: ') + value.url)
+          if (!quiet) showFailureToast(t('没能自动打开浏览器，链接已复制到剪贴板：', 'could not open a browser; the link is copied: ') + value.url)
         }
         return value
       } catch (error) {
-        showFailureToast((error && error.message) || String(error))
+        if (!quiet) showFailureToast((error && error.message) || String(error))
         return null
       }
     }
@@ -246,6 +1407,18 @@ window.__ModuleLoader__.load({
       if (configLoaded) return
       configLoaded = true
       fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
+        .then((res) => res.json())
+        .then((body) => { if (body && body.ok) applyRemoteConfig(body.value) })
+        .catch(() => {})
+    }
+
+    /** Persist one engine change from a non-settings path (the watchdog). */
+    function saveEngine(engine) {
+      return fetch(CONFIG_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ engine }),
+      })
         .then((res) => res.json())
         .then((body) => { if (body && body.ok) applyRemoteConfig(body.value) })
         .catch(() => {})
@@ -279,6 +1452,12 @@ window.__ModuleLoader__.load({
               dropQueued(key)
             }
           }
+          return
+        }
+        if (payload.type === 'bridge-state') {
+          // The browser bridge reports what it is reading: mirror it on the
+          // message (or prompt) button that started that read.
+          noteBridgeState(payload)
           return
         }
         if (payload.type !== 'assistant') return
@@ -405,7 +1584,10 @@ window.__ModuleLoader__.load({
       const key = sessionId + ':' + messageId
       if (autoPlayed.has(key)) return
       autoPlayed.add(key)
-      const speak = () => { void startReadAloud(sessionId, messageId, key) }
+      // `auto` keeps a no-text mid-turn chunk (thinking, tool calls) silent: the
+      // user asked for the whole turn to be spoken, not for a failure report on
+      // every step that has no prose in it.
+      const speak = () => { void startReadAloud(sessionId, messageId, key, { auto: true }) }
       if (current || speechQueue.length > 0) {
         enqueueSpeech(key, speak)
         return
@@ -418,10 +1600,10 @@ window.__ModuleLoader__.load({
     function autoReadPrompt(key, text) {
       if (!text) return
       if ((current && current.key !== key) || speechQueue.length > 0) {
-        enqueueSpeech(key, () => { void startReadAloud(null, null, key, { text }) })
+        enqueueSpeech(key, () => { void startReadAloud(null, null, key, { text, auto: true }) })
         return
       }
-      void startReadAloud(null, null, key, { text })
+      void startReadAloud(null, null, key, { text, auto: true })
     }
 
     // A user gesture: cut whatever plays and speak this now.
@@ -693,8 +1875,11 @@ window.__ModuleLoader__.load({
 
     async function playPreview() {
       if (preview) { stopPreview(); return }
+      if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
+        void openBridge({ text: PREVIEW_TEXT })
+        return
+      }
       if (engineMode === 'browser') {
-        if (usesBridge()) { void openBridge({ text: PREVIEW_TEXT }); return }
         playPreviewSpeech()
         return
       }
@@ -764,6 +1949,7 @@ window.__ModuleLoader__.load({
     let player = null
     let playerWindowEl = null
     let speedSaveTimer = 0
+    let lastBarPaint = 0
     const PLAYER_UNIT_GAP_MS = 60
 
     const previewOf = (unit) => {
@@ -1561,6 +2747,14 @@ window.__ModuleLoader__.load({
         return
       }
       if (session.units.length === 0) return
+      // Character offsets per paragraph: what the progress bar measures against.
+      let chars = 0
+      session.charStarts = []
+      for (let index = 0; index < session.units.length; index += 1) {
+        session.charStarts[index] = chars
+        chars += String((session.units[index] && session.units[index].text) || '').length
+      }
+      session.totalChars = chars
       const from = Math.max(0, Math.min(Number(startUnit) || 0, session.units.length - 1))
       const firstText = String((session.units[from] && session.units[from].text) || '')
       const skip = Math.max(0, Math.min(Number(startSkip) || 0, Math.max(0, firstText.length - 1)))
@@ -1598,7 +2792,9 @@ window.__ModuleLoader__.load({
         const cloud = isCloudVoice(voice)
         // A desktop shell that stayed silent switches itself to the bridge, so
         // the next click does not wait eight seconds again.
-        if (isDesktopShell) rememberSpeechVoice(BRIDGE_TARGET)
+        if (isDesktopShell) rememberSpeechVoice(LEGACY_BRIDGE_TARGET)
+        // Persist the switch, or the next read starts the same dead engine again.
+        if (isDesktopShell) void saveEngine('bridge')
         fail(session.key, new Error(cloud
           ? t('这个云端音色 8 秒内没有出声（多半连不上厂商服务器），请换成 ⌂ 本地音色',
             'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice')
@@ -1643,6 +2839,11 @@ window.__ModuleLoader__.load({
             if (!session.boundarySeen) {
               // Only the first one repaints the window: this flips a label once.
               session.boundarySeen = true
+              lastBarPaint = Date.now()
+              playerView({})
+            } else if (Date.now() - lastBarPaint > 150) {
+              // Word boundaries are frequent; the bar only needs a few repaints.
+              lastBarPaint = Date.now()
               playerView({})
             }
           }
@@ -1671,15 +2872,16 @@ window.__ModuleLoader__.load({
       }, 30)
     }
 
-    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection, root) {      refreshSpeechVoices()
+    async function startSpeechReadAloud(sessionId, messageId, stateKey, selection, root, auto) {
+      refreshSpeechVoices()
       if (!speechCapable()) {
-        fail(stateKey, new Error(t('这台环境没有浏览器语音', 'no browser voices here')))
+        fail(stateKey, new Error(t('这台环境没有浏览器语音', 'no browser voices here')), auto)
         return
       }
       stopCurrentOnly()
       const session = {
         kind: 'speech',
-        key: stateKey, sessionId, messageId, selection: selection || '',
+        key: stateKey, sessionId, messageId, selection: selection || '', auto,
         units: [], unit: 0, total: 0, phase: 'loading', desiredPaused: false,
         speed, boundary: 0, gen: 0, watchdog: 0, timer: 0,
         skip: 0, root: root || null,
@@ -1702,7 +2904,7 @@ window.__ModuleLoader__.load({
         const payload = await response.json().catch(() => null)
         if (player !== session) return
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error((payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          throw new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
         }
         const units = Array.isArray(payload.value && payload.value.units) ? payload.value.units : []
         if (units.length === 0) throw new Error(t('这条消息没有可朗读的文字', 'nothing to read here'))
@@ -1721,23 +2923,32 @@ window.__ModuleLoader__.load({
 
     async function startReadAloud(sessionId, messageId, stateKey, options) {
       const selection = options && options.text ? String(options.text) : ''
+      // Auto-read speaks whatever a turn produces; a step with no prose is
+      // normal, so it must not surface as a failure.
+      const auto = !!(options && options.auto)
       // A click carries its own button; auto-read falls back to the one the
       // action registered for that message.
       const root = (options && options.root) || actionAnchors.get(stateKey) || null
+      // The bridge engine hands the text to a real browser; a desktop shell has
+      // no voices of its own, so this path needs no voice list at all.
+      if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
+        setPlayback({ key: null, phase: 'idle', error: '' })
+        // A selection read has no message id, so the text itself goes along.
+        void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
+        return
+      }
       if (engineMode === 'browser') {
         refreshSpeechVoices()
-        // Desktop: the bridge is the default and needs no voice list at all.
-        if (usesBridge() || (!speechCapable() && isDesktopShell)) {
+        if (!speechCapable() && isDesktopShell) {
           setPlayback({ key: null, phase: 'idle', error: '' })
-          // A selection read has no message id, so the text itself goes along.
-          void openBridge({ sessionId, messageId, text: selection || undefined })
+          void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
           return
         }
         if (!speechCapable()) {
-          fail(stateKey, new Error(t('这个环境没有浏览器语音', 'no browser voices here')))
+          fail(stateKey, new Error(t('这个环境没有浏览器语音', 'no browser voices here')), auto)
           return
         }
-        await startSpeechReadAloud(sessionId, messageId, stateKey, selection, root)
+        await startSpeechReadAloud(sessionId, messageId, stateKey, selection, root, auto)
         return
       }
       // Only the audible item is replaced: the waiting queue must survive, or
@@ -1752,7 +2963,7 @@ window.__ModuleLoader__.load({
       const controller = new AbortController()
       const session = {
         key: stateKey, sessionId, messageId, selection,
-        context, controller, root,
+        context, controller, root, auto,
         units: [], unit: 0, total: 0, standalone: false,
         phase: 'loading', desiredPaused: false, gen: 0,
         chunks: [], totalSamples: 0, sources: [], last: null,
@@ -1777,7 +2988,7 @@ window.__ModuleLoader__.load({
         })
         const payload = await response.json().catch(() => null)
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error((payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
+          throw new Error(hostErrorText(payload) || (payload && payload.error) || t('这条消息没有可朗读的文字', 'nothing to read here'))
         }
         if (player !== session) return
         const value = payload.value || {}
@@ -1840,7 +3051,7 @@ window.__ModuleLoader__.load({
       wrap.style.cssText = 'position:fixed;inset:auto 20px 20px auto;margin:0;padding:0;z-index:2147483645;display:none;'
         + 'border:1px solid var(--dsw-alias-border-l2,#3a3a3a);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#1c1c1c);'
         + 'color:var(--dsw-alias-label-primary,#eee);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:12px;'
-        + 'font-family:inherit;min-width:288px;max-width:360px;user-select:none'
+        + 'font-family:inherit;box-sizing:border-box;width:322px;user-select:none'
       const head = document.createElement('div')
       head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:move;'
         + 'border-bottom:1px solid var(--dsw-alias-border-l2,#3a3a3a);touch-action:none'
@@ -1855,8 +3066,13 @@ window.__ModuleLoader__.load({
       close.onclick = () => stopPlayback()
       head.append(title, close)
 
-      const meta = document.createElement('div')
-      meta.style.cssText = 'padding:6px 10px 0;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+      const progressTrack = document.createElement('div')
+      progressTrack.style.cssText = 'margin:6px 10px 0;height:3px;border-radius:2px;'
+        + 'background:var(--dsw-alias-border-l2,#3a3a3a);overflow:hidden'
+      const progressFill = document.createElement('div')
+      progressFill.style.cssText = 'height:100%;width:0;background:var(--dsw-alias-state-business-primary,#3b82f6);'
+        + 'transition:width .25s linear'
+      progressTrack.appendChild(progressFill)
       const controls = document.createElement('div')
       controls.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 10px'
       const prev = makePlayerButton('⏮', t('上一段', 'Previous paragraph'))
@@ -1874,13 +3090,19 @@ window.__ModuleLoader__.load({
       speedInput.max = '2'
       speedInput.step = '0.05'
       speedInput.title = t('播放速度', 'Playback speed')
-      speedInput.style.cssText = 'width:88px;margin:0;accent-color:var(--dsw-alias-state-business-primary,#3b82f6)'
+      // A class instead of inline accent-color: the default track is invisible on
+      // a light theme, and only stylesheet rules reach the track pseudo-elements.
+      speedInput.className = 'dsh-tts-range'
+      speedInput.style.cssText = 'width:88px;margin:0'
       const speedValue = document.createElement('span')
       speedValue.style.cssText = 'width:38px;text-align:right;font-variant-numeric:tabular-nums'
       speedInput.oninput = () => {
-        const value = playerClampSpeed(speedInput.value)
-        speedValue.textContent = value.toFixed(2) + '×'
-        playerApplySpeed(value)
+        // Dragging only previews the number: re-queuing speech on every pixel
+        // would stutter, and the window repaints would fight the thumb.
+        speedValue.textContent = playerClampSpeed(speedInput.value).toFixed(2) + '×'
+      }
+      speedInput.onchange = () => {
+        playerApplySpeed(playerClampSpeed(speedInput.value))
       }
       speedBox.append(speedInput, speedValue)
       controls.append(prev, play, next, speedBox)
@@ -1912,13 +3134,13 @@ window.__ModuleLoader__.load({
       head.addEventListener('pointerup', endDrag)
       head.addEventListener('pointercancel', endDrag)
 
-      wrap.append(head, meta, controls)
+      wrap.append(head, progressTrack, controls)
       document.body.appendChild(wrap)
       try { if (typeof wrap.showPopover === 'function') wrap.showPopover() } catch {
         try { wrap.removeAttribute('popover') } catch {}
       }
       playerWindowEl = wrap
-      wrap.__parts = { wrap, title, meta, prev, play, next, speedInput, speedValue }
+      wrap.__parts = { wrap, title, progressFill, prev, play, next, speedInput, speedValue }
       const saved = storedPlayerPos()
       if (saved) {
         wrap.style.left = saved.left + 'px'
@@ -1927,6 +3149,24 @@ window.__ModuleLoader__.load({
         wrap.style.bottom = 'auto'
       }
       return wrap
+    }
+
+    /**
+     * How much of the reply is behind the ear. A voice that reports word
+     * boundaries gives an exact character position; every other engine only
+     * knows which paragraph it is reading, so the bar steps per paragraph.
+     */
+    function playerProgressRatio(session) {
+      if (!session) return 0
+      const view = session.view || {}
+      const totalChars = session.totalChars || 0
+      if (session.kind === 'speech' && session.boundarySeen && totalChars > 0) {
+        const start = (session.charStarts && session.charStarts[session.unit]) || 0
+        return Math.max(0, Math.min(1, (start + (session.skip || 0)) / totalChars))
+      }
+      const count = view.total || 0
+      if (!count) return 0
+      return Math.max(0, Math.min(1, (Math.min(view.unit, count - 1) + 1) / count))
     }
 
     function updatePlayerWindow() {
@@ -1938,6 +3178,13 @@ window.__ModuleLoader__.load({
       }
       const parts = wrap.__parts
       const view = player.view
+      // An auto-read opens before its text is known. Showing the bar for every
+      // mid-turn chunk that turns out to hold only tool calls would flash it on
+      // each step; it appears once there is something to read.
+      if (player.auto && view.total === 0 && view.phase === 'loading') {
+        wrap.style.display = 'none'
+        return
+      }
       wrap.style.display = 'block'
       try {
         if (typeof wrap.showPopover === 'function' && !wrap.matches(':popover-open')) wrap.showPopover()
@@ -1947,27 +3194,42 @@ window.__ModuleLoader__.load({
       // the two things a wrong highlight has to be blamed on.
       const talker = player.kind === 'speech' ? speechLabel(player) : ''
       parts.title.textContent = talker ? title + ' · ' + talker : title
-      const progress = view.total > 1 ? (Math.min(view.unit + 1, view.total) + '/' + view.total + ' · ') : ''
-      parts.meta.textContent = progress + (view.preview || '')
+      // The bar replaces the old "3/19 · paragraph text…" line: progress, not prose.
+      parts.progressFill.style.width = (playerProgressRatio(player) * 100).toFixed(2) + '%'
+      parts.progressFill.parentElement.title = view.total > 1
+        ? (Math.min(view.unit + 1, view.total) + '/' + view.total + (view.preview ? ' · ' + view.preview : ''))
+        : (view.preview || '')
       parts.play.textContent = view.phase === 'paused' ? '▶' : '⏸'
       parts.play.title = view.phase === 'paused' ? t('继续', 'Resume') : t('暂停', 'Pause')
       parts.play.disabled = view.phase === 'loading'
       parts.prev.disabled = view.unit <= 0
       parts.next.disabled = view.unit >= view.total - 1
       const speedText = (Number(view.speed) || 1)
-      parts.speedInput.value = String(speedText)
-      parts.speedValue.textContent = speedText.toFixed(2) + '×'
+      // Never move the thumb out from under the pointer: while the slider has
+      // focus it owns the value, and boundary-driven repaints must not snap it
+      // back to the running session's speed.
+      const held = typeof document !== 'undefined' && document.activeElement === parts.speedInput
+      if (!held) {
+        parts.speedInput.value = String(speedText)
+        parts.speedValue.textContent = speedText.toFixed(2) + '×'
+      }
     }
 
-    function fail(key, error) {
+    function fail(key, error, auto) {
       if (!player || player.key !== key) return
+      // Auto-read speaks a whole turn; most of its steps (thinking, tool calls)
+      // carry no prose at all. Those are not failures, so they must not toast
+      // and must not leave an error behind on the read button.
+      const silent = auto === true || player.auto === true
       const message = (error && error.message) || String(error)
       playerStop()
-      setPlayback({ key, phase: 'idle', error: message })
-      // The button only keeps the text in a tooltip, which is gone as soon as
-      // the pointer moves; put the failure where it can be read and copied.
-      console.warn('[dsh-tts-reader] playback failed:', message)
-      showFailureToast(message)
+      setPlayback({ key, phase: 'idle', error: silent ? '' : message })
+      if (!silent) {
+        // The button only keeps the text in a tooltip, which is gone as soon as
+        // the pointer moves; put the failure where it can be read and copied.
+        console.warn('[dsh-tts-reader] playback failed:', message)
+        showFailureToast(message)
+      }
       drainQueue()
     }
 
@@ -2037,14 +3299,38 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ReadingBars({ mode }) {
-      return h('span', {
-        className: 'dsh-tts-bars'
-          + (mode === 'loading' ? ' is-loading' : '')
-          + (mode === 'paused' ? ' is-paused' : ''),
-        'aria-hidden': true,
-        children: [0, 1, 2, 3].map((index) => h('i', { key: index, style: { animationDelay: (index * 0.12) + 's' } })),
+    // Reading is a waveform, waiting is a spinner, paused is the pause glyph:
+    // one SVG each, so every surface (message button, request card) agrees.
+    function WaveIcon({ paused }) {
+      return h('svg', {
+        className: 'dsh-tts-wave' + (paused ? ' is-paused' : ''),
+        width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true,
+        children: [0, 1, 2, 3].map((index) => h('rect', {
+          key: index, x: 1.5 + index * 3.6, y: 3, width: 2, height: 10, rx: 1,
+          style: { animationDelay: (index * 0.12) + 's' },
+        })),
       })
+    }
+
+    function SpinnerIcon() {
+      return h('svg', {
+        className: 'dsh-tts-spin', width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true,
+      }, h('circle', {
+        cx: 8, cy: 8, r: 5.5, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 2, strokeLinecap: 'round', strokeDasharray: '22 12',
+      }))
+    }
+
+    function PauseIcon() {
+      return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true },
+        h('rect', { x: 4, y: 3.5, width: 2.6, height: 9, rx: 1, fill: 'currentColor' }),
+        h('rect', { x: 9.4, y: 3.5, width: 2.6, height: 9, rx: 1, fill: 'currentColor' }))
+    }
+
+    function ReadingIcon({ mode }) {
+      if (mode === 'loading' || mode === 'queued') return h(SpinnerIcon)
+      if (mode === 'paused') return h(PauseIcon)
+      return h(WaveIcon)
     }
 
     function SessionTracker(props) {
@@ -2105,7 +3391,16 @@ window.__ModuleLoader__.load({
       }
       styleButton(false)
       const iconEl = document.createElement('span')
-      iconEl.textContent = '🔊'
+      iconEl.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;'
+      // One glyph per state, inline SVG so the animated wave and spinner share
+      // the page's own keyframes (the button lives outside React).
+      const ICON = {
+        speaker: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/></svg>',
+        wave: '<svg class="dsh-tts-wave" width="14" height="14" viewBox="0 0 16 16"><rect x="1.5" y="3" width="2" height="10" rx="1"/><rect x="5.1" y="3" width="2" height="10" rx="1"/><rect x="8.7" y="3" width="2" height="10" rx="1"/><rect x="12.3" y="3" width="2" height="10" rx="1"/></svg>',
+        paused: '<svg width="14" height="14" viewBox="0 0 16 16"><rect x="4" y="3.5" width="2.6" height="9" rx="1" fill="currentColor"/><rect x="9.4" y="3.5" width="2.6" height="9" rx="1" fill="currentColor"/></svg>',
+        spinner: '<svg class="dsh-tts-spin" width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="22 12"/></svg>',
+      }
+      iconEl.innerHTML = ICON.speaker
       const labelEl = document.createElement('span')
       button.appendChild(iconEl)
       button.appendChild(labelEl)
@@ -2361,18 +3656,24 @@ window.__ModuleLoader__.load({
         if (removed) return
         if (!pending || !pending.text) { wrap.style.display = 'none'; dropPopover(); return }
         wrap.style.display = 'flex'
-        const playing = isPlaying()
+        const key = keyOf(pending)
+        const remote = liveBridgeState(key)
+        // The bridge (browser engine) reports its own phase; the local player
+        // reports through `current`.
+        const playing = isPlaying() || !!(remote && remote.phase === 'playing')
         // A queued request waits behind the audio that is already playing;
         // clicking cuts in and starts it immediately.
-        const waiting = !!pending && isQueued(keyOf(pending))
+        const waiting = !playing && (isQueued(key) || !!(remote && remote.phase === 'queued'))
         const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
         const waitingLabel = t('等待上条朗读完成', 'Waiting for the current read')
-        if (waiting && !playing) {
-          iconEl.textContent = '⏳'
+        if (waiting) {
+          iconEl.innerHTML = ICON.spinner
           labelEl.textContent = waitingLabel
           button.title = t('正在朗读上一条，点击可切断并立即朗读这一条', 'Reading the previous item — click to cut in and read this now')
         } else {
-          iconEl.textContent = playing ? '⏹' : '🔊'
+          iconEl.innerHTML = playing
+            ? (remote && remote.phase === 'paused' ? ICON.paused : ICON.wave)
+            : ICON.speaker
           labelEl.textContent = playing ? t('停止', 'Stop') : label
           button.title = playing ? t('点击停止', 'Click to stop') : label
         }
@@ -2466,13 +3767,17 @@ window.__ModuleLoader__.load({
         return () => { actionAnchors.delete(key) }
       }, [key])
       const mine = state.key === key
-      const phase = mine ? state.phase : 'idle'
+      const localPhase = mine ? state.phase : 'idle'
       const error = mine ? state.error : ''
       const cached = playedMessages.has(key)
+      // The bridge reads in a separate browser; its live state decides the icon
+      // here. Finished reads just go back to the plain speaker.
+      const remote = liveBridgeState(key)
+      const phase = remote ? remote.phase : localPhase
 
       const title = error
         ? error
-        : phase === 'loading'
+        : phase === 'loading' || phase === 'queued'
           ? t('正在合成…', 'Synthesizing…')
           : phase === 'playing'
             ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
@@ -2510,7 +3815,7 @@ window.__ModuleLoader__.load({
           opacity: phase === 'idle' && !cached ? 0.9 : 1,
         },
         children: [
-          phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingBars, { mode: phase, key: 'bars' }),
+          phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingIcon, { mode: phase, key: 'bars' }),
           error ? h('span', { key: 'mark' }, '!') : null,
         ],
       })
@@ -2759,6 +4064,16 @@ window.__ModuleLoader__.load({
       const MIN_CACHE_MB = 50
       const MAX_CACHE_MB = 4096
 
+      // One-time move: an old "browser + bridge voice" setup becomes the bridge
+      // engine, since the bridge is no longer a voice in that list.
+      const migrated = React.useRef(false)
+      React.useEffect(() => {
+        if (!config || migrated.current || busy) return
+        if (!needsBridgeMigration()) return
+        migrated.current = true
+        void save({ engine: 'bridge' })
+      }, [config, busy])
+
       const commitSpeed = () => {
         const raw = speedDraft
         setSpeedDraft(null)
@@ -2798,36 +4113,40 @@ window.__ModuleLoader__.load({
       const localEngine = false
       const cloudEngine = engine === 'deepseek'
       const browserEngine = engine === 'browser'
+      const bridgeEngine = engine === 'bridge'
       const systemEngine = engine === 'system'
       const customEngine = engine === 'custom'
       const systemReady = system.supported === true && systemVoices.length > 0
       const customReady = custom.ready === true
       const browserReady = voices.length > 0
-      const engineReady = cloudEngine ? config.keyConfigured === true
+      const bridgeReady = isDesktopShell
+      const engineReady = bridgeEngine ? bridgeReady
+        : cloudEngine ? config.keyConfigured === true
         // A desktop shell can always hand the text to a browser, voices or not.
         : browserEngine ? (browserReady || isDesktopShell)
           : systemEngine ? systemReady
             : customReady
-      const engineHint = cloudEngine
-        ? t('DeepSeek 官方 TTS：在线合成按量计费，用你自己的 API 余额；需要 Key 和网络。',
-          'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.')
-        : browserEngine
-          ? (isDesktopShell
-            ? t('用浏览器朗读：桌面端默认交给默认浏览器（朗读桥），也可以选下面的本机语音。',
-              'Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.')
-            : t('用浏览器自带的语音朗读：不用 Key、不落盘、不走 Host；语速就是语音引擎自身的语速。',
-              'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.'))
-          : systemEngine
-            ? t('操作系统自带的语音，离线、零下载；中英混读正常，但音色偏机械。',
-              'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.')
-            : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；在线服务按量计费、消耗你账户的余额，本机服务免费。Key 只存本机，不回传给页面。',
-              'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.')
+      const engineHint = bridgeEngine
+        ? t('交给默认浏览器朗读：不用 Key、不落盘；那个页面跟随 DSH 的主题与语言。',
+          'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.')
+        : cloudEngine
+          ? t('DeepSeek 官方 TTS：在线合成按量计费，用你自己的 API 余额；需要 Key 和网络。',
+            'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.')
+          : browserEngine
+            ? t('用浏览器自带的语音朗读：不用 Key、不落盘、不走 Host；语速就是语音引擎自身的语速。',
+              'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.')
+            : systemEngine
+              ? t('操作系统自带的语音，离线、零下载；中英混读正常，但音色偏机械。',
+                'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.')
+              : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；在线服务按量计费、消耗你账户的余额，本机服务免费。Key 只存本机，不回传给页面。',
+                'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.')
       const engineStatus = engineReady
         ? t('已就绪', 'ready')
         : cloudEngine ? t('需配置 Key', 'key missing')
-          : browserEngine ? t('这个环境没有浏览器语音', 'no browser voices')
-            : systemEngine ? (system.supported ? t('没有语音', 'no voices') : t('系统不支持', 'unsupported'))
-              : t('需要配置', 'needs setup')
+          : bridgeEngine ? t('需要桌面端', 'desktop only')
+            : browserEngine ? t('这个环境没有浏览器语音', 'no browser voices')
+              : systemEngine ? (system.supported ? t('没有语音', 'no voices') : t('系统不支持', 'unsupported'))
+                : t('需要配置', 'needs setup')
 
       // One card head: title, optional right-hand status, one explanatory line.
       const head = (key, title, hint, extra) => h('div', { className: 'dsh-tts-head', key },
@@ -2867,13 +4186,19 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-tts-settings' },
         h('div', { className: 'dsh-tts-card', key: 'engine' },
-          head('head', t('合成引擎', 'Engine'), engineHint, badge('status', engineReady, engineStatus)),
+          // The setting comes first: the hint and the readiness badge describe
+          // whatever the select is set to, so they read after it.
+          h('div', { className: 'dsh-tts-head', key: 'head' },
+            h('div', { className: 'dsh-tts-headrow', key: 'title' },
+              h('span', { className: 'dsh-tts-h1', key: 'h' }, t('合成引擎', 'Engine')))),
           row('engine', t('引擎', 'Engine'),
             h('select', {
               className: 'dsh-tts-select', value: engine, disabled: busy,
               onChange: (event) => save({ engine: event.target.value }),
               children: [
                 h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
+                isDesktopShell ? h('option', { value: 'bridge', key: 'bridge' },
+                  t('朗读桥（在浏览器中朗读）', 'Speech bridge (read in a browser)')) : null,
                 h('option', { value: 'browser', key: 'browser', disabled: !browserReady && !isDesktopShell },
                   browserReady
                     ? t('浏览器朗读（本机 ' + voices.length + ' 个语音）', 'Browser speech (' + voices.length + ' voices)')
@@ -2882,23 +4207,21 @@ window.__ModuleLoader__.load({
                       : t('浏览器朗读（这个环境没有语音）', 'Browser speech (no voices here)')),
                 h('option', { value: 'system', key: 'system' }, t('系统语音（离线）', 'System voices (offline)')),
                 h('option', { value: 'custom', key: 'custom' }, t('自定义 API（在线）', 'Custom API (online)')),
-              ],
+              ].filter(Boolean),
             }),
           ),
+          h('div', { className: 'dsh-tts-note', key: 'note' },
+            h('div', { className: 'dsh-tts-hint', key: 'hint' }, engineHint),
+            h('div', { className: 'dsh-tts-headrow', key: 'status' }, badge('status', engineReady, engineStatus))),
           browserEngine ? row('speech-voice', t('语音', 'Voice'), (voices.length > 0 || isDesktopShell)
             ? h('select', {
                 className: 'dsh-tts-select',
                 value: speechTargetValue(),
                 disabled: busy,
                 onChange: (event) => { rememberSpeechVoice(event.target.value); setVoices(refreshSpeechVoices().slice()) },
-                children: [
-                  // Only a desktop shell gets this: a real browser reads in place.
-                  isDesktopShell ? h('option', { value: BRIDGE_TARGET, key: 'bridge' },
-                    t('🌐 朗读桥 · 在浏览器中朗读（推荐）', '🌐 Speech bridge · read in a browser (recommended)')) : null,
-                  ...voices.map((voice) => h('option', {
-                    value: voice.voiceURI, key: voice.voiceURI,
-                  }, (isCloudVoice(voice) ? '☁ ' : '⌂ ') + voice.name + ' · ' + voice.lang)),
-                ].filter(Boolean),
+                children: voices.map((voice) => h('option', {
+                  value: voice.voiceURI, key: voice.voiceURI,
+                }, (isCloudVoice(voice) ? '☁ ' : '⌂ ') + voice.name + ' · ' + voice.lang)),
               })
             : badge('state', false, t('这个环境没有浏览器语音', 'no browser voices here'))) : null,
           cloudEngine ? row('voice', t('音色', 'Voice'),
@@ -3187,11 +4510,20 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = [
-      '.dsh-tts-bars{display:inline-flex;align-items:center;gap:2px;height:16px;width:16px;justify-content:center}',
-      '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:30%;animation:dsh-tts-bar .9s ease-in-out infinite}',
-      '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
-      '.dsh-tts-bars.is-paused i{animation-play-state:paused;opacity:.55}',
-      '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
+      '.dsh-tts-wave rect{fill:currentColor;transform-origin:center;transform-box:fill-box;'
+        + 'animation:dsh-tts-wave .9s ease-in-out infinite}',
+      '.dsh-tts-wave.is-paused rect{animation-play-state:paused}',
+      '@keyframes dsh-tts-wave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}',
+      '.dsh-tts-spin{animation:dsh-tts-spin .9s linear infinite;transform-origin:center}',
+      '@keyframes dsh-tts-spin{to{transform:rotate(360deg)}}',
+      '.dsh-tts-range{appearance:none;-webkit-appearance:none;background:transparent;height:18px;cursor:pointer}',
+      '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;'
+        + 'background:var(--dsw-alias-border-l2,#3a3a3a)}',
+      '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;'
+        + 'border:0;border-radius:50%;background:var(--dsw-alias-state-business-primary,#3b82f6)}',
+      '.dsh-tts-range::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2,#3a3a3a)}',
+      '.dsh-tts-range::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;'
+        + 'background:var(--dsw-alias-state-business-primary,#3b82f6)}',
       // ---- settings page ----
       // One rhythm: card head (title + status + one hint) over rows built from a
       // fixed label gutter and one control column that every control fills, so
@@ -3203,6 +4535,10 @@ window.__ModuleLoader__.load({
       '.dsh-tts-h1{font-size:13px;font-weight:600;line-height:1.4}',
       '.dsh-tts-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-head .dsh-tts-hint{font-size:12px;white-space:normal;overflow:visible}',
+      // A note under one row (the engine card): same gutter as the rows, so a
+      // hint never runs into the card edge.
+      '.dsh-tts-note{display:flex;flex-direction:column;gap:7px;padding:2px 16px 12px;min-width:0}',
+      '.dsh-tts-note .dsh-tts-hint{font-size:12px;white-space:normal;overflow:visible}',
       '.dsh-tts-row{box-sizing:border-box;display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;column-gap:12px;min-height:48px;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2)}',
       '.dsh-tts-label{font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dsh-tts-grow{display:flex;align-items:center;gap:8px;min-width:0}',
@@ -3290,7 +4626,11 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
         localeCtx = ctx.locale
+        // Kept for lazy lookups: `theme` may mount after this plugin, and the
+        // bridge is told about theme/language changes as they happen.
+        appCtx = ctx
         watchLocale(ctx)
+        watchBridgePrefs(ctx)
         loadConfigOnce()
         ensureEvents(ctx)
 

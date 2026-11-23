@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "音声読み上げ",
+    "description": "DeepSeek の公式 TTS でアシスタントの返信を読み上げます。音声はこの端末にキャッシュされ、次回はキャッシュから再生。API キーは Host プロセスに留まります。",
+    "detail": "docs/DETAIL.md"
+  }
+}
