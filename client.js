@@ -26,7 +26,6 @@ window.__ModuleLoader__.load({
     const EVENTS_PATH = '/api/dsh-tts/events'
     const RECENT_PATH = '/api/dsh-tts/recent'
     const BRIDGE_PREFS_PATH = '/api/dsh-tts/bridge/prefs'
-    const BRIDGE_STATE_PATH = '/api/dsh-tts/bridge/state'
 
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
@@ -123,9 +122,11 @@ window.__ModuleLoader__.load({
         'Synthesizing…': '合成中…',
         'Click to stop (the floating window pauses and steps)': 'クリックで停止（小窓から一時停止・段落移動ができます）',
         'Paused — resume from the floating window': '一時停止中。小窓から再開してください',
-        'the bridge finished this reply — click to read again': '読み上げページで読み終えました。クリックで再度読み上げます',
         'Play again (cached)': 'もう一度再生（キャッシュ）',
         'Read this reply aloud (the paragraphs around the selection)': 'この返信を読み上げ（選択中ならその段落）',
+        'Speech bridge (read in a browser)': '読み上げページ（ブラウザで読み上げ）',
+        'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': '既定のブラウザで読み上げます（読み上げページ経由）。キー不要・キャッシュなし。ページは DSH のテーマと言語に従います。',
+        'desktop only': 'デスクトップ版のみ',
         'Install Piper offline': 'Piper をオフラインで導入',
         Close: '閉じる',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'このプラグインは音声を再生するだけで、Piper 本体と音声モデルは含みません。一度用意すれば合成はオフライン・無料のまま使えます。',
@@ -142,7 +143,6 @@ window.__ModuleLoader__.load({
         Saved: '保存しました',
         'Loading…': '読み込み中…',
         'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.': 'DeepSeek 公式 TTS API：利用量に応じてご自身の残高から課金されます。キーとネットワークが必要です。',
-        'Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.': 'ブラウザで読み上げ：デスクトップ版は既定でテキストをブラウザに渡します（読み上げページ）。下のローカル音声も選べます。',
         'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.': 'ブラウザ自身が段落を読み上げます。キー不要、保存なし、Host との往復なし。速度は音声エンジン側の速度です。',
         'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.': 'OS に付属する音声。オフライン・追加ダウンロードなし。中国語と英語の混在も読めますが機械的な声です。',
         'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.': 'OpenAI 互換の /v1/audio/speech エンドポイントならどれでも可。オンラインサービスはご自身のアカウントに課金され、ローカルなら無料です。キーはこの端末に残り、ページには返しません。',
@@ -164,7 +164,6 @@ window.__ModuleLoader__.load({
         'System voices (offline)': 'システム音声（オフライン）',
         'Custom API (online)': 'カスタム API（オンライン）',
         Voice: '音声',
-        '🌐 Speech bridge · read in a browser (recommended)': '🌐 読み上げページ · ブラウザで読み上げ（推奨）',
         female: '女性',
         male: '男性',
         'Configured · DEEPSEEK_API_KEY': '設定済み（DEEPSEEK_API_KEY）',
@@ -276,9 +275,11 @@ window.__ModuleLoader__.load({
         'Synthesizing…': 'Sintetizando…',
         'Click to stop (the floating window pauses and steps)': 'Haz clic para detener (la ventana flotante permite pausar y cambiar de párrafo)',
         'Paused — resume from the floating window': 'En pausa: reanuda desde la ventana flotante',
-        'the bridge finished this reply — click to read again': 'el puente terminó esta respuesta: haz clic para volver a leer',
         'Play again (cached)': 'Reproducir de nuevo (en caché)',
         'Read this reply aloud (the paragraphs around the selection)': 'Leer esta respuesta (los párrafos junto a la selección)',
+        'Speech bridge (read in a browser)': 'Puente de lectura (leer en un navegador)',
+        'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.': 'Lee en tu navegador predeterminado mediante la página del puente: sin clave, sin caché; sigue el tema y el idioma de la app.',
+        'desktop only': 'solo en escritorio',
         'Install Piper offline': 'Instalar Piper sin conexión',
         Close: 'Cerrar',
         'This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.': 'Este plugin solo reproduce audio; el programa Piper y los modelos de voz no están incluidos. Configúralos una vez y la síntesis seguirá sin conexión y gratis.',
@@ -295,7 +296,6 @@ window.__ModuleLoader__.load({
         Saved: 'Guardado',
         'Loading…': 'Cargando…',
         'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.': 'La API oficial de TTS de DeepSeek: se factura por uso con tu propio saldo; necesita una clave y red.',
-        'Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.': 'Leer en un navegador: este entorno de escritorio entrega el texto a tu navegador por defecto; las voces locales de abajo son opcionales.',
         'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.': 'El navegador lee los párrafos: sin clave, sin caché, sin ida y vuelta al Host; la velocidad es la del motor.',
         'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.': 'Voces del sistema operativo: sin conexión, sin descargas, bien en mezclas de chino e inglés, pero sintéticas.',
         'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.': 'Cualquier endpoint /v1/audio/speech compatible con OpenAI: los servicios alojados cobran a tu cuenta, los locales son gratis. La clave se queda en esta máquina y nunca vuelve a la página.',
@@ -317,7 +317,6 @@ window.__ModuleLoader__.load({
         'System voices (offline)': 'Voces del sistema (sin conexión)',
         'Custom API (online)': 'API personalizada (en línea)',
         Voice: 'Voz',
-        '🌐 Speech bridge · read in a browser (recommended)': '🌐 Puente de lectura · leer en un navegador (recomendado)',
         female: 'femenina',
         male: 'masculina',
         'Configured · DEEPSEEK_API_KEY': 'Configurado · DEEPSEEK_API_KEY',
@@ -429,9 +428,11 @@ window.__ModuleLoader__.load({
         "Synthesizing…": "Synthèse…",
         "Click to stop (the floating window pauses and steps)": "Cliquer pour arrêter (la fenêtre flottante permet pause et navigation)",
         "Paused — resume from the floating window": "En pause — reprenez depuis la fenêtre flottante",
-        "the bridge finished this reply — click to read again": "le pont a fini cette réponse — cliquez pour la relire",
         "Play again (cached)": "Relire (cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Lire cette réponse (les paragraphes autour de la sélection)",
+        "Speech bridge (read in a browser)": "Pont de lecture (lire dans un navigateur)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lit dans votre navigateur par défaut via la page du pont : sans clé, sans cache ; elle suit le thème et la langue de l’application.",
+        "desktop only": "bureau uniquement",
         "Install Piper offline": "Installer Piper hors ligne",
         Close: "Fermer",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Ce plugin ne fait que lire l’audio ; le programme Piper et les modèles de voix ne sont pas fournis. Configurez-les une fois : la synthèse reste hors ligne et gratuite.",
@@ -448,7 +449,6 @@ window.__ModuleLoader__.load({
         Saved: "Enregistré",
         "Loading…": "Chargement…",
         "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "L’API TTS officielle DeepSeek : facturée à l’usage sur votre propre solde ; nécessite une clé et un réseau.",
-        "Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.": "Lire dans un navigateur : ce shell de bureau confie le texte à votre navigateur par défaut ; les voix locales ci-dessous sont facultatives.",
         "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "Le navigateur lit les paragraphes lui-même : pas de clé, aucun cache, aucun aller-retour avec l’hôte ; la vitesse est celle du moteur.",
         "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Voix fournies par le système : hors ligne, aucun téléchargement, correctes en chinois/anglais mêlés, mais synthétiques.",
         "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Tout point de terminaison /v1/audio/speech compatible OpenAI : les services hébergés facturent votre compte, les services locaux sont gratuits. La clé reste sur cette machine et n’est jamais renvoyée à la page.",
@@ -470,7 +470,6 @@ window.__ModuleLoader__.load({
         "System voices (offline)": "Voix du système (hors ligne)",
         "Custom API (online)": "API personnalisée (en ligne)",
         Voice: "Voix",
-        "🌐 Speech bridge · read in a browser (recommended)": "🌐 Pont de lecture · lire dans un navigateur (recommandé)",
         female: "féminine",
         male: "masculine",
         "Configured · DEEPSEEK_API_KEY": "Configuré · DEEPSEEK_API_KEY",
@@ -582,9 +581,11 @@ window.__ModuleLoader__.load({
         "Synthesizing…": "Synthetisiere…",
         "Click to stop (the floating window pauses and steps)": "Zum Stoppen klicken (das schwebende Fenster pausiert und wechselt Absätze)",
         "Paused — resume from the floating window": "Pausiert – im schwebenden Fenster fortsetzen",
-        "the bridge finished this reply — click to read again": "die Brücke hat diese Antwort fertig gelesen – zum erneuten Lesen klicken",
         "Play again (cached)": "Erneut abspielen (Cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Diese Antwort vorlesen (die Absätze um die Auswahl)",
+        "Speech bridge (read in a browser)": "Lese-Brücke (im Browser lesen)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Liest im Standardbrowser über die Brückenseite: kein Schlüssel, kein Cache; die Seite folgt Thema und Sprache der App.",
+        "desktop only": "nur Desktop",
         "Install Piper offline": "Piper offline installieren",
         Close: "Schließen",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Dieses Plugin spielt nur Audio ab; Piper-Programm und Stimmmodelle sind nicht enthalten. Einmal eingerichtet, bleibt die Synthese offline und kostenlos.",
@@ -601,7 +602,6 @@ window.__ModuleLoader__.load({
         Saved: "Gespeichert",
         "Loading…": "Lädt…",
         "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "Die offizielle DeepSeek-TTS-API: nutzungsabhängig über dein eigenes Guthaben abgerechnet; braucht Schlüssel und Netzwerk.",
-        "Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.": "Im Browser lesen: Diese Desktop-Hülle übergibt den Text standardmäßig an deinen Browser; die lokalen Stimmen unten sind optional.",
         "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "Der Browser liest die Absätze selbst: kein Schlüssel, kein Cache, kein Host-Umweg; die Geschwindigkeit ist die der Engine.",
         "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Stimmen des Betriebssystems: offline, kein Download, gut bei gemischtem Chinesisch/Englisch, aber synthetisch.",
         "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Jeder OpenAI-kompatible /v1/audio/speech-Endpunkt: gehostete Dienste rechnen über dein Konto ab, lokale sind kostenlos. Der Schlüssel bleibt auf diesem Rechner und geht nie an die Seite zurück.",
@@ -623,7 +623,6 @@ window.__ModuleLoader__.load({
         "System voices (offline)": "Systemstimmen (offline)",
         "Custom API (online)": "Eigene API (online)",
         Voice: "Stimme",
-        "🌐 Speech bridge · read in a browser (recommended)": "🌐 Lese-Brücke · im Browser lesen (empfohlen)",
         female: "weiblich",
         male: "männlich",
         "Configured · DEEPSEEK_API_KEY": "Konfiguriert · DEEPSEEK_API_KEY",
@@ -735,9 +734,11 @@ window.__ModuleLoader__.load({
         "Synthesizing…": "Синтез…",
         "Click to stop (the floating window pauses and steps)": "Нажмите, чтобы остановить (в плавающем окне можно ставить паузу и менять абзац)",
         "Paused — resume from the floating window": "Пауза — продолжите из плавающего окна",
-        "the bridge finished this reply — click to read again": "мост закончил читать этот ответ — нажмите, чтобы прочитать снова",
         "Play again (cached)": "Повторить (из кэша)",
         "Read this reply aloud (the paragraphs around the selection)": "Прочитать этот ответ (абзацы вокруг выделения)",
+        "Speech bridge (read in a browser)": "Мост чтения (читать в браузере)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Читает в браузере по умолчанию через страницу моста: без ключа, без кэша; страница следует теме и языку приложения.",
+        "desktop only": "только для десктопа",
         "Install Piper offline": "Установить Piper офлайн",
         Close: "Закрыть",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Этот плагин только воспроизводит звук; программа Piper и голосовые модели не входят в комплект. Настройте их один раз — синтез останется офлайн и бесплатным.",
@@ -754,7 +755,6 @@ window.__ModuleLoader__.load({
         Saved: "Сохранено",
         "Loading…": "Загрузка…",
         "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "Официальный TTS API DeepSeek: оплата по факту использования с вашего баланса; нужны ключ и сеть.",
-        "Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.": "Читать в браузере: эта оболочка по умолчанию передаёт текст вашему браузеру; локальные голоса ниже необязательны.",
         "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "Браузер сам читает абзацы: без ключа, без кэша, без обращений к Host; скорость — скорость движка.",
         "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Голоса операционной системы: офлайн, без загрузки, нормально читают смесь китайского и английского, но звучат синтетично.",
         "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Любой эндпоинт /v1/audio/speech, совместимый с OpenAI: облачные сервисы списывают с вашего аккаунта, локальные бесплатны. Ключ остаётся на этой машине и никогда не возвращается на страницу.",
@@ -776,7 +776,6 @@ window.__ModuleLoader__.load({
         "System voices (offline)": "Системные голоса (офлайн)",
         "Custom API (online)": "Свой API (онлайн)",
         Voice: "Голос",
-        "🌐 Speech bridge · read in a browser (recommended)": "🌐 Мост чтения · читать в браузере (рекомендуется)",
         female: "женский",
         male: "мужской",
         "Configured · DEEPSEEK_API_KEY": "Настроено · DEEPSEEK_API_KEY",
@@ -888,9 +887,11 @@ window.__ModuleLoader__.load({
         "Synthesizing…": "Sintetizando…",
         "Click to stop (the floating window pauses and steps)": "Clique para parar (a janela flutuante pausa e muda de parágrafo)",
         "Paused — resume from the floating window": "Pausado — continue pela janela flutuante",
-        "the bridge finished this reply — click to read again": "o modo de leitura terminou esta resposta — clique para ler de novo",
         "Play again (cached)": "Reproduzir de novo (cache)",
         "Read this reply aloud (the paragraphs around the selection)": "Ler esta resposta (os parágrafos em torno da seleção)",
+        "Speech bridge (read in a browser)": "Modo de leitura (ler num navegador)",
+        "Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.": "Lê no navegador padrão através da página do modo de leitura: sem chave, sem cache; a página segue o tema e o idioma do app.",
+        "desktop only": "só no desktop",
         "Install Piper offline": "Instalar o Piper offline",
         Close: "Fechar",
         "This plugin only plays audio; the Piper program and voice models are not bundled. Set them up once and synthesis stays offline and free.": "Este plugin só reproduz áudio; o programa Piper e os modelos de voz não são incluídos. Configure uma vez e a síntese continua offline e gratuita.",
@@ -907,7 +908,6 @@ window.__ModuleLoader__.load({
         Saved: "Salvo",
         "Loading…": "Carregando…",
         "The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.": "A API oficial de TTS da DeepSeek: cobrada por uso no seu próprio saldo; precisa de chave e rede.",
-        "Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.": "Ler num navegador: este ambiente de desktop entrega o texto ao seu navegador por padrão; as vozes locais abaixo são opcionais.",
         "The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.": "O navegador lê os parágrafos: sem chave, sem cache, sem ida e volta ao Host; a velocidade é a do motor.",
         "Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.": "Vozes do sistema operacional: offline, sem download, boas em misturas de chinês e inglês, mas sintéticas.",
         "Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.": "Qualquer endpoint /v1/audio/speech compatível com OpenAI: serviços hospedados cobram na sua conta, locais são gratuitos. A chave fica nesta máquina e nunca volta para a página.",
@@ -929,7 +929,6 @@ window.__ModuleLoader__.load({
         "System voices (offline)": "Vozes do sistema (offline)",
         "Custom API (online)": "API personalizada (online)",
         Voice: "Voz",
-        "🌐 Speech bridge · read in a browser (recommended)": "🌐 Modo de leitura · ler num navegador (recomendado)",
         female: "feminina",
         male: "masculina",
         "Configured · DEEPSEEK_API_KEY": "Configurado · DEEPSEEK_API_KEY",
@@ -1081,21 +1080,35 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
-    // The bridge reports what it finished; the Host remembers it. Pulling the
-    // record once at startup paints the check marks a reload would forget.
-    function loadBridgeState() {
-      fetch(BRIDGE_STATE_PATH, { headers: { accept: 'application/json' } })
-        .then((res) => res.json())
-        .then((body) => {
-          const done = body && body.ok && body.value && Array.isArray(body.value.done) ? body.value.done : []
-          let added = false
-          for (const item of done) {
-            const messageId = item && typeof item.messageId === 'string' ? item.messageId : ''
-            if (messageId && !bridgeDone.has(messageId)) { bridgeDone.add(messageId); added = true }
-          }
-          if (added) setPlayback({})
+    // The bridge reports what it is doing; the app mirrors it on the buttons.
+    function noteBridgeState(payload) {
+      const key = String(payload.key || '')
+      if (!key) return
+      const phase = String(payload.phase || '')
+      if (phase === 'finished' || phase === 'stopped') {
+        if (!bridgeStates.has(key)) return
+        bridgeStates.delete(key)
+      } else {
+        bridgeStates.set(key, {
+          phase: phase === 'paused' ? 'paused' : phase === 'queued' ? 'queued' : 'playing',
+          unit: Number(payload.unit) || 0,
+          total: Number(payload.total) || 0,
+          queued: Number(payload.queued) || 0,
+          at: Date.now(),
         })
-        .catch(() => {})
+      }
+      setPlayback({})
+    }
+
+    /** The bridge's state for one button, dropped once it is too old to trust. */
+    function liveBridgeState(key) {
+      const state = bridgeStates.get(key)
+      if (!state) return null
+      if (Date.now() - (state.at || 0) > 10 * 60 * 1000) {
+        bridgeStates.delete(key)
+        return null
+      }
+      return state
     }
 
     /** Theme/language changes, plus a DOM fallback for a Host without the service. */
@@ -1175,7 +1188,7 @@ window.__ModuleLoader__.load({
     const playedMessages = new Set()
     // Replies the browser bridge finished reading: their buttons show a check.
     // The Host owns the record (it survives a reload); this is the page's copy.
-    const bridgeDone = new Set()
+    const bridgeStates = new Map()
     // The rendered read button per message: the only handle on the message DOM,
     // and auto-read has no click to carry one, so it is kept for later lookups.
     const actionAnchors = new Map()
@@ -1254,16 +1267,20 @@ window.__ModuleLoader__.load({
       } catch { return false }
     })()
 
-    // Which of the two browser paths this shell uses: its own voices, or the
-    // bridge to a real browser. A desktop shell defaults to the bridge, because
-    // its voice list can look fine and still stay silent.
-    const BRIDGE_TARGET = 'bridge'
+    // The bridge is an engine of its own now, not a voice inside the browser
+    // engine: a desktop shell cannot use its own voices at all.
+    const LEGACY_BRIDGE_TARGET = 'bridge'
+    const usesBridge = () => engineMode === 'bridge'
+    // A saved pre-bridge engine pair ("browser" + the bridge voice) becomes the
+    // bridge engine once, so an existing setup keeps reading in the browser.
+    const needsBridgeMigration = () => isDesktopShell
+      && engineMode === 'browser'
+      && storedSpeechVoice() === LEGACY_BRIDGE_TARGET
     const speechTargetValue = () => {
       const stored = storedSpeechVoice()
-      if (isDesktopShell) return stored === '' || stored === BRIDGE_TARGET ? BRIDGE_TARGET : stored
+      if (stored === LEGACY_BRIDGE_TARGET) return ''
       return stored || ((pickSpeechVoice() || {}).voiceURI || '')
     }
-    const usesBridge = () => speechTargetValue() === BRIDGE_TARGET
 
     const speechCapable = () => speechVoices.length > 0
 
@@ -1328,6 +1345,9 @@ window.__ModuleLoader__.load({
       payload.lang = currentLang()
       // The bridge paints itself in the app's palette, not the OS preference.
       payload.scheme = currentScheme()
+      // The app's own key for this read: the bridge echoes it with its state so
+      // the app can show a wave on the button that started it.
+      if (target && target.stateKey) payload.key = String(target.stateKey)
       try {
         const response = await fetch(BRIDGE_PATH, {
           method: 'POST',
@@ -1392,6 +1412,18 @@ window.__ModuleLoader__.load({
         .catch(() => {})
     }
 
+    /** Persist one engine change from a non-settings path (the watchdog). */
+    function saveEngine(engine) {
+      return fetch(CONFIG_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ engine }),
+      })
+        .then((res) => res.json())
+        .then((body) => { if (body && body.ok) applyRemoteConfig(body.value) })
+        .catch(() => {})
+    }
+
     function ensureEvents(ctx) {
       if (eventSource || typeof EventSource === 'undefined') return
       try {
@@ -1422,13 +1454,10 @@ window.__ModuleLoader__.load({
           }
           return
         }
-        if (payload.type === 'bridge-done') {
-          // The bridge finished reading a reply: its read button gets a check.
-          const messageId = String(payload.messageId || '')
-          if (messageId && !bridgeDone.has(messageId)) {
-            bridgeDone.add(messageId)
-            setPlayback({})
-          }
+        if (payload.type === 'bridge-state') {
+          // The browser bridge reports what it is reading: mirror it on the
+          // message (or prompt) button that started that read.
+          noteBridgeState(payload)
           return
         }
         if (payload.type !== 'assistant') return
@@ -1846,8 +1875,11 @@ window.__ModuleLoader__.load({
 
     async function playPreview() {
       if (preview) { stopPreview(); return }
+      if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
+        void openBridge({ text: PREVIEW_TEXT })
+        return
+      }
       if (engineMode === 'browser') {
-        if (usesBridge()) { void openBridge({ text: PREVIEW_TEXT }); return }
         playPreviewSpeech()
         return
       }
@@ -2760,7 +2792,9 @@ window.__ModuleLoader__.load({
         const cloud = isCloudVoice(voice)
         // A desktop shell that stayed silent switches itself to the bridge, so
         // the next click does not wait eight seconds again.
-        if (isDesktopShell) rememberSpeechVoice(BRIDGE_TARGET)
+        if (isDesktopShell) rememberSpeechVoice(LEGACY_BRIDGE_TARGET)
+        // Persist the switch, or the next read starts the same dead engine again.
+        if (isDesktopShell) void saveEngine('bridge')
         fail(session.key, new Error(cloud
           ? t('这个云端音色 8 秒内没有出声（多半连不上厂商服务器），请换成 ⌂ 本地音色',
             'no sound from this cloud voice in 8 s; it cannot reach its server — pick a local voice')
@@ -2895,13 +2929,19 @@ window.__ModuleLoader__.load({
       // A click carries its own button; auto-read falls back to the one the
       // action registered for that message.
       const root = (options && options.root) || actionAnchors.get(stateKey) || null
+      // The bridge engine hands the text to a real browser; a desktop shell has
+      // no voices of its own, so this path needs no voice list at all.
+      if (engineMode === 'bridge' || (engineMode === 'browser' && usesBridge())) {
+        setPlayback({ key: null, phase: 'idle', error: '' })
+        // A selection read has no message id, so the text itself goes along.
+        void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
+        return
+      }
       if (engineMode === 'browser') {
         refreshSpeechVoices()
-        // Desktop: the bridge is the default and needs no voice list at all.
-        if (usesBridge() || (!speechCapable() && isDesktopShell)) {
+        if (!speechCapable() && isDesktopShell) {
           setPlayback({ key: null, phase: 'idle', error: '' })
-          // A selection read has no message id, so the text itself goes along.
-          void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto })
+          void openBridge({ sessionId, messageId, text: selection || undefined, quiet: auto, stateKey })
           return
         }
         if (!speechCapable()) {
@@ -3050,7 +3090,10 @@ window.__ModuleLoader__.load({
       speedInput.max = '2'
       speedInput.step = '0.05'
       speedInput.title = t('播放速度', 'Playback speed')
-      speedInput.style.cssText = 'width:88px;margin:0;accent-color:var(--dsw-alias-state-business-primary,#3b82f6)'
+      // A class instead of inline accent-color: the default track is invisible on
+      // a light theme, and only stylesheet rules reach the track pseudo-elements.
+      speedInput.className = 'dsh-tts-range'
+      speedInput.style.cssText = 'width:88px;margin:0'
       const speedValue = document.createElement('span')
       speedValue.style.cssText = 'width:38px;text-align:right;font-variant-numeric:tabular-nums'
       speedInput.oninput = () => {
@@ -3256,14 +3299,38 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ReadingBars({ mode }) {
-      return h('span', {
-        className: 'dsh-tts-bars'
-          + (mode === 'loading' ? ' is-loading' : '')
-          + (mode === 'paused' ? ' is-paused' : ''),
-        'aria-hidden': true,
-        children: [0, 1, 2, 3].map((index) => h('i', { key: index, style: { animationDelay: (index * 0.12) + 's' } })),
+    // Reading is a waveform, waiting is a spinner, paused is the pause glyph:
+    // one SVG each, so every surface (message button, request card) agrees.
+    function WaveIcon({ paused }) {
+      return h('svg', {
+        className: 'dsh-tts-wave' + (paused ? ' is-paused' : ''),
+        width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true,
+        children: [0, 1, 2, 3].map((index) => h('rect', {
+          key: index, x: 1.5 + index * 3.6, y: 3, width: 2, height: 10, rx: 1,
+          style: { animationDelay: (index * 0.12) + 's' },
+        })),
       })
+    }
+
+    function SpinnerIcon() {
+      return h('svg', {
+        className: 'dsh-tts-spin', width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true,
+      }, h('circle', {
+        cx: 8, cy: 8, r: 5.5, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 2, strokeLinecap: 'round', strokeDasharray: '22 12',
+      }))
+    }
+
+    function PauseIcon() {
+      return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true },
+        h('rect', { x: 4, y: 3.5, width: 2.6, height: 9, rx: 1, fill: 'currentColor' }),
+        h('rect', { x: 9.4, y: 3.5, width: 2.6, height: 9, rx: 1, fill: 'currentColor' }))
+    }
+
+    function ReadingIcon({ mode }) {
+      if (mode === 'loading' || mode === 'queued') return h(SpinnerIcon)
+      if (mode === 'paused') return h(PauseIcon)
+      return h(WaveIcon)
     }
 
     function SessionTracker(props) {
@@ -3324,7 +3391,16 @@ window.__ModuleLoader__.load({
       }
       styleButton(false)
       const iconEl = document.createElement('span')
-      iconEl.textContent = '🔊'
+      iconEl.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;'
+      // One glyph per state, inline SVG so the animated wave and spinner share
+      // the page's own keyframes (the button lives outside React).
+      const ICON = {
+        speaker: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/></svg>',
+        wave: '<svg class="dsh-tts-wave" width="14" height="14" viewBox="0 0 16 16"><rect x="1.5" y="3" width="2" height="10" rx="1"/><rect x="5.1" y="3" width="2" height="10" rx="1"/><rect x="8.7" y="3" width="2" height="10" rx="1"/><rect x="12.3" y="3" width="2" height="10" rx="1"/></svg>',
+        paused: '<svg width="14" height="14" viewBox="0 0 16 16"><rect x="4" y="3.5" width="2.6" height="9" rx="1" fill="currentColor"/><rect x="9.4" y="3.5" width="2.6" height="9" rx="1" fill="currentColor"/></svg>',
+        spinner: '<svg class="dsh-tts-spin" width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="22 12"/></svg>',
+      }
+      iconEl.innerHTML = ICON.speaker
       const labelEl = document.createElement('span')
       button.appendChild(iconEl)
       button.appendChild(labelEl)
@@ -3580,18 +3656,24 @@ window.__ModuleLoader__.load({
         if (removed) return
         if (!pending || !pending.text) { wrap.style.display = 'none'; dropPopover(); return }
         wrap.style.display = 'flex'
-        const playing = isPlaying()
+        const key = keyOf(pending)
+        const remote = liveBridgeState(key)
+        // The bridge (browser engine) reports its own phase; the local player
+        // reports through `current`.
+        const playing = isPlaying() || !!(remote && remote.phase === 'playing')
         // A queued request waits behind the audio that is already playing;
         // clicking cuts in and starts it immediately.
-        const waiting = !!pending && isQueued(keyOf(pending))
+        const waiting = !playing && (isQueued(key) || !!(remote && remote.phase === 'queued'))
         const label = pending.kind === 'approval' ? t('朗读授权', 'Read request') : t('朗读问题', 'Read question')
         const waitingLabel = t('等待上条朗读完成', 'Waiting for the current read')
-        if (waiting && !playing) {
-          iconEl.textContent = '⏳'
+        if (waiting) {
+          iconEl.innerHTML = ICON.spinner
           labelEl.textContent = waitingLabel
           button.title = t('正在朗读上一条，点击可切断并立即朗读这一条', 'Reading the previous item — click to cut in and read this now')
         } else {
-          iconEl.textContent = playing ? '⏹' : '🔊'
+          iconEl.innerHTML = playing
+            ? (remote && remote.phase === 'paused' ? ICON.paused : ICON.wave)
+            : ICON.speaker
           labelEl.textContent = playing ? t('停止', 'Stop') : label
           button.title = playing ? t('点击停止', 'Click to stop') : label
         }
@@ -3685,26 +3767,25 @@ window.__ModuleLoader__.load({
         return () => { actionAnchors.delete(key) }
       }, [key])
       const mine = state.key === key
-      const phase = mine ? state.phase : 'idle'
+      const localPhase = mine ? state.phase : 'idle'
       const error = mine ? state.error : ''
       const cached = playedMessages.has(key)
-      // The bridge reads in a separate browser and reports back; the check mark
-      // is the only sign here that the text was not just sent but spoken.
-      const finished = bridgeDone.has(String(messageId))
+      // The bridge reads in a separate browser; its live state decides the icon
+      // here. Finished reads just go back to the plain speaker.
+      const remote = liveBridgeState(key)
+      const phase = remote ? remote.phase : localPhase
 
       const title = error
         ? error
-        : phase === 'loading'
+        : phase === 'loading' || phase === 'queued'
           ? t('正在合成…', 'Synthesizing…')
           : phase === 'playing'
             ? t('点击停止（悬浮窗可暂停、前后翻段）', 'Click to stop (the floating window pauses and steps)')
             : phase === 'paused'
               ? t('已暂停；点悬浮窗继续', 'Paused — resume from the floating window')
-              : finished
-                ? t('朗读桥已读完这条回复；点击重新读', 'the bridge finished this reply — click to read again')
-                : cached
-                  ? t('再次播放（本地缓存）', 'Play again (cached)')
-                  : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
+              : cached
+                ? t('再次播放（本地缓存）', 'Play again (cached)')
+                : t('朗读这条回复（选中文字则读它所在的整段）', 'Read this reply aloud (the paragraphs around the selection)')
 
       return h('button', {
         type: 'button',
@@ -3734,7 +3815,7 @@ window.__ModuleLoader__.load({
           opacity: phase === 'idle' && !cached ? 0.9 : 1,
         },
         children: [
-          phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingBars, { mode: phase, key: 'bars' }),
+          phase === 'idle' ? h(SpeakerIcon, { key: 'icon' }) : h(ReadingIcon, { mode: phase, key: 'bars' }),
           error ? h('span', { key: 'mark' }, '!') : null,
           finished && !error ? h('span', {
             key: 'done',
@@ -3987,6 +4068,16 @@ window.__ModuleLoader__.load({
       const MIN_CACHE_MB = 50
       const MAX_CACHE_MB = 4096
 
+      // One-time move: an old "browser + bridge voice" setup becomes the bridge
+      // engine, since the bridge is no longer a voice in that list.
+      const migrated = React.useRef(false)
+      React.useEffect(() => {
+        if (!config || migrated.current || busy) return
+        if (!needsBridgeMigration()) return
+        migrated.current = true
+        void save({ engine: 'bridge' })
+      }, [config, busy])
+
       const commitSpeed = () => {
         const raw = speedDraft
         setSpeedDraft(null)
@@ -4026,36 +4117,40 @@ window.__ModuleLoader__.load({
       const localEngine = false
       const cloudEngine = engine === 'deepseek'
       const browserEngine = engine === 'browser'
+      const bridgeEngine = engine === 'bridge'
       const systemEngine = engine === 'system'
       const customEngine = engine === 'custom'
       const systemReady = system.supported === true && systemVoices.length > 0
       const customReady = custom.ready === true
       const browserReady = voices.length > 0
-      const engineReady = cloudEngine ? config.keyConfigured === true
+      const bridgeReady = isDesktopShell
+      const engineReady = bridgeEngine ? bridgeReady
+        : cloudEngine ? config.keyConfigured === true
         // A desktop shell can always hand the text to a browser, voices or not.
         : browserEngine ? (browserReady || isDesktopShell)
           : systemEngine ? systemReady
             : customReady
-      const engineHint = cloudEngine
-        ? t('DeepSeek 官方 TTS：在线合成按量计费，用你自己的 API 余额；需要 Key 和网络。',
-          'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.')
-        : browserEngine
-          ? (isDesktopShell
-            ? t('用浏览器朗读：桌面端默认交给默认浏览器（朗读桥），也可以选下面的本机语音。',
-              'Read in a browser: this desktop shell hands the text to your browser by default; local voices below are optional.')
-            : t('用浏览器自带的语音朗读：不用 Key、不落盘、不走 Host；语速就是语音引擎自身的语速。',
-              'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.'))
-          : systemEngine
-            ? t('操作系统自带的语音，离线、零下载；中英混读正常，但音色偏机械。',
-              'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.')
-            : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；在线服务按量计费、消耗你账户的余额，本机服务免费。Key 只存本机，不回传给页面。',
-              'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.')
+      const engineHint = bridgeEngine
+        ? t('交给默认浏览器朗读：不用 Key、不落盘；那个页面跟随 DSH 的主题与语言。',
+          'Reads in your default browser through the bridge page: no key, nothing cached; it follows the app theme and language.')
+        : cloudEngine
+          ? t('DeepSeek 官方 TTS：在线合成按量计费，用你自己的 API 余额；需要 Key 和网络。',
+            'The official DeepSeek TTS API: billed per use against your own balance; needs a key and network.')
+          : browserEngine
+            ? t('用浏览器自带的语音朗读：不用 Key、不落盘、不走 Host；语速就是语音引擎自身的语速。',
+              'The browser speaks the paragraphs itself: no key, nothing cached, no Host round-trip; speed is the engine rate.')
+            : systemEngine
+              ? t('操作系统自带的语音，离线、零下载；中英混读正常，但音色偏机械。',
+                'Voices that ship with the operating system: offline, no download, fine at mixed Chinese/English, but synthetic.')
+              : t('任何 OpenAI 兼容的 /v1/audio/speech 端点；在线服务按量计费、消耗你账户的余额，本机服务免费。Key 只存本机，不回传给页面。',
+                'Any OpenAI-compatible /v1/audio/speech endpoint: hosted services bill your own account, local ones are free. The key stays on this machine and is never sent back to the page.')
       const engineStatus = engineReady
         ? t('已就绪', 'ready')
         : cloudEngine ? t('需配置 Key', 'key missing')
-          : browserEngine ? t('这个环境没有浏览器语音', 'no browser voices')
-            : systemEngine ? (system.supported ? t('没有语音', 'no voices') : t('系统不支持', 'unsupported'))
-              : t('需要配置', 'needs setup')
+          : bridgeEngine ? t('需要桌面端', 'desktop only')
+            : browserEngine ? t('这个环境没有浏览器语音', 'no browser voices')
+              : systemEngine ? (system.supported ? t('没有语音', 'no voices') : t('系统不支持', 'unsupported'))
+                : t('需要配置', 'needs setup')
 
       // One card head: title, optional right-hand status, one explanatory line.
       const head = (key, title, hint, extra) => h('div', { className: 'dsh-tts-head', key },
@@ -4095,13 +4190,19 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-tts-settings' },
         h('div', { className: 'dsh-tts-card', key: 'engine' },
-          head('head', t('合成引擎', 'Engine'), engineHint, badge('status', engineReady, engineStatus)),
+          // The setting comes first: the hint and the readiness badge describe
+          // whatever the select is set to, so they read after it.
+          h('div', { className: 'dsh-tts-head', key: 'head' },
+            h('div', { className: 'dsh-tts-headrow', key: 'title' },
+              h('span', { className: 'dsh-tts-h1', key: 'h' }, t('合成引擎', 'Engine')))),
           row('engine', t('引擎', 'Engine'),
             h('select', {
               className: 'dsh-tts-select', value: engine, disabled: busy,
               onChange: (event) => save({ engine: event.target.value }),
               children: [
                 h('option', { value: 'deepseek', key: 'deepseek' }, t('DeepSeek 云（在线）', 'DeepSeek cloud (online)')),
+                isDesktopShell ? h('option', { value: 'bridge', key: 'bridge' },
+                  t('朗读桥（在浏览器中朗读）', 'Speech bridge (read in a browser)')) : null,
                 h('option', { value: 'browser', key: 'browser', disabled: !browserReady && !isDesktopShell },
                   browserReady
                     ? t('浏览器朗读（本机 ' + voices.length + ' 个语音）', 'Browser speech (' + voices.length + ' voices)')
@@ -4110,23 +4211,20 @@ window.__ModuleLoader__.load({
                       : t('浏览器朗读（这个环境没有语音）', 'Browser speech (no voices here)')),
                 h('option', { value: 'system', key: 'system' }, t('系统语音（离线）', 'System voices (offline)')),
                 h('option', { value: 'custom', key: 'custom' }, t('自定义 API（在线）', 'Custom API (online)')),
-              ],
+              ].filter(Boolean),
             }),
           ),
+          h('div', { className: 'dsh-tts-hint', key: 'hint' }, engineHint),
+          h('div', { className: 'dsh-tts-headrow', key: 'status' }, badge('status', engineReady, engineStatus)),
           browserEngine ? row('speech-voice', t('语音', 'Voice'), (voices.length > 0 || isDesktopShell)
             ? h('select', {
                 className: 'dsh-tts-select',
                 value: speechTargetValue(),
                 disabled: busy,
                 onChange: (event) => { rememberSpeechVoice(event.target.value); setVoices(refreshSpeechVoices().slice()) },
-                children: [
-                  // Only a desktop shell gets this: a real browser reads in place.
-                  isDesktopShell ? h('option', { value: BRIDGE_TARGET, key: 'bridge' },
-                    t('🌐 朗读桥 · 在浏览器中朗读（推荐）', '🌐 Speech bridge · read in a browser (recommended)')) : null,
-                  ...voices.map((voice) => h('option', {
-                    value: voice.voiceURI, key: voice.voiceURI,
-                  }, (isCloudVoice(voice) ? '☁ ' : '⌂ ') + voice.name + ' · ' + voice.lang)),
-                ].filter(Boolean),
+                children: voices.map((voice) => h('option', {
+                  value: voice.voiceURI, key: voice.voiceURI,
+                }, (isCloudVoice(voice) ? '☁ ' : '⌂ ') + voice.name + ' · ' + voice.lang)),
               })
             : badge('state', false, t('这个环境没有浏览器语音', 'no browser voices here'))) : null,
           cloudEngine ? row('voice', t('音色', 'Voice'),
@@ -4415,11 +4513,20 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = [
-      '.dsh-tts-bars{display:inline-flex;align-items:center;gap:2px;height:16px;width:16px;justify-content:center}',
-      '.dsh-tts-bars i{display:block;width:2px;border-radius:1px;background:currentColor;height:30%;animation:dsh-tts-bar .9s ease-in-out infinite}',
-      '.dsh-tts-bars.is-loading i{animation-duration:1.4s;opacity:.6}',
-      '.dsh-tts-bars.is-paused i{animation-play-state:paused;opacity:.55}',
-      '@keyframes dsh-tts-bar{0%,100%{height:25%}50%{height:100%}}',
+      '.dsh-tts-wave rect{fill:currentColor;transform-origin:center;transform-box:fill-box;'
+        + 'animation:dsh-tts-wave .9s ease-in-out infinite}',
+      '.dsh-tts-wave.is-paused rect{animation-play-state:paused}',
+      '@keyframes dsh-tts-wave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}',
+      '.dsh-tts-spin{animation:dsh-tts-spin .9s linear infinite;transform-origin:center}',
+      '@keyframes dsh-tts-spin{to{transform:rotate(360deg)}}',
+      '.dsh-tts-range{appearance:none;-webkit-appearance:none;background:transparent;height:18px;cursor:pointer}',
+      '.dsh-tts-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;'
+        + 'background:var(--dsw-alias-border-l2,#3a3a3a)}',
+      '.dsh-tts-range::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;'
+        + 'border:0;border-radius:50%;background:var(--dsw-alias-state-business-primary,#3b82f6)}',
+      '.dsh-tts-range::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2,#3a3a3a)}',
+      '.dsh-tts-range::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;'
+        + 'background:var(--dsw-alias-state-business-primary,#3b82f6)}',
       // ---- settings page ----
       // One rhythm: card head (title + status + one hint) over rows built from a
       // fixed label gutter and one control column that every control fills, so
@@ -4523,7 +4630,6 @@ window.__ModuleLoader__.load({
         appCtx = ctx
         watchLocale(ctx)
         watchBridgePrefs(ctx)
-        loadBridgeState()
         loadConfigOnce()
         ensureEvents(ctx)
 

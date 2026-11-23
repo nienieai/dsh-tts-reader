@@ -32,12 +32,10 @@ const PENDING_PATH = PREFIX + '/pending'
 const RECENT_PATH = PREFIX + '/recent'
 const BRIDGE_PATH = PREFIX + '/bridge'
 const BRIDGE_STREAM_PATH = BRIDGE_PATH + '/stream'
-// The bridge reports back on its own channel: reading and finishing are
-// separate facts from "text was handed over", and theme/language changes have
-// nothing to do with the text at all.
+// The bridge reports back on its own channel: receipt, completion, live state,
+// and theme/language changes, none of which belong with the text.
 const BRIDGE_ACK_PATH = BRIDGE_PATH + '/ack'
 const BRIDGE_PREFS_PATH = BRIDGE_PATH + '/prefs'
-const BRIDGE_STATE_PATH = BRIDGE_PATH + '/state'
 
 const API_BASE = 'https://api.deepseek.com'
 const KEY_REF = 'DEEPSEEK_API_KEY'
@@ -97,7 +95,7 @@ const DEFAULTS = {
 
 // `piper` stays in the set so an old settings.json still loads, but the UI no
 // longer offers it: normalizeSettings turns it into `system` (see below).
-const ENGINES = new Set(['deepseek', 'piper', 'system', 'custom', 'browser'])
+const ENGINES = new Set(['deepseek', 'piper', 'system', 'custom', 'browser', 'bridge'])
 const CUSTOM_FORMATS = new Set(['wav', 'pcm'])
 const CUSTOM_PROTOCOLS = new Set(['openai', 'gpt-sovits', 'fish', 'template'])
 const CUSTOM_AUDIO_TYPES = new Set(['auto', 'wav', 'pcm'])
@@ -1795,8 +1793,9 @@ async function resolveUnits(scope, settings, sessionId, messageId, explicitText)
 /** 24 kHz mono PCM for one paragraph, from whichever engine is configured. */
 export async function* engineChunks(scope, settings, text, signal) {
   // Browser speech happens in the page; the Host has no audio to give. Without
-  // this the call would fall through to the DeepSeek branch.
-  if (settings.engine === 'browser') {
+  // this the call would fall through to the DeepSeek branch. `bridge` is the
+  // same story: the page hands the text to a real browser.
+  if (settings.engine === 'browser' || settings.engine === 'bridge') {
     throw engineError('「浏览器朗读」由页面自己合成，Host 不提供音频', 'NO_ENGINE')
   }
   if (settings.engine === 'piper') {
@@ -2170,12 +2169,12 @@ export function apply(ctx, config) {
       while (bridgeEntries.size > BRIDGE_MAX) bridgeEntries.delete(bridgeEntries.keys().next().value)
     }
 
-    // What the bridge reported. `done` is keyed by message id so the page can
-    // mark a reply as read; the entries expire because a stale check mark on a
-    // reply from an hour ago means nothing.
-    const BRIDGE_DONE_TTL_MS = 30 * 60 * 1000
-    const BRIDGE_DONE_MAX = 64
-    const bridgeDone = new Map()
+    // What the bridge is doing right now, per message/prompt key: the app shows
+    // a wave while the browser reads and a spinner while that read waits behind
+    // another one.
+    const BRIDGE_STATE_TTL_MS = 10 * 60 * 1000
+    const BRIDGE_STATE_MAX = 64
+    const bridgeStates = new Map()
     // Push id -> a request waiting for the page to confirm it received the text.
     const bridgeWaiters = new Map()
     const BRIDGE_ACK_WAIT_MS = 1200
@@ -2183,12 +2182,12 @@ export function apply(ctx, config) {
     // these, and a prefs push only carries what actually changed.
     const bridgePrefs = { scheme: 'dark', lang: '' }
 
-    const pruneBridgeDone = () => {
+    const pruneBridgeStates = () => {
       const now = Date.now()
-      for (const [id, item] of bridgeDone) {
-        if (now - item.at > BRIDGE_DONE_TTL_MS) bridgeDone.delete(id)
+      for (const [id, item] of bridgeStates) {
+        if (now - item.at > BRIDGE_STATE_TTL_MS) bridgeStates.delete(id)
       }
-      while (bridgeDone.size > BRIDGE_DONE_MAX) bridgeDone.delete(bridgeDone.keys().next().value)
+      while (bridgeStates.size > BRIDGE_STATE_MAX) bridgeStates.delete(bridgeStates.keys().next().value)
     }
 
     const addBridge = (payload) => {
@@ -2198,6 +2197,7 @@ export function apply(ctx, config) {
         at: Date.now(),
         pushId: payload.id || '',
         messageId: payload.messageId || '',
+        key: payload.key || '',
         title: payload.title,
         units: payload.units,
         speed: payload.speed,
@@ -2211,6 +2211,7 @@ export function apply(ctx, config) {
       const payload = JSON.stringify({
         id: entry.pushId || '',
         messageId: entry.messageId || '',
+        key: entry.key || '',
         title: entry.title,
         units: entry.units,
         speed: entry.speed,
@@ -2347,6 +2348,9 @@ export function apply(ctx, config) {
         const payload = {
           id: pushId,
           messageId,
+          // The app's own key for this read (message or prompt): the state that
+          // comes back is matched to the button that started it.
+          key: typeof body?.key === 'string' ? body.key.slice(0, 200) : '',
           title, units, speed: bridgeSpeed,
           lang: lang || bridgePrefs.lang,
           scheme,
@@ -2399,8 +2403,8 @@ export function apply(ctx, config) {
       }),
     }), 'dsh-tts-reader: bridge stream')
 
-    // The page's side of the conversation: "got it", "finished it", "stopped".
-    // `done` is also what turns a reply's read button into a check mark.
+    // The page's side of the conversation: "got it", "finished it", "stopped",
+    // and "what I am doing right now" so the app can show the same state.
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: BRIDGE_ACK_PATH,
@@ -2410,23 +2414,36 @@ export function apply(ctx, config) {
         const body = await readJsonBody(request)
         const id = typeof body?.id === 'string' ? body.id.slice(0, 64) : ''
         if (!id) return writeJson(response, 400, { ok: false, code: 'BAD_REQUEST', error: '缺少 id' })
-        const kind = body?.kind === 'done' ? 'done' : body?.kind === 'stop' ? 'stop' : 'read'
+        const kind = body?.kind === 'state' ? 'state'
+          : body?.kind === 'done' ? 'done'
+            : body?.kind === 'stop' ? 'stop' : 'read'
         const waiter = bridgeWaiters.get(id)
         if (waiter) {
           clearTimeout(waiter.timer)
           bridgeWaiters.delete(id)
           waiter.resolve(true)
         }
-        if (kind === 'done') {
-          const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
-          const units = Number(body?.units)
-          if (messageId) {
-            const safeUnits = Number.isFinite(units) && units > 0 ? Math.floor(units) : 0
-            bridgeDone.set(messageId, { at: Date.now(), units: safeUnits })
-            pruneBridgeDone()
-            // The page that owns the reply is not the bridge: tell the app.
-            broadcast({ type: 'bridge-done', messageId, units: safeUnits })
+        const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
+        if (kind === 'state') {
+          const key = typeof body?.key === 'string' && body.key
+            ? body.key.slice(0, 200)
+            : messageId.slice(0, 200)
+          if (!key) return writeJson(response, 200, { ok: true, value: { kind } })
+          const phases = new Set(['playing', 'paused', 'queued', 'finished', 'stopped'])
+          const phase = phases.has(body?.phase) ? body.phase : 'playing'
+          const count = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0)
+          const state = {
+            at: Date.now(),
+            phase,
+            unit: count(body?.unit),
+            total: count(body?.total),
+            queued: count(body?.queued),
           }
+          pruneBridgeStates()
+          bridgeStates.set(key, state)
+          // The page that owns the reply is not the bridge: tell the app.
+          broadcast({ type: 'bridge-state', key, messageId, ...state })
+          return writeJson(response, 200, { ok: true, value: { kind } })
         }
         return writeJson(response, 200, { ok: true, value: { kind } })
       }),
@@ -2449,23 +2466,6 @@ export function apply(ctx, config) {
         return writeJson(response, 200, { ok: true, value: { delivered } })
       }),
     }), 'dsh-tts-reader: bridge prefs')
-
-    // What the page already finished: painted on the read buttons at startup,
-    // so a check mark survives a page reload.
-    scope.effect(() => scope.webServer.register({
-      kind: 'exact',
-      path: BRIDGE_STATE_PATH,
-      handler: routeHandler(log, (request, response) => {
-        if (!guard(request, response)) return
-        pruneBridgeDone()
-        return writeJson(response, 200, {
-          ok: true,
-          value: {
-            done: [...bridgeDone].map(([messageId, item]) => ({ messageId, units: item.units, at: item.at })),
-          },
-        })
-      }),
-    }), 'dsh-tts-reader: bridge state')
 
     // The floating player asks for the paragraph list first: it needs the count
     // and each paragraph's opening words, and `unit` on /read addresses this list.

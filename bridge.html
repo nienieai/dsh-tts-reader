@@ -55,12 +55,26 @@
   .chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);
     cursor:pointer;user-select:none;white-space:nowrap}
   .rate-wrap{display:inline-flex;align-items:center;gap:5px}
-  input[type=range]{width:88px;accent-color:var(--accent)}
+  /* A drawn track: the platform default track is white-on-white in light mode. */
+  input[type=range]{width:88px;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;
+    border:0;border-radius:50%;background:var(--accent)}
+  input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--line)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+  input[type=range]:focus{outline:none}
+  input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
   .val{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:44px}
 
   button{background:transparent;color:var(--fg);border:1px solid transparent;border-radius:7px;
     width:32px;height:30px;font:inherit;font-size:13px;line-height:1;cursor:pointer;
     display:inline-flex;align-items:center;justify-content:center}
+  button svg{width:16px;height:16px;display:block;pointer-events:none}
+  /* The play button holds all three glyphs; data-icon picks one. */
+  #btnPlay svg{display:none}
+  #btnPlay[data-icon=play] .i-play,
+  #btnPlay[data-icon=pause] .i-pause,
+  #btnPlay[data-icon=replay] .i-replay{display:block}
   button:hover:not(:disabled){background:#222736}
   button:disabled{opacity:.35;cursor:not-allowed}
   button.play{width:36px;border-color:var(--line)}
@@ -112,10 +126,20 @@
       <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1" title="语速">
       <span class="val" id="rateVal">1.00×</span>
     </span>
-    <button id="btnPrev" title="上一段" disabled>⏮</button>
-    <button id="btnPlay" class="play" title="开始朗读">▶</button>
-    <button id="btnNext" title="下一段" disabled>⏭</button>
-    <button id="btnStop" title="停止" disabled>■</button>
+    <button id="btnPrev" title="上一段" disabled aria-label="上一段">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 5v14a1 1 0 0 1-1.6.8L9 13.5V19a1 1 0 0 1-2 0V5a1 1 0 0 1 2 0v5.5l8.4-6.3A1 1 0 0 1 19 5z"/></svg>
+    </button>
+    <button id="btnPlay" class="play" title="开始朗读" data-icon="play" aria-label="开始朗读">
+      <svg class="i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.6c0-1 1.1-1.6 1.9-1L19 11c.8.5.8 1.5 0 2L8.9 20.4c-.8.6-1.9 0-1.9-1z"/></svg>
+      <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>
+      <svg class="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/></svg>
+    </button>
+    <button id="btnNext" title="下一段" disabled aria-label="下一段">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 5v14a1 1 0 0 0 1.6.8l8.4-6.3V19a1 1 0 0 0 2 0V5a1 1 0 0 0-2 0v5.5L6.6 4.2A1 1 0 0 0 5 5z"/></svg>
+    </button>
+    <button id="btnStop" title="停止" disabled aria-label="停止">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+    </button>
     <span id="dot" class="dot" title="未连接 DSH"></span>
   </div>
   <div class="progress"><div id="fill"></div></div>
@@ -191,14 +215,15 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     } catch (e) { return null; }
   }
 
-  /** Tell the Host what happened to one push: received, finished, stopped. */
-  function ack(id, kind, messageId, units) {
+  /** Tell the Host what happened to one push: received, state, stopped. */
+  function ack(id, kind, messageId, units, extra) {
     if (!id) return;
     var dir = apiBase();
     if (dir === null) return;
     var body = { id: String(id), kind: String(kind) };
     if (messageId) body.messageId = String(messageId);
     if (typeof units === 'number') body.units = units;
+    if (extra) for (var name in extra) body[name] = extra[name];
     var json = JSON.stringify(body);
     try {
       if (navigator.sendBeacon) {
@@ -214,6 +239,31 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
         keepalive: true
       }).catch(function () {});
     } catch (e) {}
+  }
+
+  /** Mirror the current reading state back to the app (wave / pause / queue). */
+  function reportState(phase) {
+    var active = st.active;
+    if (!active || !active.id) return;
+    ack(active.id, 'state', active.messageId, undefined, {
+      key: active.key || '',
+      phase: phase,
+      unit: Math.min(st.idx, units.length),
+      total: units.length,
+      queued: st.queue.length
+    });
+  }
+
+  /** A push that had to wait: the app can show its spinner meanwhile. */
+  function reportQueued(payload) {
+    if (!payload || !payload.id) return;
+    ack(payload.id, 'state', payload.messageId, undefined, {
+      key: payload.key || '',
+      phase: 'queued',
+      unit: 0,
+      total: (payload.units || []).length,
+      queued: st.queue.length
+    });
   }
 
   /**
@@ -584,8 +634,11 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     if (el.onlyLocalText) el.onlyLocalText.textContent = tr('localOnly');
     el.rate.setAttribute('title', tr('speedTitle'));
     el.btnPrev.setAttribute('title', tr('prevPara'));
+    el.btnPrev.setAttribute('aria-label', tr('prevPara'));
     el.btnNext.setAttribute('title', tr('nextPara'));
+    el.btnNext.setAttribute('aria-label', tr('nextPara'));
     el.btnStop.setAttribute('title', tr('stopReading'));
+    el.btnStop.setAttribute('aria-label', tr('stopReading'));
     if (!st.running) el.btnPlay.setAttribute('title', st.done ? tr('replay') : tr('playStart'));
     if (!st.dotState || st.dotState === 'idle') st.dotTitle = tr('notConnected');
   }
@@ -969,10 +1022,13 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function paint() {
     var done = st.done && !st.running && !st.paused;
     el.btnPlay.disabled = !units.length;
-    el.btnPlay.textContent = st.running ? (st.paused ? '▶' : '⏸') : (done ? '↻' : '▶');
-    el.btnPlay.title = st.running
+    // The button holds all three glyphs; the attribute picks one.
+    el.btnPlay.setAttribute('data-icon', st.running ? (st.paused ? 'play' : 'pause') : (done ? 'replay' : 'play'));
+    var playTitle = st.running
       ? (st.paused ? tr('resume') : tr('pause'))
       : (done ? fmt('replay', { n: units.length }) : tr('playStart'));
+    el.btnPlay.title = playTitle;
+    el.btnPlay.setAttribute('aria-label', playTitle);
     el.btnPrev.disabled = !units.length || st.idx <= 0;
     el.btnNext.disabled = !units.length || st.idx >= units.length - 1;
     el.btnStop.disabled = !st.running && !st.paused;
@@ -988,6 +1044,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
 
   function abort(reason, canRetryLocal) {
     var played = st.active;
+    // A state report needs the active push, so send it before clearing it.
+    reportState('stopped');
     st.active = null;
     st.done = false;
     // A failing voice would fail the whole queue the same way: drop it.
@@ -1025,6 +1083,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     paintPara(start);
     follow(start);
     paint();
+    reportState('playing');
     // The bar follows characters; reset it to where this run begins.
     st.baseChars = st.charStarts[start] || 0;
     st.paraBoundary = base;
@@ -1072,6 +1131,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
           paintPara(item.index);
           follow(item.index);
           paint();
+          reportState('playing');
           try { if (synth.paused && !st.paused) synth.resume(); } catch (e) {}
         };
         utter.onboundary = function (e) {
@@ -1125,11 +1185,9 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     markRead(units.length);
     el.fill.style.width = '100%';
     if (st.startedAt) setStatus(fmt('finished', { n: units.length, time: fmtDuration(performance.now() - st.startedAt) }));
-    var played = st.active;
+    // "Done" is a state, not a badge: the app goes back to its speaker icon.
+    reportState('finished');
     st.active = null;
-    // The app shows this as the reply's check mark, so it must carry the
-    // message id, not just the push id.
-    if (played) ack(played.id, 'done', played.messageId, units.length);
     paint();
     drainQueue();
   }
@@ -1145,6 +1203,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
 
   function stop() {
     var played = st.active;
+    reportState('stopped');
     st.active = null;
     st.done = false;
     // Stop is the only "drop it" gesture: everything waiting goes too.
@@ -1178,6 +1237,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
       st.paused = true;
     }
     paint();
+    reportState(st.paused ? 'paused' : 'playing');
   }
 
   function step(delta) {
@@ -1272,6 +1332,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     st.active = {
       id: String(data.id),
       messageId: String(data.messageId || ''),
+      key: String(data.key || ''),
       units: units.length
     };
     ack(st.active.id, 'read', st.active.messageId);
@@ -1308,6 +1369,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     // the paragraph being spoken is exactly what the queue exists to prevent.
     if (st.running || st.paused || st.queue.length) {
       st.queue.push(payload);
+      reportQueued(payload);
       paintDot();
       return;
     }
@@ -1321,6 +1383,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     st.active = {
       id: payload.id ? String(payload.id) : '',
       messageId: payload.messageId ? String(payload.messageId) : '',
+      key: payload.key ? String(payload.key) : '',
       units: next.length
     };
     units = next.map(function (u, i) { return { index: i, text: String((u && u.text) || '') }; });
