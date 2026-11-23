@@ -38,7 +38,10 @@
     padding:8px 10px; font:inherit;
   }
   select{min-width:min(520px, 100%)}
-  input[type=search]{width:100%}
+  input[type=search], #voiceSearch{width:100%}
+  /* A plain caret instead of the search box's clear button. */
+  .caret{position:absolute;right:12px;bottom:11px;pointer-events:none;font-size:10px;
+    line-height:1;color:var(--dim)}
   select:focus, textarea:focus, input:focus{outline:2px solid rgba(96,165,250,.45); outline-offset:1px}
   /* Voice list is built on demand: Linux exposes 14000+ espeak voices. */
   #voiceList{position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:20;
@@ -118,8 +121,9 @@
     <div class="row">
       <label class="fld" style="flex:1;position:relative">
         选择音色
-        <input id="voiceSearch" type="search" autocomplete="off" spellcheck="false"
+        <input id="voiceSearch" type="text" autocomplete="off" spellcheck="false"
                placeholder="点开或输入筛选（例如 中文 / mandarin / cmn）">
+        <span class="caret" aria-hidden="true">▾</span>
         <div id="voiceList" hidden></div>
       </label>
     </div>
