@@ -43,7 +43,7 @@ const VOICES = new Set(['stella', 'tide'])
 const HARD_MAX_CHARS = 4000
 const SAMPLE_RATE = 24000
 const MIN_SPEED = 0.5
-const MAX_SPEED = 2
+const MAX_SPEED = 3
 
 const DEFAULTS = {
   // Which synthesizer produces the audio: the DeepSeek API, a local Piper

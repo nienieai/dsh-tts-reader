@@ -1475,7 +1475,7 @@ window.__ModuleLoader__.load({
       speakApprovals = value.speakApprovals !== false
       if (typeof value.engine === 'string') engineMode = value.engine
       const nextSpeed = Number(value.speed)
-      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(2, Math.max(0.5, nextSpeed)) : 1
+      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(3, Math.max(0.5, nextSpeed)) : 1
       if (resolved === speed) return
       speed = resolved
       // A speed change from settings applies to the audio in flight right away.
@@ -1917,7 +1917,7 @@ window.__ModuleLoader__.load({
       const utter = new window.SpeechSynthesisUtterance(PREVIEW_TEXT)
       const voice = pickSpeechVoice()
       if (voice) { utter.voice = voice; utter.lang = voice.lang }
-      utter.rate = Math.min(2, Math.max(0.5, speed))
+      utter.rate = Math.min(3, Math.max(0.5, speed))
       let started = false
       const done = () => {
         if (preview !== active) return
@@ -2057,7 +2057,7 @@ window.__ModuleLoader__.load({
 
     function playerClampSpeed(value) {
       const number = Number(value)
-      return Number.isFinite(number) ? Math.min(2, Math.max(0.5, Math.round(number * 100) / 100)) : 1
+      return Number.isFinite(number) ? Math.min(3, Math.max(0.5, Math.round(number * 100) / 100)) : 1
     }
 
     function playerStopSources(session) {
@@ -2910,7 +2910,7 @@ window.__ModuleLoader__.load({
         for (const item of items) {
           const utter = new window.SpeechSynthesisUtterance(item.rest)
           if (voice) { utter.voice = voice; utter.lang = voice.lang }
-          utter.rate = Math.min(2, Math.max(0.5, Number(session.speed) || 1))
+          utter.rate = Math.min(3, Math.max(0.5, Number(session.speed) || 1))
           utter.pitch = 1
           utter.volume = 1
           utter.onstart = () => {
@@ -3218,7 +3218,7 @@ window.__ModuleLoader__.load({
       const speedInput = document.createElement('input')
       speedInput.type = 'range'
       speedInput.min = '0.5'
-      speedInput.max = '2'
+      speedInput.max = '3'
       speedInput.step = '0.05'
       speedInput.title = t('播放速度', 'Playback speed')
       // A class instead of inline accent-color: the default track is invisible on
@@ -4295,7 +4295,7 @@ window.__ModuleLoader__.load({
         if (raw === null) return
         const parsed = Number(raw)
         if (!Number.isFinite(parsed)) return
-        const next = Math.round(Math.min(2, Math.max(0.5, parsed)) * 100) / 100
+        const next = Math.round(Math.min(3, Math.max(0.5, parsed)) * 100) / 100
         if (config && next === config.speed) return
         void save({ speed: next })
       }
@@ -4646,7 +4646,7 @@ window.__ModuleLoader__.load({
           row('speed', t('速度', 'Speed'), [
             h('input', {
               key: 'range',
-              className: 'dsh-tts-range', type: 'range', min: 0.5, max: 2, step: 0.05,
+              className: 'dsh-tts-range', type: 'range', min: 0.5, max: 3, step: 0.05,
               value: speedDraft === null ? config.speed : speedDraft,
               disabled: busy,
               'aria-label': t('朗读速度', 'Playback speed'),

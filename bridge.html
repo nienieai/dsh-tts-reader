@@ -180,7 +180,7 @@
     <span class="speed-wrap" id="speedWrap">
       <button id="speedBtn" type="button" aria-label="语速"><span id="rateVal">倍速</span></button>
       <span class="speed-pop" id="speedPop">
-        <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1" aria-label="语速">
+        <input id="rate" type="range" min="0.5" max="3" step="0.05" value="1" aria-label="语速">
       </span>
     </span>
     <button id="btnPrev" data-tip="上一段" disabled aria-label="上一段">
@@ -1238,7 +1238,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function applySpeed(value) {
     var next = Number(value);
     if (!isFinite(next) || next <= 0) return;
-    st.rate = Math.min(2, Math.max(0.5, Math.round(next * 100) / 100));
+    st.rate = Math.min(3, Math.max(0.5, Math.round(next * 100) / 100));
     el.rate.value = String(st.rate);
     paintSpeedLabel();
   }
@@ -1527,7 +1527,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
 
   /* ---------- wiring ---------- */
 
-  st.rate = Math.min(2, Math.max(0.5, Number(el.rate.value) || 1));
+  st.rate = Math.min(3, Math.max(0.5, Number(el.rate.value) || 1));
   applySpeed(data.speed);
   paintNetBtn();
   paintSpeedLabel();
@@ -1631,7 +1631,7 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     setTimeout(function () { if (st.listOpen) closeVoiceList(); }, 120);
   });
   el.rate.addEventListener('input', function () {
-    st.rate = Math.min(2, Math.max(0.5, Number(el.rate.value) || 1));
+    st.rate = Math.min(3, Math.max(0.5, Number(el.rate.value) || 1));
     paintSpeedLabel();
     // A queued utterance keeps its old rate: re-queue from the word being read
     // so the change is audible right away.
