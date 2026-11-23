@@ -30,6 +30,12 @@ window.__ModuleLoader__.load({
     const SAMPLE_RATE = 24000
     const START_DELAY = 0.1
 
+    // Playback speed: one range for every engine, and the round numbers the
+    // sliders offer as clickable ticks.
+    const SPEED_MIN = 0.5
+    const SPEED_MAX = 3
+    const SPEED_TICKS = [0.5, 1, 1.5, 2, 3]
+
     // Locale follows the Host's active language (what DSH itself shows), not the
     // browser's: the plugin's copy must switch with the app. `ctx.locale` is
     // wired in apply(); the navigator language is only the pre-injection guess.
@@ -1475,7 +1481,7 @@ window.__ModuleLoader__.load({
       speakApprovals = value.speakApprovals !== false
       if (typeof value.engine === 'string') engineMode = value.engine
       const nextSpeed = Number(value.speed)
-      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(3, Math.max(0.5, nextSpeed)) : 1
+      const resolved = Number.isFinite(nextSpeed) && nextSpeed > 0 ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, nextSpeed)) : 1
       if (resolved === speed) return
       speed = resolved
       // A speed change from settings applies to the audio in flight right away.
@@ -1917,7 +1923,7 @@ window.__ModuleLoader__.load({
       const utter = new window.SpeechSynthesisUtterance(PREVIEW_TEXT)
       const voice = pickSpeechVoice()
       if (voice) { utter.voice = voice; utter.lang = voice.lang }
-      utter.rate = Math.min(3, Math.max(0.5, speed))
+      utter.rate = Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed))
       let started = false
       const done = () => {
         if (preview !== active) return
@@ -2057,7 +2063,7 @@ window.__ModuleLoader__.load({
 
     function playerClampSpeed(value) {
       const number = Number(value)
-      return Number.isFinite(number) ? Math.min(3, Math.max(0.5, Math.round(number * 100) / 100)) : 1
+      return Number.isFinite(number) ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(number * 100) / 100)) : 1
     }
 
     function playerStopSources(session) {
@@ -2843,13 +2849,7 @@ window.__ModuleLoader__.load({
       }
       if (session.units.length === 0) return
       // Character offsets per paragraph: what the progress bar measures against.
-      let chars = 0
-      session.charStarts = []
-      for (let index = 0; index < session.units.length; index += 1) {
-        session.charStarts[index] = chars
-        chars += String((session.units[index] && session.units[index].text) || '').length
-      }
-      session.totalChars = chars
+      measureSessionChars(session)
       const from = Math.max(0, Math.min(Number(startUnit) || 0, session.units.length - 1))
       const firstText = String((session.units[from] && session.units[from].text) || '')
       const skip = Math.max(0, Math.min(Number(startSkip) || 0, Math.max(0, firstText.length - 1)))
@@ -2910,7 +2910,7 @@ window.__ModuleLoader__.load({
         for (const item of items) {
           const utter = new window.SpeechSynthesisUtterance(item.rest)
           if (voice) { utter.voice = voice; utter.lang = voice.lang }
-          utter.rate = Math.min(3, Math.max(0.5, Number(session.speed) || 1))
+          utter.rate = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(session.speed) || 1))
           utter.pitch = 1
           utter.volume = 1
           utter.onstart = () => {
@@ -3113,6 +3113,8 @@ window.__ModuleLoader__.load({
         session.standalone = value.standalone === true
         session.view.total = units.length
         session.view.preview = previewOf(units[0])
+        // The bar is character-weighted even without word boundaries.
+        measureSessionChars(session)
         updatePlayerWindow()
         highlightAttach(session, session.root, units)
         await playerPlayUnit(session, 0)
@@ -3157,6 +3159,44 @@ window.__ModuleLoader__.load({
         + '<rect x="6" y="4" width="4" height="16" rx="1.4"/><rect x="14" y="4" width="4" height="16" rx="1.4"/></svg>',
       play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
         + '<path d="M7 4.6c0-1 1.1-1.6 1.9-1L19 11c.8.5.8 1.5 0 2L8.9 20.4c-.8.6-1.9 0-1.9-1z"/></svg>',
+    }
+
+    /** Where a tick sits along the slider, in percent. */
+    function speedTickPercent(value) {
+      const span = SPEED_MAX - SPEED_MIN
+      if (!(span > 0)) return 0
+      return Math.round(((value - SPEED_MIN) / span) * 10000) / 100
+    }
+
+    /** The round speeds under a slider; clicking one sets exactly that value. */
+    function buildSpeedTicks(options) {
+      const compact = !!(options && options.compact)
+      const onPick = (options && options.onPick) || (() => {})
+      const ticks = document.createElement('div')
+      ticks.className = 'dsh-tts-ticks' + (compact ? ' is-compact' : '')
+      SPEED_TICKS.forEach((value) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'dsh-tts-tick'
+        button.dataset.rate = String(value)
+        button.style.left = speedTickPercent(value) + '%'
+        button.textContent = String(value)
+        button.title = value + '×'
+        button.setAttribute('aria-label', value + '×')
+        button.onclick = () => onPick(value)
+        ticks.appendChild(button)
+      })
+      return ticks
+    }
+
+    /** Mark the tick the current speed sits on. */
+    function paintSpeedTicks(ticks, speed) {
+      if (!ticks) return
+      const current = Number(speed) || 1
+      for (const button of ticks.children) {
+        const value = Number(button.dataset.rate)
+        button.classList.toggle('on', Math.abs(value - current) < 0.001)
+      }
     }
 
     function makePlayerButton(icon, title, big) {
@@ -3215,27 +3255,41 @@ window.__ModuleLoader__.load({
 
       const speedBox = document.createElement('div')
       speedBox.style.cssText = 'display:flex;align-items:center;gap:4px;margin-left:auto'
+      const speedCol = document.createElement('div')
+      speedCol.style.cssText = 'display:flex;flex-direction:column;gap:2px;width:110px'
       const speedInput = document.createElement('input')
       speedInput.type = 'range'
-      speedInput.min = '0.5'
-      speedInput.max = '3'
+      speedInput.min = String(SPEED_MIN)
+      speedInput.max = String(SPEED_MAX)
       speedInput.step = '0.05'
       speedInput.title = t('播放速度', 'Playback speed')
       // A class instead of inline accent-color: the default track is invisible on
       // a light theme, and only stylesheet rules reach the track pseudo-elements.
       speedInput.className = 'dsh-tts-range'
-      speedInput.style.cssText = 'width:88px;margin:0'
+      speedInput.style.cssText = 'width:110px;margin:0'
       const speedValue = document.createElement('span')
       speedValue.style.cssText = 'width:38px;text-align:right;font-variant-numeric:tabular-nums'
       speedInput.oninput = () => {
         // Dragging only previews the number: re-queuing speech on every pixel
         // would stutter, and the window repaints would fight the thumb.
         speedValue.textContent = playerClampSpeed(speedInput.value).toFixed(2) + '×'
+        paintSpeedTicks(speedTicks, speedInput.value)
       }
       speedInput.onchange = () => {
         playerApplySpeed(playerClampSpeed(speedInput.value))
       }
-      speedBox.append(speedInput, speedValue)
+      const speedTicks = buildSpeedTicks({
+        compact: true,
+        onPick: (value) => {
+          // A tick is a shortcut for dragging to that exact value.
+          speedInput.value = String(value)
+          speedValue.textContent = Number(value).toFixed(2) + '×'
+          paintSpeedTicks(speedTicks, value)
+          playerApplySpeed(value)
+        },
+      })
+      speedCol.append(speedInput, speedTicks)
+      speedBox.append(speedCol, speedValue)
       controls.append(prev, play, next, speedBox)
 
       // Drag by the header; the position survives reloads.
@@ -3271,7 +3325,7 @@ window.__ModuleLoader__.load({
         try { wrap.removeAttribute('popover') } catch {}
       }
       playerWindowEl = wrap
-      wrap.__parts = { wrap, title, progressFill, prev, play, next, speedInput, speedValue }
+      wrap.__parts = { wrap, title, progressFill, prev, play, next, speedInput, speedValue, speedTicks }
       const saved = storedPlayerPos()
       if (saved) {
         wrap.style.left = saved.left + 'px'
@@ -3285,17 +3339,38 @@ window.__ModuleLoader__.load({
     /**
      * How much of the reply is behind the ear. A voice that reports word
      * boundaries gives an exact character position; every other engine only
-     * knows which paragraph it is reading, so the bar steps per paragraph.
+     * knows which paragraph it is reading, so paragraphs are measured by how
+     * much text they hold (a 300-character paragraph must move the bar further
+     * than a 10-character one).
      */
+    function measureSessionChars(session) {
+      const units = (session && session.units) || []
+      let chars = 0
+      session.charStarts = []
+      for (let index = 0; index < units.length; index += 1) {
+        session.charStarts[index] = chars
+        chars += String((units[index] && units[index].text) || '').length
+      }
+      session.totalChars = chars
+    }
+
     function playerProgressRatio(session) {
       if (!session) return 0
       const view = session.view || {}
       const totalChars = session.totalChars || 0
-      if (session.kind === 'speech' && session.boundarySeen && totalChars > 0) {
-        const start = (session.charStarts && session.charStarts[session.unit]) || 0
-        return Math.max(0, Math.min(1, (start + (session.skip || 0)) / totalChars))
-      }
+      const starts = session.charStarts || []
       const count = view.total || 0
+      if (totalChars > 0 && starts.length > 0) {
+        const unit = Math.max(0, Math.min(Number(view.unit) || 0, count))
+        if (session.kind === 'speech' && session.boundarySeen) {
+          const start = starts[Math.min(session.unit || 0, starts.length - 1)] || 0
+          return Math.max(0, Math.min(1, (start + (session.skip || 0)) / totalChars))
+        }
+        // Paragraph granularity: what is behind the ear is the text of the
+        // paragraphs already finished, not an equal share per paragraph.
+        const done = count > 0 && unit >= count ? totalChars : (starts[unit] || 0)
+        return Math.max(0, Math.min(1, done / totalChars))
+      }
       if (!count) return 0
       return Math.max(0, Math.min(1, (Math.min(view.unit, count - 1) + 1) / count))
     }
@@ -3344,6 +3419,8 @@ window.__ModuleLoader__.load({
         parts.speedInput.value = String(speedText)
         parts.speedValue.textContent = speedText.toFixed(2) + '×'
       }
+      // The tick the current speed sits on, whether it was dragged or pushed.
+      paintSpeedTicks(parts.speedTicks, held ? parts.speedInput.value : speedText)
     }
 
     function fail(key, error, auto) {
@@ -4295,7 +4372,7 @@ window.__ModuleLoader__.load({
         if (raw === null) return
         const parsed = Number(raw)
         if (!Number.isFinite(parsed)) return
-        const next = Math.round(Math.min(3, Math.max(0.5, parsed)) * 100) / 100
+        const next = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, parsed)) * 100) / 100
         if (config && next === config.speed) return
         void save({ speed: next })
       }
@@ -4644,17 +4721,37 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dsh-tts-unit', key: 'unit' }, t('字', 'chars')),
           ]),
           row('speed', t('速度', 'Speed'), [
-            h('input', {
-              key: 'range',
-              className: 'dsh-tts-range', type: 'range', min: 0.5, max: 3, step: 0.05,
-              value: speedDraft === null ? config.speed : speedDraft,
-              disabled: busy,
-              'aria-label': t('朗读速度', 'Playback speed'),
-              onChange: (event) => setSpeedDraft(event.target.value),
-              onPointerUp: commitSpeed,
-              onKeyUp: commitSpeed,
-              onBlur: commitSpeed,
-            }),
+            // The slider and its round numbers share one column, so a tick sits
+            // under the thumb position it stands for.
+            h('div', { className: 'dsh-tts-slider', key: 'slider' },
+              h('input', {
+                key: 'range',
+                className: 'dsh-tts-range', type: 'range', min: SPEED_MIN, max: SPEED_MAX, step: 0.05,
+                value: speedDraft === null ? config.speed : speedDraft,
+                disabled: busy,
+                'aria-label': t('朗读速度', 'Playback speed'),
+                onChange: (event) => setSpeedDraft(event.target.value),
+                onPointerUp: commitSpeed,
+                onKeyUp: commitSpeed,
+                onBlur: commitSpeed,
+              }),
+              h('div', { className: 'dsh-tts-ticks', key: 'ticks' },
+                SPEED_TICKS.map((value) => h('button', {
+                  key: value,
+                  type: 'button',
+                  className: 'dsh-tts-tick' + (Math.abs(value - (Number(speedDraft === null ? config.speed : speedDraft) || 1)) < 0.001 ? ' on' : ''),
+                  style: { left: speedTickPercent(value) + '%' },
+                  disabled: busy,
+                  title: value + '×',
+                  'aria-label': value + '×',
+                  onClick: () => {
+                    if (busy) return
+                    setSpeedDraft(value)
+                    // A tick saves right away: there is no release to wait for.
+                    void save({ speed: value })
+                  },
+                }, String(value)))),
+            ),
             h('span', { className: 'dsh-tts-value', key: 'value' }, (Number(speedDraft === null ? config.speed : speedDraft) || 1).toFixed(2) + '×'),
           ]),
         ),
@@ -4754,6 +4851,24 @@ window.__ModuleLoader__.load({
         + 'border:2px solid var(--dsw-alias-bg-layer-2,#1c1c1c);background:var(--dsw-alias-state-business-primary,#3b82f6);'
         + 'transition:transform .12s ease}',
       '.dsh-tts-range:hover::-moz-range-thumb{transform:scale(1.4)}',
+      // Round speeds under a slider: a small tick mark plus a clickable number,
+      // each sitting where its value is on the track.
+      '.dsh-tts-slider{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}',
+      '.dsh-tts-ticks{position:relative;height:15px}',
+      '.dsh-tts-tick{position:absolute;top:0;transform:translateX(-50%);margin:0;padding:0 2px;border:0;'
+        + 'background:transparent;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:10px;'
+        + 'line-height:15px;font-variant-numeric:tabular-nums;cursor:pointer}',
+      '.dsh-tts-ticks .dsh-tts-tick:first-child{transform:none;text-align:left}',
+      '.dsh-tts-ticks .dsh-tts-tick:last-child{transform:translateX(-100%);text-align:right}',
+      '.dsh-tts-tick::before{content:"";position:absolute;left:50%;top:-2px;width:1px;height:4px;'
+        + 'background:currentColor;opacity:.45}',
+      '.dsh-tts-ticks .dsh-tts-tick:first-child::before{left:0}',
+      '.dsh-tts-ticks .dsh-tts-tick:last-child::before{left:auto;right:0}',
+      '.dsh-tts-tick:hover:not(:disabled){color:var(--dsw-alias-state-business-primary)}',
+      '.dsh-tts-tick.on{color:var(--dsw-alias-state-business-primary);font-weight:600}',
+      '.dsh-tts-tick:disabled{opacity:.6;cursor:default}',
+      '.dsh-tts-ticks.is-compact{height:13px}',
+      '.dsh-tts-ticks.is-compact .dsh-tts-tick{font-size:9px;line-height:13px;padding:0 1px}',
       // ---- settings page ----
       // One rhythm: card head (title + status + one hint) over rows built from a
       // fixed label gutter and one control column that every control fills, so

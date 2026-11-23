@@ -108,6 +108,20 @@
   .speed-pop::before{content:'';position:absolute;left:0;right:0;top:-6px;height:6px}
   .speed-wrap.open .speed-pop{display:flex}
   .speed-pop input[type=range]{width:120px}
+  /* The round speeds under the slider: a tick mark plus a clickable number. */
+  .speed-col{display:flex;flex-direction:column;gap:2px}
+  .speed-ticks{position:relative;height:14px}
+  .speed-tick{position:absolute;top:0;transform:translateX(-50%);width:auto;height:auto;padding:0 2px;
+    border:0;border-radius:0;background:transparent;color:var(--dim);font:inherit;font-size:9px;
+    line-height:14px;cursor:pointer}
+  .speed-tick:first-child{transform:none;text-align:left}
+  .speed-tick:last-child{transform:translateX(-100%);text-align:right}
+  .speed-tick::before{content:'';position:absolute;left:50%;top:-2px;width:1px;height:4px;
+    background:currentColor;opacity:.45}
+  .speed-tick:first-child::before{left:0}
+  .speed-tick:last-child::before{left:auto;right:0}
+  .speed-tick:hover{color:var(--accent);background:transparent}
+  .speed-tick.on{color:var(--accent);font-weight:600}
 
   .dot{width:8px;height:8px;border-radius:50%;background:#4b5563;margin-left:4px;flex:none}
   .dot.ok{background:var(--ok)}
@@ -180,7 +194,10 @@
     <span class="speed-wrap" id="speedWrap">
       <button id="speedBtn" type="button" aria-label="语速"><span id="rateVal">倍速</span></button>
       <span class="speed-pop" id="speedPop">
-        <input id="rate" type="range" min="0.5" max="3" step="0.05" value="1" aria-label="语速">
+        <span class="speed-col">
+          <input id="rate" type="range" min="0.5" max="3" step="0.05" value="1" aria-label="语速">
+          <span class="speed-ticks" id="speedTicks"></span>
+        </span>
       </span>
     </span>
     <button id="btnPrev" data-tip="上一段" disabled aria-label="上一段">
@@ -247,9 +264,13 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   var FIRST_SOUND_TIMEOUT = 8000;
   var VOICE_KEY = 'dsh-tts-bridge:voice-v2';
   var FOLLOW_RESUME_MS = 3000;
+  // The speed range lives in one place: the slider, its clamp and the ticks.
+  var RATE_MIN = 0.5;
+  var RATE_MAX = 3;
+  var RATE_TICKS = [0.5, 1, 1.5, 2, 3];
 
   var el = {};
-  ['fill','banner','bannerText','bannerBtn','netBtn','speedWrap','speedBtn','speedPop','voiceSearch','voiceList','btnPrev','btnPlay','btnNext','btnStop',
+  ['fill','banner','bannerText','bannerBtn','netBtn','speedWrap','speedBtn','speedPop','speedTicks','voiceSearch','voiceList','btnPrev','btnPlay','btnNext','btnStop',
    'rate','rateVal','dot','tip','title','sub','doc'].forEach(function (id) { el[id] = document.getElementById(id); });
 
   var st = {
@@ -1238,9 +1259,51 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
   function applySpeed(value) {
     var next = Number(value);
     if (!isFinite(next) || next <= 0) return;
-    st.rate = Math.min(3, Math.max(0.5, Math.round(next * 100) / 100));
+    st.rate = Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(next * 100) / 100));
     el.rate.value = String(st.rate);
     paintSpeedLabel();
+    paintSpeedTicks();
+  }
+
+  /* ---------- speed ticks: the round numbers under the slider ---------- */
+
+  function buildSpeedTicks() {
+    if (!el.speedTicks) return;
+    el.speedTicks.textContent = '';
+    RATE_TICKS.forEach(function (value) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'speed-tick';
+      button.setAttribute('data-rate', String(value));
+      button.setAttribute('aria-label', value + '×');
+      button.textContent = String(value);
+      button.style.left = (((value - RATE_MIN) / (RATE_MAX - RATE_MIN)) * 100) + '%';
+      el.speedTicks.appendChild(button);
+    });
+    paintSpeedTicks();
+  }
+
+  /** Mark the tick the current rate sits on. */
+  function paintSpeedTicks() {
+    if (!el.speedTicks) return;
+    var buttons = el.speedTicks.children;
+    for (var i = 0; i < buttons.length; i += 1) {
+      var value = Number(buttons[i].getAttribute('data-rate'));
+      buttons[i].className = 'speed-tick' + (Math.abs(value - st.rate) < 0.001 ? ' on' : '');
+    }
+  }
+
+  /** One rate for the slider, the ticks and the emitted rate. */
+  function setRate(value, restart) {
+    var next = Number(value);
+    if (!isFinite(next) || next <= 0) return;
+    st.rate = Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(next * 100) / 100));
+    el.rate.value = String(st.rate);
+    paintSpeedLabel();
+    paintSpeedTicks();
+    // A queued utterance keeps its old rate: re-queue from the word being read
+    // so the change is audible right away.
+    if (restart && st.running) speakFrom(st.idx, st.boundary || 0);
   }
 
   /* ---------- speaking ---------- */
@@ -1527,7 +1590,8 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
 
   /* ---------- wiring ---------- */
 
-  st.rate = Math.min(3, Math.max(0.5, Number(el.rate.value) || 1));
+  st.rate = Math.min(RATE_MAX, Math.max(RATE_MIN, Number(el.rate.value) || 1));
+  buildSpeedTicks();
   applySpeed(data.speed);
   paintNetBtn();
   paintSpeedLabel();
@@ -1631,11 +1695,13 @@ try { window.__BRIDGE__ = __BRIDGE_DATA__ } catch (e) { window.__BRIDGE__ = {} }
     setTimeout(function () { if (st.listOpen) closeVoiceList(); }, 120);
   });
   el.rate.addEventListener('input', function () {
-    st.rate = Math.min(3, Math.max(0.5, Number(el.rate.value) || 1));
-    paintSpeedLabel();
-    // A queued utterance keeps its old rate: re-queue from the word being read
-    // so the change is audible right away.
-    if (st.running) speakFrom(st.idx, st.boundary || 0);
+    setRate(el.rate.value, true);
+  });
+  // A tick is a shortcut for dragging to that exact value.
+  el.speedTicks.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('.speed-tick') : null;
+    if (!button) return;
+    setRate(button.getAttribute('data-rate'), true);
   });
 
   applyLang(data.lang);
