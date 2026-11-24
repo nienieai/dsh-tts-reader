@@ -2,7 +2,7 @@
 
 本项目是 **DSH（DeepSeek Harness）的社区插件**，通过 DSH 的公开插件接口接入，并调用 DeepSeek 开放平台的 TTS 接口合成语音。
 
-下列项目被参考或包含少量改编内容；对应许可证全文附在文末。
+下列项目被参考或包含少量改编内容；对应许可证全文附在文末。另有一项只提供过设计思路、**不含其任何代码**，单独列在最后。
 
 ## DeepSeek chat-demo（MIT）
 
@@ -33,6 +33,14 @@
 - 仓库：<https://github.com/lucide-icons/lucide>
 - 版权：Copyright (c) 2026 Lucide Icons and Contributors
 - 使用内容：`client.js` 里 `SpeakerIcon` / `SettingsIcon` 的喇叭路径改编自 Lucide 的 `volume-2` 图标（数值做了取整）。
+
+## dsh-tts-bridge（仅设计参考，未包含其代码）
+
+- 仓库：<https://github.com/Yuuyuko-uu/dsh-tts-bridge>
+- 作者：Yuuyuko-uu
+- 关系：本插件的**朗读桥**借鉴了它「把 DSH 的会话文本交给浏览器去发声」的整体思路。
+- 未复制：本仓库不包含该项目的代码、文本或图片。朗读桥用浏览器自带的 SpeechSynthesis 朗读，不经过 DeepSeek 网页端；对方的形态是「DSH 插件 + 浏览器扩展 + 借 DeepSeek 网页的朗读功能」，实现路径不同。
+- 许可提示：该项目采用作者自定义的「Yuuyuko-uu 插件许可 1.2」——允许安装、修改、商用，但再分发时须完整保留许可、在 README 第一屏署名原作者，且禁止声称原创；与本仓库的 MIT 不同。由于本仓库**没有再分发**其任何部分，文末不附该许可全文；若你打算使用其代码，请按其许可要求署名。
 
 ---
 

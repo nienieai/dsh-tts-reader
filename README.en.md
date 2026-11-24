@@ -142,6 +142,7 @@ If this plugin saves you time, a ⭐ is the best thanks.
 
 - **How it was built**: the code and documentation were written with the help of **AI agent tooling**; a human set the direction and signed off on it.
 - **Translations**: the interface copy in the seven non-Chinese languages (English, 日本語, Español, Français, Deutsch, Русский, Português) was translated by AI agents and may read awkwardly or be imprecise. Fixes are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Credit**: the idea behind the read-aloud bridge comes from [dsh-tts-bridge](https://github.com/Yuuyuko-uu/dsh-tts-bridge) by Yuuyuko-uu, which hands DSH session text to the browser / the DeepSeek web app to speak. This plugin's bridge is an **independent implementation**: it speaks through the browser's built-in SpeechSynthesis (no DeepSeek web app involved), and none of that project's code or text was copied. That project uses the author's own license, not MIT — see [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## License
 
