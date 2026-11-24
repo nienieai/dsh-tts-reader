@@ -4,6 +4,12 @@
 
 发版纪律：`main` 只接收发布提交（从 `dev` 合并而来），确认稳定的版本才在发布提交上打 annotated tag `vX.Y.Z`（目前是 `v0.2.22`、`v0.3.0`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.5.1`、`v0.5.2`、`v0.5.3`）；日常开发都在 `dev` 上，流程见 [CONTRIBUTING.md](CONTRIBUTING.md) 的「发版」。
 
+## [未发布]
+
+### 文档
+
+- **朗读桥致谢**：README（中/英）与 `THIRD_PARTY.md` 补充朗读桥的思路来源——受 [dsh-tts-bridge](https://github.com/Yuuyuko-uu/dsh-tts-bridge)（作者 Yuuyuko-uu）启发，并写明本插件是独立实现、未复制其代码或文本；该项目为作者自定义许可（与本仓库 MIT 不同），仅在需要复用其代码时才受其署名条款约束。
+
 ## [0.5.3] - 2026-11-23
 
 ### 改进

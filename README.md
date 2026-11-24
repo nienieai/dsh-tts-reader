@@ -140,6 +140,7 @@ DeepSeek 云按官方 TTS 计费；浏览器语音、系统语音、本地 Piper
 
 - **开发方式**：代码与文档由 **AI Agent 工具**辅助完成，人类负责方向、取舍与验收。
 - **翻译**：中文以外的七种界面文案（English / 日本語 / Español / Français / Deutsch / Русский / Português）由 AI Agent 翻译，可能有用词偏差或不自然之处；发现不准确欢迎提 Issue 或 PR（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+- **致谢**：朗读桥的思路受 [dsh-tts-bridge](https://github.com/Yuuyuko-uu/dsh-tts-bridge)（作者 Yuuyuko-uu）启发——它把 DSH 的会话文本交给浏览器 / DeepSeek 网页端去发声。本插件的朗读桥是**独立实现**：用浏览器自带的 SpeechSynthesis 朗读，不经过 DeepSeek 网页端，也没有复制该项目的代码或文本；该项目使用作者自定义许可（与本仓库的 MIT 不同），说明见 [THIRD_PARTY.md](THIRD_PARTY.md)。
 
 ## 许可证
 
