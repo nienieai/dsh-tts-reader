@@ -39,7 +39,16 @@ dsh plugin --profile desktop add dsh-tts-studio
 
 `dsh plugin` 只是把参数转发给 profile 目录里的 pnpm，所以这条等价于 `pnpm add dsh-tts-studio`：包会装好，但**启用状态由 插件 页决定**——装完去确认它是打开的。
 
-npm 上的版本与 Git 标签一一对应（`0.6.0` 就是 `v0.6.0`；改名前的旧包最后一版是 `v0.5.3`）；要锁版本写 `dsh-tts-studio@0.6.0`。注意 `npm publish` 后 npm 会先写一个 `0.0.0-stage` 占位版本，几分钟后正式版本才成为 `latest`，这期间 `npm view` 看到的是占位版本，装的时候带上版本号即可。
+npm 上的版本与 Git 标签一一对应（`0.6.0` 就是 `v0.6.0`；改名前的旧包最后一版是 `v0.5.3`）；要锁版本写 `dsh-tts-studio@0.6.0`。
+
+想确认线上正式版本，看 `dist-tags`，不要看 `version`：
+
+```bash
+npm view dsh-tts-studio dist-tags
+# { latest: '0.6.0' }
+```
+
+`npm view dsh-tts-studio version` 会把**所有**发布过的版本逐行列出来（包括 `npm publish` 时自动写的 `0.0.0-stage` 占位版本），看着像版本号对不上，其实是正常的；`latest` 只有一个，以 `dist-tags` 为准。装的时候也可以直接带版本号（`dsh-tts-studio@0.6.0`）绕开这层歧义。
 
 ## 第一次使用
 
