@@ -1,4 +1,4 @@
-// dsh-tts-reader — Host half.
+// dsh-tts-studio — Host half.
 //
 // Job: turn one finalized assistant message into spoken audio, with an on-disk
 // cache so a second click plays the same bytes without calling the API again.
@@ -19,7 +19,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 
-export const name = 'dsh-tts-reader'
+export const name = 'dsh-tts-studio'
 export const inject = []
 
 const PREFIX = '/api/dsh-tts'
@@ -112,12 +112,12 @@ function dshHome() {
 }
 
 function storePath() {
-  return path.join(dshHome(), 'storages', 'dsh-tts-reader', 'settings.json')
+  return path.join(dshHome(), 'storages', 'dsh-tts-studio', 'settings.json')
 }
 
 /** Keys never live in settings.json: the settings API hands that file around. */
 function secretsPath() {
-  return path.join(dshHome(), 'storages', 'dsh-tts-reader', 'secrets.json')
+  return path.join(dshHome(), 'storages', 'dsh-tts-studio', 'secrets.json')
 }
 
 function readSecrets() {
@@ -485,7 +485,7 @@ function routeHandler(log, handler) {
     try {
       await handler(request, response)
     } catch (error) {
-      try { log?.warn?.('[dsh-tts-reader] 请求处理失败：' + (error?.message ?? String(error))) } catch {}
+      try { log?.warn?.('[dsh-tts-studio] 请求处理失败：' + (error?.message ?? String(error))) } catch {}
       try {
         if (!response.headersSent) writeJson(response, 500, { ok: false, error: '内部错误' })
         else if (!response.writableEnded) response.end()
@@ -1867,7 +1867,7 @@ function patchWavSizes(fd, dataBytes) {
 
 export function apply(ctx, config) {
   const log = (() => {
-    try { return typeof ctx.logger === 'function' ? ctx.logger('dsh-tts-reader') : ctx.logger } catch { return undefined }
+    try { return typeof ctx.logger === 'function' ? ctx.logger('dsh-tts-studio') : ctx.logger } catch { return undefined }
   })()
 
   const seed = normalizeSettings(config, null)
@@ -1942,7 +1942,7 @@ export function apply(ctx, config) {
       forgetMessageText(sessionId, messageId)
       noteAssistant(sessionId, messageId, false)
     } catch {}
-  }), 'dsh-tts-reader: session feed')
+  }), 'dsh-tts-studio: session feed')
 
   // One turn closed: publish its last output as the final read. `agent/status`
   // idle is the moment no driver remains, so the tail message is durable.
@@ -1956,14 +1956,14 @@ export function apply(ctx, config) {
       lastAssistant.delete(sessionId)
       noteAssistant(sessionId, messageId, true)
     } catch {}
-  }), 'dsh-tts-reader: turn close')
+  }), 'dsh-tts-studio: turn close')
 
   // A disposed session leaves no tail to publish.
   ctx.effect(() => ctx.on('session/disposed', (session) => {
     try {
       if (session && session.id) lastAssistant.delete(String(session.id))
     } catch {}
-  }), 'dsh-tts-reader: session cleanup')
+  }), 'dsh-tts-studio: session cleanup')
 
   // Questions and plan review: the tool call carries the text the user must
   // answer, so snoop the waterfall and hand it to the page.
@@ -2001,7 +2001,7 @@ export function apply(ctx, config) {
       }
     } catch {}
     return next()
-  }), 'dsh-tts-reader: questions')
+  }), 'dsh-tts-studio: questions')
 
   ctx.effect(() => ctx.on('tools/result', (exec) => {
     try {
@@ -2011,7 +2011,7 @@ export function apply(ctx, config) {
         broadcast({ type: 'question-closed', id })
       }
     } catch {}
-  }), 'dsh-tts-reader: question replies')
+  }), 'dsh-tts-studio: question replies')
 
   ctx.inject(['webServer', 'credentials', 'sessionQuery'], (scope) => {
     const guard = (request, response) => {
@@ -2068,7 +2068,7 @@ export function apply(ctx, config) {
         } catch {}
         return writeJson(response, 200, { ok: true, value: { ...next, ...engineInfo(next), voices: [...VOICES], cache: cacheStats(), keyConfigured } })
       }),
-    }), 'dsh-tts-reader: config')
+    }), 'dsh-tts-studio: config')
 
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
@@ -2079,7 +2079,7 @@ export function apply(ctx, config) {
         const removed = clearCache()
         return writeJson(response, 200, { ok: true, value: { removed, cache: cacheStats() } })
       }),
-    }), 'dsh-tts-reader: cache')
+    }), 'dsh-tts-studio: cache')
 
     // Auto-read feed: the page opens one EventSource and replays new replies.
     scope.effect(() => scope.webServer.register({
@@ -2107,7 +2107,7 @@ export function apply(ctx, config) {
         response.on('close', cleanup)
         response.on('error', cleanup)
       }),
-    }), 'dsh-tts-reader: events')
+    }), 'dsh-tts-studio: events')
 
     // Polling fallback for the same feed: `after=<seq>` returns what the page
     // has not seen yet, so auto-read survives a dead EventSource.
@@ -2127,7 +2127,7 @@ export function apply(ctx, config) {
           value: { seq: recentSeq, items: recent.filter(item => item.seq > after) },
         })
       }),
-    }), 'dsh-tts-reader: recent')
+    }), 'dsh-tts-studio: recent')
 
     // The replay button reads this; it must not depend on a live event stream.
     scope.effect(() => scope.webServer.register({
@@ -2137,7 +2137,7 @@ export function apply(ctx, config) {
         if (!guard(request, response)) return
         return writeJson(response, 200, { ok: true, value: pendingPrompt })
       }),
-    }), 'dsh-tts-reader: pending')
+    }), 'dsh-tts-studio: pending')
 
     // ------------------------------------------------------------ 朗读桥
     // A desktop shell (Electron) has no Web Speech voices; a real browser does.
@@ -2159,7 +2159,7 @@ export function apply(ctx, config) {
         return text
       } catch (error) {
         if (!bridgeSourceCache.text) {
-          log?.warn?.('[dsh-tts-reader] 朗读桥页面缺失：' + (error?.message ?? String(error)))
+          log?.warn?.('[dsh-tts-studio] 朗读桥页面缺失：' + (error?.message ?? String(error)))
         }
         return bridgeSourceCache.text
       }
@@ -2300,12 +2300,12 @@ export function apply(ctx, config) {
         // A spawn failure arrives asynchronously; the URL is returned either way
         // so the page can still show it for a manual click.
         child.on('error', (error) => {
-          log?.warn?.('[dsh-tts-reader] 唤起浏览器失败：' + (error?.message ?? String(error)))
+          log?.warn?.('[dsh-tts-studio] 唤起浏览器失败：' + (error?.message ?? String(error)))
         })
         child.unref()
         return true
       } catch (error) {
-        log?.warn?.('[dsh-tts-reader] 唤起浏览器失败：' + (error?.message ?? String(error)))
+        log?.warn?.('[dsh-tts-studio] 唤起浏览器失败：' + (error?.message ?? String(error)))
         return false
       }
     }
@@ -2394,7 +2394,7 @@ export function apply(ctx, config) {
           value: { url: link, launched: link ? openExternal(link) : false, delivered: 0, acked: false, id: pushId, units: units.length },
         })
       }),
-    }), 'dsh-tts-reader: bridge')
+    }), 'dsh-tts-studio: bridge')
 
     // The bridge page keeps this open. While at least one listener is attached,
     // POST /bridge delivers the text over this stream instead of launching a tab.
@@ -2429,7 +2429,7 @@ export function apply(ctx, config) {
         response.on('close', cleanup)
         response.on('error', cleanup)
       }),
-    }), 'dsh-tts-reader: bridge stream')
+    }), 'dsh-tts-studio: bridge stream')
 
     // The page's side of the conversation: "got it", "finished it", "stopped",
     // and "what I am doing right now" so the app can show the same state.
@@ -2475,7 +2475,7 @@ export function apply(ctx, config) {
         }
         return writeJson(response, 200, { ok: true, value: { kind } })
       }),
-    }), 'dsh-tts-reader: bridge ack')
+    }), 'dsh-tts-studio: bridge ack')
 
     // Theme and language, sent when they change rather than with every text.
     scope.effect(() => scope.webServer.register({
@@ -2493,7 +2493,7 @@ export function apply(ctx, config) {
         const delivered = deliverBridgePrefs({ ...(scheme ? { scheme } : {}), ...(lang ? { lang } : {}) })
         return writeJson(response, 200, { ok: true, value: { delivered } })
       }),
-    }), 'dsh-tts-reader: bridge prefs')
+    }), 'dsh-tts-studio: bridge prefs')
 
     // The floating player asks for the paragraph list first: it needs the count
     // and each paragraph's opening words, and `unit` on /read addresses this list.
@@ -2531,7 +2531,7 @@ export function apply(ctx, config) {
           },
         })
       }),
-    }), 'dsh-tts-reader: plan')
+    }), 'dsh-tts-studio: plan')
 
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
@@ -2823,7 +2823,7 @@ export function apply(ctx, config) {
           if (alive()) response.end()
         } catch (error) {
           if (controller.signal.aborted) return
-          log?.warn?.('[dsh-tts-reader] 朗读失败：' + (error?.message ?? String(error)))
+          log?.warn?.('[dsh-tts-studio] 朗读失败：' + (error?.message ?? String(error)))
           try { if (alive()) response.end() } catch {}
         } finally {
           try { await gen.return() } catch {}
@@ -2835,10 +2835,10 @@ export function apply(ctx, config) {
           }
         }
       }),
-    }), 'dsh-tts-reader: read')
+    }), 'dsh-tts-studio: read')
   })
 
-  log?.info?.('dsh-tts-reader 已加载，缓存目录：' + cacheDir())
+  log?.info?.('dsh-tts-studio 已加载，缓存目录：' + cacheDir())
 }
 
 function pick(source, keys) {

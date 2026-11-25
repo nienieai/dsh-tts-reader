@@ -1,4 +1,4 @@
-// dsh-tts-reader — Client half.
+// dsh-tts-studio — Client half.
 //
 // Adds a "read aloud" action to every finalized assistant message. The page
 // never talks to api.deepseek.com and never sees the API key: it posts the
@@ -14,7 +14,7 @@
 // page reload still answers without a second API call.
 
 window.__ModuleLoader__.load({
-  id: 'dsh-tts-reader',
+  id: 'dsh-tts-studio',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -1205,7 +1205,7 @@ window.__ModuleLoader__.load({
           try { offTheme && offTheme() } catch {}
           try { offLocale && offLocale() } catch {}
         }
-      }, 'dsh-tts-reader: bridge prefs')
+      }, 'dsh-tts-studio: bridge prefs')
       ctx.effect(() => {
         if (typeof window === 'undefined' || typeof document === 'undefined') return
         let last = currentScheme()
@@ -1246,7 +1246,7 @@ window.__ModuleLoader__.load({
             if (media && typeof media.removeEventListener === 'function') media.removeEventListener('change', onChange)
           } catch {}
         }
-      }, 'dsh-tts-reader: scheme watch')
+      }, 'dsh-tts-studio: scheme watch')
     }
 
     // Re-render a component when the app language changes.
@@ -1267,7 +1267,7 @@ window.__ModuleLoader__.load({
           for (const force of localeListeners.slice()) {
             try { force() } catch {}
           }
-        }), 'dsh-tts-reader: locale')
+        }), 'dsh-tts-studio: locale')
       } catch {}
     }
 
@@ -1306,7 +1306,7 @@ window.__ModuleLoader__.load({
     // it shows up even if a particular page instance missed the event.
     const PENDING_PATH = '/api/dsh-tts/pending'
     const BRIDGE_PATH = '/api/dsh-tts/bridge'
-    const SPEECH_VOICE_KEY = 'dsh-tts-reader:speech-voice'
+    const SPEECH_VOICE_KEY = 'dsh-tts-studio:speech-voice'
     const SPEECH_FIRST_TIMEOUT_MS = 8000
 
     // ---------------------------------------------------------- browser speech
@@ -1561,7 +1561,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => {
         try { eventSource && eventSource.close() } catch {}
         eventSource = null
-      }, 'dsh-tts-reader: events')
+      }, 'dsh-tts-studio: events')
     }
 
     // One assistant message from either transport (SSE or the polling
@@ -2477,7 +2477,7 @@ window.__ModuleLoader__.load({
     // the word inside it. The CSS Custom Highlight API paints live Ranges, so
     // nothing is inserted into a React-rendered message where the next render
     // would wipe it.
-    const HIGHLIGHT_STYLE_ID = 'dsh-tts-reader-highlight-style'
+    const HIGHLIGHT_STYLE_ID = 'dsh-tts-studio-highlight-style'
     const PARA_HIGHLIGHT = 'dsh-tts-para'
     const WORD_HIGHLIGHT = 'dsh-tts-word'
     const PARA_FALLBACK_CLASS = 'dsh-tts-reading'
@@ -3132,7 +3132,7 @@ window.__ModuleLoader__.load({
       updatePlayerWindow()
     }
 
-    const PLAYER_POS_KEY = 'dsh-tts-reader:player-pos'
+    const PLAYER_POS_KEY = 'dsh-tts-studio:player-pos'
 
     function storedPlayerPos() {
       try {
@@ -3437,7 +3437,7 @@ window.__ModuleLoader__.load({
       setPlayback({ key, phase: 'idle', error: silent ? '' : message, tone: silent ? '' : tone })
       // No popup for a failed read: the exclamation mark and the coloured tip on
       // the button carry it now.
-      if (!silent) console.warn('[dsh-tts-reader] playback failed:', message)
+      if (!silent) console.warn('[dsh-tts-studio] playback failed:', message)
       drainQueue()
     }
 
@@ -3450,7 +3450,7 @@ window.__ModuleLoader__.load({
     // The read button's hover text (and the first-click note) are drawn here, in
     // the page, instead of the native `title` box: the tone colour has to match
     // the warning/error state of the button.
-    const BRIDGE_SEEN_KEY = 'dsh-tts-reader:bridge-seen'
+    const BRIDGE_SEEN_KEY = 'dsh-tts-studio:bridge-seen'
     let hoverTip = null
 
     function hideHoverTip() {
@@ -4937,7 +4937,7 @@ window.__ModuleLoader__.load({
     function injectStyles() {
       if (typeof document === 'undefined') return () => {}
       const style = document.createElement('style')
-      style.dataset.plugin = 'dsh-tts-reader'
+      style.dataset.plugin = 'dsh-tts-studio'
       style.textContent = CSS
       document.head.appendChild(style)
       return () => { try { style.remove() } catch {} }
@@ -4966,7 +4966,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
-        ctx.effect(() => injectStyles(), 'dsh-tts-reader: styles')
+        ctx.effect(() => injectStyles(), 'dsh-tts-studio: styles')
         localeCtx = ctx.locale
         // Kept for lazy lookups: `theme` may mount after this plugin, and the
         // bridge is told about theme/language changes as they happen.
@@ -5000,7 +5000,7 @@ window.__ModuleLoader__.load({
             try { window.removeEventListener('focus', onFocus) } catch {}
             try { document.removeEventListener('visibilitychange', onVisible) } catch {}
           }
-        }, 'dsh-tts-reader: watchdog')
+        }, 'dsh-tts-studio: watchdog')
 
         // The assistant feed also has a pull path, so a silently dropped
         // EventSource cannot stop auto-read.
@@ -5008,23 +5008,23 @@ window.__ModuleLoader__.load({
           const timer = setInterval(pollRecent, 2500)
           pollRecent()
           return () => { clearInterval(timer) }
-        }, 'dsh-tts-reader: recent poll')
+        }, 'dsh-tts-studio: recent poll')
 
         // Follows the visible session even before it has any assistant message,
         // so auto-read always compares against the right session id.
         ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
           name: 'conversation.composer.dock',
-          id: 'tts-reader-session',
+          id: 'tts-studio-session',
           order: 900,
         }, SessionTracker))
 
         // Mounted on document.body instead of a slot: request dialogs can cover
         // every slot-rendered surface.
-        ctx.effect(() => mountPromptButton(), 'dsh-tts-reader: prompt button')
+        ctx.effect(() => mountPromptButton(), 'dsh-tts-studio: prompt button')
 
         ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
           name: 'conversation.chat.assistant-actions',
-          id: 'tts-reader',
+          id: 'tts-studio',
           order: 40,
           // A thunk: the owner re-reads it per projection, so the label follows
           // the app language without re-registering.
@@ -5033,7 +5033,7 @@ window.__ModuleLoader__.load({
 
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
-          id: 'tts-reader',
+          id: 'tts-studio',
           order: 26,
           label: () => t('语音朗读', 'Read aloud'),
         }, TtsSettings))
@@ -5041,7 +5041,7 @@ window.__ModuleLoader__.load({
         // The settings navigation glyph for our own section id.
         ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
           name: 'settings.section.icon',
-          id: 'tts-reader',
+          id: 'tts-studio',
         }, SettingsIcon))
       },
     }

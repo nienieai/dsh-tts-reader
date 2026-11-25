@@ -1,6 +1,6 @@
 - insert:
-    - id: tts-reader
-      name: dsh-tts-reader
+    - id: tts-studio
+      name: dsh-tts-studio
       config:
         voice: stella
         maxChars: 4000
