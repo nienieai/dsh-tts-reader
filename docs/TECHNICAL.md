@@ -152,7 +152,8 @@ git merge --no-ff dev -m "release: v0.5.4"
 git tag -a v0.5.4 -m "dsh-tts-studio 0.5.4"
 git checkout dev
 git push origin dev main --tags
-npm publish              # 在 main 上，走 npm 动态码；先出 0.0.0-stage 占位，几分钟后才有 0.5.3
+npm publish              # 在 main 上，走 npm 动态码；先出 0.0.0-stage 占位，几分钟后正式版才成为 latest
+npm view dsh-tts-studio dist-tags   # 核对：latest 应为本次发的版本号
 ```
 
 约定：
