@@ -6,6 +6,12 @@
 
 ## [未发布]
 
+### 变更
+
+- **改名为 `dsh-tts-studio`**：npm 包名、GitHub 仓库地址、`cordis.patch.yml` 的 `name` 与 loader `id`（`tts-reader` → `tts-studio`）、页面里注册的 slot id（`conversation.chat.assistant-actions` / `settings.section` / `settings.section.icon` / `conversation.composer.dock`）一并改掉，原因是旧名 `dsh-tts-reader` 与另一个仓库同名（`lemonhall/dsh-tts-reader`），目录站按名字索引会指向对方，搜「dsh-tts-reader」容易装错。旧 npm 名 `dsh-tts-reader` 将 `deprecate` 指向新名，不删包。
+  同一次改名里，插件自己写盘的位置和页面存储键也跟着改名，避免名字两套并存：
+  `<DSH_HOME>/storages/dsh-tts-studio/`（设置与自定义 Key）、`localStorage` 的 `dsh-tts-studio:*`（悬浮窗位置、朗读桥状态）。**升级前请把旧目录 `storages/dsh-tts-reader/` 里的内容复制到 `storages/dsh-tts-studio/`**，否则设置与 Key 会回到默认值；音频缓存目录 `<DSH_HOME>/cache/dsh-tts/` 与 HTTP 路由前缀 `/api/dsh-tts/` 不带插件名，保持不变，缓存继续可用。
+
 ### 文档
 
 - **朗读桥致谢**：README（中/英）与 `THIRD_PARTY.md` 补充朗读桥的思路来源——受 [dsh-tts-bridge](https://github.com/Yuuyuko-uu/dsh-tts-bridge)（作者 Yuuyuko-uu）启发，并写明本插件是独立实现、未复制其代码或文本；该项目为作者自定义许可（与本仓库 MIT 不同），仅在需要复用其代码时才受其署名条款约束。
@@ -17,7 +23,7 @@
 - **文档重整（开源准备）**：README 改成面向普通用户的门面（是什么 / 为什么 / 五种引擎 / 三步安装 / 用法 / 隐私 / FAQ），新增英文版 `README.en.md` 并互相链接，加了许可证、DSH 插件、版本、平台、语言、Star 徽章；技术细节全部搬到 `docs/TECHNICAL.md`，安装与卸载单独成 `docs/INSTALL.md`，新增 `CONTRIBUTING.md`、`SECURITY.md`、`.gitattributes`。插件详情页按 DSH 规范改成「一张配图」的 `docs/DETAIL.zh.md` / `docs/DETAIL.en.md`（配图 `docs/preview.svg`），八种语言的 `meta.detail` 分别指向对应文件；`package.json` 补上 `repository` / `homepage` / `bugs` / `author`，`private` 改为 `false`，`files` 覆盖全部文档与资源。
 - **README 换成真实截图**：首图改为会话里正在朗读的样子（段落底色、当前词、悬浮播放窗），新增「长什么样」一节放设置页与朗读桥截图，都在 `docs/screenshots/`；配图统一 2.00×、同一段文案，便于对照。
 - **声明**：README 与贡献指南补充说明——代码与文档由 AI Agent 工具辅助完成，中文以外的七种界面文案由 AI Agent 翻译，可能有偏差。
-- **发布到 npm**：包名 `dsh-tts-reader`（31 个文件，523.8 kB），README 增加 npm 徽章与「从 npm 安装」方式，安装文档补同一节；版本号与 Git 标签一一对应。
+- **发布到 npm**：包名 `dsh-tts-studio`（31 个文件，523.8 kB），README 增加 npm 徽章与「从 npm 安装」方式，安装文档补同一节；版本号与 Git 标签一一对应。
 - **工具条重排**：按钮改成 30×30 的方形、间距收到 4px；播放键单独放大到 36×36（图标 19px），一眼就能找到；「本地」勾选框换成**本地/云端切换按钮**（电脑图标 ↔ 云图标，本机绿、云端蓝），提示文案改成「只使用离线音色（点击切换到云端音色）」这类动作描述，并挪到音色下拉框**前面**；开启本地时若当前是云端音色会自动换成本地音色。速度改成**热区按钮**：悬停立即在下方弹出滑条，没变速时按钮显示「倍速」，调过之后显示如 `1.50×`，按钮宽度固定为 6 个英文字符的宽度。
 - **朗读桥**：正文列宽从 44rem 提到 52rem（工具条同步对齐）；正文不再用灰字，所有段落都用正文前景色；段落高亮改用 `--hl-para` 变量并加深（深色 30% 蓝、浅色 26% 深蓝），浅色主题下也一眼能看出当前段；**单击**任意段落即从该段开始朗读（双击仍是浏览器选中，不会误读；延迟 240ms 判定），段落的提示跟着鼠标走；鼠标悬停段落时多一层更淡的 `--hl-hover`（深色 10%、浅色 7%），与朗读高亮分层叠加互不冲突；读完或停止后清掉已读淡显，整页文字恢复常态。
 - **首次点击改成横幅**：浏览器要求先有一次手势时，页面上出现一条**橙色全宽横幅**，里面是说明加一个「开始朗读」按钮，点它或直接双击段落都能开始；错误与其他警告沿用同形状（红色/橙色底）。
@@ -112,7 +118,7 @@
 - **朗读失败可见提示**：失败时在右下角弹一个可关闭的错误条（错误原文可选中复制，30 秒自动消失），同时 `console.warn` 一行，不再只能靠悬停提示看错误。
 - **跳过的块改成念一句提示音**：代码块「这里是代码块」、表格「这里是表格」、块级公式「这里是公式」、图片「这里是图片」；mermaid 按图类型细分为「这里是时序图 / 流程图 / 类图 / 状态图 / ER 图 / 甘特图 / 饼图 / 思维导图 / 时间线 / Git 分支图」，其余为「这里是 Mermaid 图表」。提示语是固定字符串、各自独立成段，因此每个音色只合成一次；一条消息里出现两次同样的提示也只花一次合成。
 - **系统语音引擎（跨平台、离线）**：设置里新增「系统语音」。Windows 走 `System.Speech`（SAPI，实测 Huihui 中英混读正常、每段合成 0.22 s、进程往返约 1 s），macOS 走 `say`，Linux 走 `espeak-ng`；语音清单按平台枚举并缓存，没有可用语音时设置页直接标「没有可用的系统语音」。输出 WAV 由统一的 `parseWav` 解析（16-bit PCM）、下混单声道、重采样到 24 kHz。
-- **自定义 API 引擎**：支持任何 OpenAI 兼容的 `/v1/audio/speech`（OpenAI / Azure OpenAI / SiliconFlow / Groq / Fish 等），可填 Base URL、模型、音色、返回格式（wav 或 pcm）。Key 单独存 `~/.dsh/storages/dsh-tts-reader/secrets.json`（0600），接口只回「已配置 / 未配置」，不回传明文、不写日志；返回 MP3 会明确报错而不是放出噪声。
+- **自定义 API 引擎**：支持任何 OpenAI 兼容的 `/v1/audio/speech`（OpenAI / Azure OpenAI / SiliconFlow / Groq / Fish 等），可填 Base URL、模型、音色、返回格式（wav 或 pcm）。Key 单独存 `~/.dsh/storages/dsh-tts-studio/secrets.json`（0600），接口只回「已配置 / 未配置」，不回传明文、不写日志；返回 MP3 会明确报错而不是放出噪声。
 - **自定义 API 增加协议预设**：设置里先选协议，再填该协议自己的字段——
   - `OpenAI 兼容`：`{base}/v1/audio/speech`，`{model,input,voice,response_format}`；
   - `GPT-SoVITS`（api_v2）：`{base}/tts`，`{text,text_lang,ref_audio_path,prompt_text,prompt_lang,media_type}`，参考音频填服务端路径；

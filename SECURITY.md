@@ -17,7 +17,7 @@
 
 这个插件在**本机**运行，边界如下：
 
-- **API Key 只在 Host 进程**：浏览器只收到 `sessionId` / `messageId`；DeepSeek Key 从 DSH 凭据读取，自定义 API 的 Key 存在 `<DSH_HOME>/storages/dsh-tts-reader/secrets.json`（仅本用户可读），接口只回「已配置 / 未配置」，不回传明文、不写日志。
+- **API Key 只在 Host 进程**：浏览器只收到 `sessionId` / `messageId`；DeepSeek Key 从 DSH 凭据读取，自定义 API 的 Key 存在 `<DSH_HOME>/storages/dsh-tts-studio/secrets.json`（仅本用户可读），接口只回「已配置 / 未配置」，不回传明文、不写日志。
 - **只接受本机请求**：所有路由要求回环地址 + 同源；跨站页面无法触发合成或修改配置。
 - **发出去的内容最小化**：只发送待朗读的那段纯文本；不发整段会话、不发思考过程、不发工具输出。
 - **缓存留在本机**：音频写在 `<DSH_HOME>/cache/dsh-tts/`，不对外提供下载。

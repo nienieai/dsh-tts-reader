@@ -112,7 +112,7 @@
 
 ## 存储与安全边界
 
-- 设置：`<DSH_HOME>/storages/dsh-tts-reader/settings.json`（不含 Key）。
+- 设置：`<DSH_HOME>/storages/dsh-tts-studio/settings.json`（不含 Key）。
 - 自定义 API 的 Key：`secrets.json`，仅本用户可读；接口只回「已配置/未配置」。
 - 所有路由：回环地址 + 同源；跨站无法触发。
 - 会话正文只在本机读取，不额外落盘；发往上游的只有待朗读文本。
@@ -134,7 +134,7 @@ node --check client.js
 本地安装（link 方式，改完刷新页面即可）：
 
 ```bash
-dsh plugin --profile desktop add link:C:/path/to/dsh-tts-reader
+dsh plugin --profile desktop add link:C:/path/to/dsh-tts-studio
 ```
 
 改 `index.js` 要重启 DSH；改 `client.js` / `bridge.html` 刷新页面即可。
@@ -149,7 +149,7 @@ git checkout dev
 git commit -am "chore: release 0.5.4"
 git checkout main
 git merge --no-ff dev -m "release: v0.5.4"
-git tag -a v0.5.4 -m "dsh-tts-reader 0.5.4"
+git tag -a v0.5.4 -m "dsh-tts-studio 0.5.4"
 git checkout dev
 git push origin dev main --tags
 npm publish              # 在 main 上，走 npm 动态码；先出 0.0.0-stage 占位，几分钟后才有 0.5.3
@@ -161,4 +161,4 @@ npm publish              # 在 main 上，走 npm 动态码；先出 0.0.0-stage
 - tag 一律 annotated；
 - 只给确认稳定的版本打 tag；
 - GitHub 仓库保持 `dsh-plugin` topic，插件市场靠它索引；
-- npm 包名固定为 `dsh-tts-reader`，版本号必须与 tag 一致；npm 不允许同一版本发两次，重发前先升版本。
+- npm 包名固定为 `dsh-tts-studio`，版本号必须与 tag 一致；npm 不允许同一版本发两次，重发前先升版本。
