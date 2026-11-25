@@ -1,4 +1,4 @@
-# 语音朗读 · dsh-tts-reader
+# 语音朗读 · dsh-tts-studio
 
 **让 DeepSeek Harness（DSH）把回答念出来。** 点一下助手回复下面的喇叭，就能听它说话；再点一次直接放缓存，不重新合成。
 
@@ -6,11 +6,11 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4b8bf5)](https://github.com/topics/dsh-plugin)
-[![version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
-[![npm](https://img.shields.io/npm/v/dsh-tts-reader?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-tts-reader)
+[![version](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
+[![npm](https://img.shields.io/npm/v/dsh-tts-studio?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-tts-studio)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-8a8a8a)](#安装)
 [![languages](https://img.shields.io/badge/UI-8%20languages-9cf)](docs/TECHNICAL.md#语言与主题)
-[![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-reader?style=social)](https://github.com/nienieai/dsh-tts-reader)
+[![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-studio?style=social)](https://github.com/nienieai/dsh-tts-studio)
 
 ![一段回复正在朗读：正在读的第二段是浅蓝底，当前词「标蓝」是黄色，右下角是悬浮播放窗（2.00×）](docs/screenshots/player-zh-dark.png)
 
@@ -61,17 +61,17 @@
 **方式二：命令行**
 
 ```bash
-git clone https://github.com/nienieai/dsh-tts-reader.git
-dsh plugin --profile desktop add link:./dsh-tts-reader
+git clone https://github.com/nienieai/dsh-tts-studio.git
+dsh plugin --profile desktop add link:./dsh-tts-studio
 ```
 
 **方式三：从 npm（不用克隆仓库）**
 
 ```bash
-dsh plugin --profile desktop add dsh-tts-reader
+dsh plugin --profile desktop add dsh-tts-studio
 ```
 
-要固定版本就写 `dsh-tts-reader@0.5.3`。装完刷新页面；如果插件列表里它还是关着的，把开关打开。
+要固定版本就写 `dsh-tts-studio@0.6.0`。装完刷新页面；如果插件列表里它还是关着的，把开关打开。
 
 > 装完要**刷新页面**让界面部分加载；Host 部分（`index.js`）的改动需要重启 DSH 才生效。
 
@@ -132,7 +132,7 @@ DeepSeek 云按官方 TTS 计费；浏览器语音、系统语音、本地 Piper
 
 ## 参与
 
-欢迎提 Issue、提 PR。仓库约定：`main` 只放已发布版本，`dev` 是日常开发线；提交前请跑一遍本地检查（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+欢迎提 Issue、提 PR。仓库约定：`main` 只放已发布版本，`dev` 是日常开发线；改动请从 `dev` 拉分支、按 PR 提给 `dev`（默认分支是 `main`，开 PR 时把 base 改成 `dev`）。提交前请跑一遍本地检查（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
 如果这个插件帮你省了时间，给个 ⭐ 就是最好的支持。
 
@@ -140,9 +140,10 @@ DeepSeek 云按官方 TTS 计费；浏览器语音、系统语音、本地 Piper
 
 - **开发方式**：代码与文档由 **AI Agent 工具**辅助完成，人类负责方向、取舍与验收。
 - **翻译**：中文以外的七种界面文案（English / 日本語 / Español / Français / Deutsch / Русский / Português）由 AI Agent 翻译，可能有用词偏差或不自然之处；发现不准确欢迎提 Issue 或 PR（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+- **致谢**：朗读桥的思路受 [dsh-tts-bridge](https://github.com/Yuuyuko-uu/dsh-tts-bridge)（作者 Yuuyuko-uu）启发——它把 DSH 的会话文本交给浏览器 / DeepSeek 网页端去发声。本插件的朗读桥是**独立实现**：用浏览器自带的 SpeechSynthesis 朗读，不经过 DeepSeek 网页端，也没有复制该项目的代码或文本；该项目使用作者自定义许可（与本仓库的 MIT 不同），说明见 [THIRD_PARTY.md](THIRD_PARTY.md)。
 
 ## 许可证
 
-[MIT](LICENSE) © dsh-tts-reader contributors
+[MIT](LICENSE) © dsh-tts-studio contributors
 
 本插件是**非官方社区项目**，与 DeepSeek（深度求索）没有隶属或背书关系；名称里的 “DeepSeek” 只用于说明它对接的接口。参考过的开源项目与版权声明见 [THIRD_PARTY.md](THIRD_PARTY.md)。

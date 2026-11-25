@@ -17,9 +17,11 @@
 ## 开发循环
 
 ```bash
-git clone https://github.com/nienieai/dsh-tts-reader.git
-cd dsh-tts-reader
+git clone https://github.com/nienieai/dsh-tts-studio.git
+cd dsh-tts-studio
 git checkout dev
+git pull
+git checkout -b fix/my-change
 
 node --check index.js
 node --check client.js
@@ -42,8 +44,12 @@ dsh plugin --profile desktop add link:$(pwd)
 
 | 分支 | 用途 |
 |---|---|
-| `main` | 只放已发布版本（带 annotated tag） |
-| `dev` | 日常开发，所有改动先到这里 |
+| `main` | 只放已发布版本（带 annotated tag），同时也是默认分支 |
+| `dev` | 日常开发线，所有改动先到这里 |
+
+流程：从 `dev` 拉分支（`feat/…`、`fix/…`、`docs/…`）→ 推上去 → 对 `dev` 开 PR → 合并后删掉该分支。维护者也走这条路，不直接往 `dev` 提交。
+
+**注意 base**：仓库默认分支是 `main`，GitHub 新建 PR 时 base 会默认选 `main`，要手动改成 `dev`。`main` 只接收发版的 `--no-ff` 合并。
 
 - 提交信息用 `type(scope): subject`，例如 `fix(bridge): keep the popover open`；
 - 一个提交做一件事，文档与行为分开提交更好评审；
@@ -51,11 +57,11 @@ dsh plugin --profile desktop add link:$(pwd)
 
 ## 发版（维护者）
 
-1. `dev` 上改 `package.json` 的 `version`、`CHANGELOG.md`，并同步 README 徽章里的 `version-` 数字；
+1. 确认 `dev` 上要发的分支都已合并、检查通过，然后改 `package.json` 的 `version`、`CHANGELOG.md`，并同步 README 徽章里的 `version-` 数字；
 2. 合并到 `main`：`git merge --no-ff dev -m "release: vX.Y.Z"`；
-3. 打 annotated tag：`git tag -a vX.Y.Z -m "dsh-tts-reader X.Y.Z"`；
+3. 打 annotated tag：`git tag -a vX.Y.Z -m "dsh-tts-studio X.Y.Z"`；
 4. 推分支与标签：`git push origin dev main --tags`；
-5. 发布到 npm：在 `main` 上执行 `npm publish`（账号开了双因素认证，会要动态码；npm 先写 `0.0.0-stage` 占位，几分钟后正式版本才成为 `latest`），用 `npm view dsh-tts-reader version` 核对；
+5. 发布到 npm：在 `main` 上执行 `npm publish`（账号开了双因素认证，会要动态码；npm 先写 `0.0.0-stage` 占位，几分钟后正式版本才成为 `latest`），用 `npm view dsh-tts-studio version` 核对；
 6. 确认仓库仍带 `dsh-plugin` topic（插件市场靠它索引）。
 
 ## 文档规则

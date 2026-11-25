@@ -1,4 +1,4 @@
-# Read aloud · dsh-tts-reader
+# Read aloud · dsh-tts-studio
 
 **Have DeepSeek Harness (DSH) read its answers to you.** Click the speaker under an assistant reply and it starts talking; click again to replay from the local cache instead of paying for a second synthesis.
 
@@ -6,11 +6,11 @@ English · [中文](README.md)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4b8bf5)](https://github.com/topics/dsh-plugin)
-[![version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
-[![npm](https://img.shields.io/npm/v/dsh-tts-reader?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-tts-reader)
+[![version](https://img.shields.io/badge/version-0.6.0-blue)](CHANGELOG.md)
+[![npm](https://img.shields.io/npm/v/dsh-tts-studio?label=npm&color=cb3837)](https://www.npmjs.com/package/dsh-tts-studio)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-8a8a8a)](#install)
 [![languages](https://img.shields.io/badge/UI-8%20languages-9cf)](docs/TECHNICAL.md)
-[![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-reader?style=social)](https://github.com/nienieai/dsh-tts-reader)
+[![stars](https://img.shields.io/github/stars/nienieai/dsh-tts-studio?style=social)](https://github.com/nienieai/dsh-tts-studio)
 
 ![A reply being read aloud: the paragraph being read is tinted blue, the current word is amber, and the floating player sits bottom right](docs/screenshots/player-en-dark.png)
 
@@ -61,17 +61,17 @@ You need **DeepSeek Harness** installed (desktop or web; the speech bridge only 
 **Option 2 — command line**
 
 ```bash
-git clone https://github.com/nienieai/dsh-tts-reader.git
-dsh plugin --profile desktop add link:./dsh-tts-reader
+git clone https://github.com/nienieai/dsh-tts-studio.git
+dsh plugin --profile desktop add link:./dsh-tts-studio
 ```
 
 **Option 3 — from npm (no clone needed)**
 
 ```bash
-dsh plugin --profile desktop add dsh-tts-reader
+dsh plugin --profile desktop add dsh-tts-studio
 ```
 
-Pin a version with `dsh-tts-reader@0.5.3`. Refresh afterwards; if the plugin is listed but switched off, turn it on.
+Pin a version with `dsh-tts-studio@0.6.0`. Refresh afterwards; if the plugin is listed but switched off, turn it on.
 
 > Refresh the page to load the client half; changes to the Host half (`index.js`) need a DSH restart.
 
@@ -134,7 +134,7 @@ Not word by word. Code blocks, tables, formulas and images each produce one shor
 
 ## Contributing
 
-Issues and pull requests are welcome. `main` holds released versions only; `dev` is the working branch. Run the local checks before sending a change — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome. `main` holds released versions only; `dev` is the working branch. Branch off `dev` and open the PR against `dev` (the base defaults to `main`). Run the local checks before sending a change — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 If this plugin saves you time, a ⭐ is the best thanks.
 
@@ -142,9 +142,10 @@ If this plugin saves you time, a ⭐ is the best thanks.
 
 - **How it was built**: the code and documentation were written with the help of **AI agent tooling**; a human set the direction and signed off on it.
 - **Translations**: the interface copy in the seven non-Chinese languages (English, 日本語, Español, Français, Deutsch, Русский, Português) was translated by AI agents and may read awkwardly or be imprecise. Fixes are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Credit**: the idea behind the read-aloud bridge comes from [dsh-tts-bridge](https://github.com/Yuuyuko-uu/dsh-tts-bridge) by Yuuyuko-uu, which hands DSH session text to the browser / the DeepSeek web app to speak. This plugin's bridge is an **independent implementation**: it speaks through the browser's built-in SpeechSynthesis (no DeepSeek web app involved), and none of that project's code or text was copied. That project uses the author's own license, not MIT — see [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## License
 
-[MIT](LICENSE) © dsh-tts-reader contributors
+[MIT](LICENSE) © dsh-tts-studio contributors
 
 This is an **unofficial community plugin**, not affiliated with or endorsed by DeepSeek. The name "DeepSeek" only describes the API it talks to. Third-party code and notices: [THIRD_PARTY.md](THIRD_PARTY.md).
